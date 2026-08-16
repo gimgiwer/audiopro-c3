@@ -15,6 +15,8 @@ config uhttpd 'main'
 	option http_keepalive '20'
 	option tcp_keepalive '1'
 	option redirect_https '0'
+	option lua_prefix '/api'
+	option lua_handler '/www/api.lua'
 	# Ultra-fast cipher suite for MIPS 24KEc (ChaCha20-Poly1305 ARX + ECDHE-ECDSA)
 	option ciphers 'ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-CHACHA20-POLY1305'
 
