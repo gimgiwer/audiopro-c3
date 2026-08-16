@@ -27,6 +27,9 @@ case "$EVENT" in
         has_art=0
         [ -f "$ARTWORK_JPG" ] && [ -s "$ARTWORK_JPG" ] && has_art=1
         
+        # Invoke Audio Arbiter
+        /usr/bin/audio_arbiter.sh spotify &
+        
         cat << JSON_EOF > "$META_JSON"
 {
   "active": true,
