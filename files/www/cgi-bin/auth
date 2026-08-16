@@ -79,8 +79,8 @@ verify_password() {
             fi
             
             local algo salt
-            algo=$(echo "$stored" | cut -d'' -f2)
-            salt=$(echo "$stored" | cut -d'' -f3)
+            algo=$(echo "$stored" | cut -d'$' -f2)
+            salt=$(echo "$stored" | cut -d'$' -f3)
             
             # Use openssl passwd if available
             if command -v openssl >/dev/null 2>&1; then

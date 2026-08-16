@@ -1,10 +1,8 @@
 #!/bin/sh
 
-# SSH hardening: disable password auth by default.
-# Use SSH keys or set a password via passwd after first boot.
-# Re-enable with: uci set dropbear.@dropbear[0].PasswordAuth='on' && uci commit dropbear
-uci set dropbear.@dropbear[0].PasswordAuth='off'
-uci set dropbear.@dropbear[0].RootPasswordAuth='off'
+# SSH access configuration: ensure password auth is enabled by default.
+uci set dropbear.@dropbear[0].PasswordAuth='on'
+uci set dropbear.@dropbear[0].RootPasswordAuth='on'
 uci commit dropbear 2>/dev/null
 
 # Enable 32MB ZRAM Swap on 64MB RAM SoC
