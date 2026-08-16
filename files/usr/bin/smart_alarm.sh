@@ -94,7 +94,7 @@ do_start() {
     local target_vol=$(uci -q get mcud.alarm.target_volume || echo "60")
     local alarm_mode=$(uci -q get mcud.alarm.alarm_mode || echo "sharp")
     local sound_type=$(uci -q get mcud.alarm.sound_type || echo "chime")
-    local sound_file=$(uci -q get mcud.alarm.sound_file || echo "/usr/share/sounds/alarm_sharp.wav")
+    local sound_file=$(uci -q get mcud.alarm.sound_file || echo "/usr/share/sounds/alarm_wake_up.wav")
     local stream_url=$(uci -q get mcud.alarm.stream_url || echo "http://icecast.vrtcdn.be/klara-high.mp3")
     local fade_sec=$(uci -q get mcud.alarm.fade_sec || echo "0")
     local duration_min=$(uci -q get mcud.alarm.duration_min || echo "30")

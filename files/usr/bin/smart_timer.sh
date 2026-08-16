@@ -79,7 +79,7 @@ do_ring() {
 do_start() {
     local total_sec=${1:-300}
     local name=${2:-"Timer"}
-    local sound_file=${3:-"/usr/share/sounds/alarm_sharp.wav"}
+    local sound_file=${3:-"/usr/share/sounds/timer_sharp.wav"}
     local volume=${4:-70}
 
     [ "$total_sec" -le 0 ] && exit 0
