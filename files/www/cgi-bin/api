@@ -242,11 +242,40 @@ case "$CMD" in
         S_TTL=604800
         [ -f /etc/audiopro_auth ] && . /etc/audiopro_auth 2>/dev/null
         S_DAYS=$((S_TTL / 86400))
-        echo "{\"status\":\"ok\",\"auth_enabled\":$AUTH_EN,\"session_ttl\":$S_TTL,\"session_days\":$S_DAYS}"
+
+        HTTPS_EN="false"
+        if uci -q get uhttpd.main.listen_https >/dev/null 2>&1; then
+            HTTPS_EN="true"
+        fi
+
+        HTTPS_REDIR="false"
+        [ "$(uci -q get uhttpd.main.redirect_https 2>/dev/null)" = "1" ] && HTTPS_REDIR="true"
+
+        HAS_CERT="false"
+        [ -f /etc/uhttpd.crt ] && HAS_CERT="true"
+
+        echo "{\"status\":\"ok\",\"auth_enabled\":$AUTH_EN,\"session_ttl\":$S_TTL,\"session_days\":$S_DAYS,\"https_enabled\":$HTTPS_EN,\"https_redirect\":$HTTPS_REDIR,\"has_cert\":$HAS_CERT}"
+        ;;
+    download_cert)
+        if [ -f /etc/uhttpd.crt ]; then
+            echo "Content-Type: application/x-x509-ca-cert"
+            echo "Content-Disposition: attachment; filename=\"audiopro-c3.crt\""
+            echo ""
+            cat /etc/uhttpd.crt
+            exit 0
+        else
+            echo "Status: 404 Not Found"
+            echo "Content-Type: text/plain"
+            echo ""
+            echo "Certificate not generated yet"
+            exit 0
+        fi
         ;;
     save_security)
         AUTH_EN_RAW=$(get_param auth_enabled)
         SESS_DAYS_RAW=$(get_param session_days)
+        HTTPS_EN_RAW=$(get_param https_enabled)
+        HTTPS_REDIR_RAW=$(get_param https_redirect)
         
         AUTH_EN=0
         [ "$AUTH_EN_RAW" = "1" ] || [ "$AUTH_EN_RAW" = "true" ] && AUTH_EN=1
@@ -260,7 +289,25 @@ case "$CMD" in
 AUTH_ENABLED=$AUTH_EN
 SESSION_TTL=$SESS_TTL
 SEC_EOF
-        echo "{\"status\":\"ok\",\"message\":\"Security settings saved\",\"auth_enabled\":$AUTH_EN,\"session_ttl\":$SESS_TTL,\"session_days\":$SESS_DAYS}"
+
+        # Manage HTTPS configuration in uhttpd
+        if [ "$HTTPS_EN_RAW" = "1" ] || [ "$HTTPS_EN_RAW" = "true" ]; then
+            uci -q del uhttpd.main.listen_https 2>/dev/null
+            uci add_list uhttpd.main.listen_https='0.0.0.0:443' 2>/dev/null
+            uci add_list uhttpd.main.listen_https='[::]:443' 2>/dev/null
+            if [ "$HTTPS_REDIR_RAW" = "1" ] || [ "$HTTPS_REDIR_RAW" = "true" ]; then
+                uci set uhttpd.main.redirect_https='1' 2>/dev/null
+            else
+                uci set uhttpd.main.redirect_https='0' 2>/dev/null
+            fi
+        else
+            uci -q del uhttpd.main.listen_https 2>/dev/null
+            uci set uhttpd.main.redirect_https='0' 2>/dev/null
+        fi
+        uci commit uhttpd 2>/dev/null
+        (sleep 1 && /etc/init.d/uhttpd restart) >/dev/null 2>&1 &
+
+        echo "{\"status\":\"ok\",\"message\":\"Security settings applied\",\"auth_enabled\":$AUTH_EN,\"session_ttl\":$SESS_TTL,\"session_days\":$SESS_DAYS}"
         ;;
     save_ap)
         AP_SSID_RAW=$(get_param ap_ssid)

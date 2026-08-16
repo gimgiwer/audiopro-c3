@@ -2384,6 +2384,37 @@
               </div>
             </div>
 
+            <div class="switch-row" style="margin-top:12px; border-top:1px solid var(--border-subtle); padding-top:12px;">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="sec_enable_https">Enable HTTPS (TLS 443)</span>
+                <span class="switch-desc" data-i18n="sec_enable_https_desc">Encrypted web traffic with 100-year SSL cert</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="cfgHttpsEnabled" onchange="toggleHttpsFields()">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="switch-row" id="httpsRedirectRow">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="sec_redirect_https">Redirect HTTP to HTTPS</span>
+                <span class="switch-desc" data-i18n="sec_redirect_https_desc">Automatically redirect port 80 to 443</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="cfgHttpsRedirect">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div id="certDownloadBox" style="margin-bottom:12px;">
+              <a href="/cgi-bin/api?action=download_cert" download="audiopro-c3.crt" class="btn-step-fine" style="display:inline-flex; align-items:center; gap:6px; font-size:0.78rem; text-decoration:none; padding:8px 12px; height:auto;">
+                <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" style="width:14px;height:14px;">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span data-i18n="sec_download_cert">Download SSL Certificate (.crt)</span>
+              </a>
+            </div>
+
             <div style="font-size:0.72rem; color:var(--text-muted); background:rgba(125,125,125,0.05); padding:8px 12px; border-radius:var(--radius-sm); border-left:2px solid var(--accent); margin-bottom:12px;">
               <span data-i18n="sec_binding_info">Persistent cookie with IP & browser fingerprint lock. Disconnecting or switching network requires re-authentication.</span>
             </div>
@@ -2563,6 +2594,11 @@
         sec_binding_info: "Persistent cookie with IP & browser fingerprint lock. Disconnecting or switching network requires re-authentication.",
         sec_logout: "Logout",
         sec_save_btn: "Save Security",
+        sec_enable_https: "Enable HTTPS (TLS 443)",
+        sec_enable_https_desc: "Encrypted web traffic with 100-year SSL cert",
+        sec_redirect_https: "Redirect HTTP to HTTPS",
+        sec_redirect_https_desc: "Automatically redirect port 80 to 443",
+        sec_download_cert: "Download SSL Certificate (.crt)",
         auth_subtitle: "System Authentication Required",
         auth_username: "Username",
         auth_password: "Password",
@@ -2647,6 +2683,11 @@
         sec_binding_info: "Персистентная cookie с блокировкой по IP и браузеру. Смена сети требует повторного входа.",
         sec_logout: "Выйти из сессии",
         sec_save_btn: "Сохранить параметры безопасности",
+        sec_enable_https: "Включить HTTPS (TLS 443)",
+        sec_enable_https_desc: "Шифрование трафика с 100-летним SSL сертификатом",
+        sec_redirect_https: "Редирект HTTP на HTTPS",
+        sec_redirect_https_desc: "Автоматический переход с порта 80 на 443",
+        sec_download_cert: "Скачать SSL сертификат (.crt)",
         auth_subtitle: "Требуется системная авторизация",
         auth_username: "Имя пользователя",
         auth_password: "Пароль",
@@ -2783,6 +2824,9 @@
       // Security Elements
       cfgAuthEnabled: document.getElementById('cfgAuthEnabled'),
       cfgSessionDays: document.getElementById('cfgSessionDays'),
+      cfgHttpsEnabled: document.getElementById('cfgHttpsEnabled'),
+      cfgHttpsRedirect: document.getElementById('cfgHttpsRedirect'),
+      httpsRedirectRow: document.getElementById('httpsRedirectRow'),
       secLogoutBtn: document.getElementById('secLogoutBtn'),
       loginOverlay: document.getElementById('loginOverlay'),
       loginUser: document.getElementById('loginUser'),
@@ -3044,8 +3088,17 @@
         .then(data => {
           if (el.cfgAuthEnabled) el.cfgAuthEnabled.checked = (data.auth_enabled === 1 || data.auth_enabled === '1');
           if (el.cfgSessionDays) el.cfgSessionDays.value = data.session_days || 7;
+          if (el.cfgHttpsEnabled) el.cfgHttpsEnabled.checked = (data.https_enabled === true || data.https_enabled === 'true');
+          if (el.cfgHttpsRedirect) el.cfgHttpsRedirect.checked = (data.https_redirect === true || data.https_redirect === 'true');
+          toggleHttpsFields();
         })
         .catch(err => console.warn('Load security error:', err));
+    }
+
+    function toggleHttpsFields() {
+      if (el.httpsRedirectRow && el.cfgHttpsEnabled) {
+        el.httpsRedirectRow.style.display = el.cfgHttpsEnabled.checked ? 'flex' : 'none';
+      }
     }
 
     function saveSecuritySettings(e) {
@@ -3053,8 +3106,10 @@
       haptic(25);
       const en = el.cfgAuthEnabled.checked ? '1' : '0';
       const days = el.cfgSessionDays.value || '7';
+      const httpsEn = (el.cfgHttpsEnabled && el.cfgHttpsEnabled.checked) ? '1' : '0';
+      const httpsRedir = (el.cfgHttpsRedirect && el.cfgHttpsRedirect.checked) ? '1' : '0';
 
-      const params = `action=save_security&auth_enabled=${en}&session_days=${days}`;
+      const params = `action=save_security&auth_enabled=${en}&session_days=${days}&https_enabled=${httpsEn}&https_redirect=${httpsRedir}`;
       apiFetch(`/cgi-bin/api?${params}`)
         .then(res => res.json())
         .then(data => {

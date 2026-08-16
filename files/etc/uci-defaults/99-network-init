@@ -14,12 +14,19 @@ if [ -e /dev/zram0 ]; then
     swapon -p 100 /dev/zram0 2>/dev/null
 fi
 
-# Firewall rules for HTTP API (80) & MQTT (1883)
+# Firewall rules for HTTP (80), HTTPS (443) & MQTT (1883)
 uci add firewall rule 2>/dev/null
-uci set firewall.@rule[-1].name='Allow-HTTP-API' 2>/dev/null
+uci set firewall.@rule[-1].name='Allow-HTTP' 2>/dev/null
 uci set firewall.@rule[-1].src='*' 2>/dev/null
 uci set firewall.@rule[-1].proto='tcp' 2>/dev/null
 uci set firewall.@rule[-1].dest_port='80' 2>/dev/null
+uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
+
+uci add firewall rule 2>/dev/null
+uci set firewall.@rule[-1].name='Allow-HTTPS' 2>/dev/null
+uci set firewall.@rule[-1].src='*' 2>/dev/null
+uci set firewall.@rule[-1].proto='tcp' 2>/dev/null
+uci set firewall.@rule[-1].dest_port='443' 2>/dev/null
 uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
 
 uci add firewall rule 2>/dev/null
@@ -30,5 +37,22 @@ uci set firewall.@rule[-1].dest_port='1883' 2>/dev/null
 uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
 
 uci commit firewall 2>/dev/null
+
+# Generate 100-year HTTPS SSL certificate if not present
+if [ ! -f /etc/uhttpd.crt ] || [ ! -f /etc/uhttpd.key ]; then
+    if command -v px5g >/dev/null 2>&1; then
+        px5g selfsigned \
+            -days 36500 -newkey rsa:2048 -keyout /etc/uhttpd.key -out /etc/uhttpd.crt \
+            -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" 2>/dev/null || \
+        px5g selfsigned -der \
+            -days 36500 -newkey rsa:2048 -keyout /etc/uhttpd.key -out /etc/uhttpd.crt \
+            -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" 2>/dev/null
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl req -x509 -nodes -days 36500 -newkey rsa:2048 \
+            -keyout /etc/uhttpd.key -out /etc/uhttpd.crt \
+            -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" 2>/dev/null
+    fi
+    chmod 600 /etc/uhttpd.key 2>/dev/null
+fi
 
 exit 0
