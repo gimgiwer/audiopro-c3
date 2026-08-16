@@ -1,0 +1,35 @@
+#!/bin/sh
+
+# SSH hardening: disable password auth by default.
+# Use SSH keys or set a password via passwd after first boot.
+# Re-enable with: uci set dropbear.@dropbear[0].PasswordAuth='on' && uci commit dropbear
+uci set dropbear.@dropbear[0].PasswordAuth='off'
+uci set dropbear.@dropbear[0].RootPasswordAuth='off'
+uci commit dropbear 2>/dev/null
+
+# Enable 32MB ZRAM Swap on 64MB RAM SoC
+if [ -e /dev/zram0 ]; then
+    zram_size=$((32 * 1024 * 1024))
+    echo $zram_size > /sys/block/zram0/disksize 2>/dev/null
+    mkswap /dev/zram0 2>/dev/null
+    swapon -p 100 /dev/zram0 2>/dev/null
+fi
+
+# Firewall rules for HTTP API (80) & MQTT (1883)
+uci add firewall rule 2>/dev/null
+uci set firewall.@rule[-1].name='Allow-HTTP-API' 2>/dev/null
+uci set firewall.@rule[-1].src='*' 2>/dev/null
+uci set firewall.@rule[-1].proto='tcp' 2>/dev/null
+uci set firewall.@rule[-1].dest_port='80' 2>/dev/null
+uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
+
+uci add firewall rule 2>/dev/null
+uci set firewall.@rule[-1].name='Allow-MQTT' 2>/dev/null
+uci set firewall.@rule[-1].src='*' 2>/dev/null
+uci set firewall.@rule[-1].proto='tcp' 2>/dev/null
+uci set firewall.@rule[-1].dest_port='1883' 2>/dev/null
+uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
+
+uci commit firewall 2>/dev/null
+
+exit 0

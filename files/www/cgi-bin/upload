@@ -1,0 +1,77 @@
+#!/bin/sh
+# Authentication Verification
+AUTH_CONF="/etc/audiopro_auth"
+AUTH_ENABLED=0
+if [ -f "$AUTH_CONF" ]; then
+    . "$AUTH_CONF" 2>/dev/null || true
+fi
+
+if [ "$AUTH_ENABLED" = "1" ]; then
+    TOKEN=$(echo "$HTTP_COOKIE" | tr ';' '\n' | grep -i "^[ ]*ap_sid=" | head -n1 | cut -d'=' -f2- | tr -d ' \r\n' | tr -cd 'a-f0-9')
+    SESS_FILE="/tmp/ap_sessions/$TOKEN"
+    NOW=$(date +%s)
+    UA="${HTTP_USER_AGENT:-unknown}"
+    IP="${REMOTE_ADDR:-127.0.0.1}"
+    CUR_FP=$(echo -n "${IP}|${UA}" | md5sum | cut -d' ' -f1)
+    
+    IS_VALID=0
+    if [ -n "$TOKEN" ] && [ -f "$SESS_FILE" ]; then
+        S_EXP=$(grep "^expires=" "$SESS_FILE" 2>/dev/null | cut -d'=' -f2-)
+        S_FP=$(grep "^fingerprint=" "$SESS_FILE" 2>/dev/null | cut -d'=' -f2-)
+        if [ -n "$S_EXP" ] && [ "$NOW" -lt "$S_EXP" ] && [ "$S_FP" = "$CUR_FP" ]; then
+            IS_VALID=1
+        fi
+    fi
+    
+    if [ "$IS_VALID" != "1" ]; then
+        echo "Status: 403 Forbidden"
+        echo "Content-type: application/json"
+        echo ""
+        echo '{"status":"error","code":403,"message":"Forbidden: Authentication required"}'
+        exit 0
+    fi
+fi
+
+echo "Content-type: application/json"
+echo ""
+
+if [ "$REQUEST_METHOD" != "POST" ]; then
+    echo '{"status":"error","message":"Only POST method supported"}'
+    exit 0
+fi
+
+TMP_FILE="/tmp/firmware.bin"
+rm -f "$TMP_FILE" 2>/dev/null
+
+# Read binary payload from stdin
+if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ]; then
+    if [ "$CONTENT_LENGTH" -gt 33554432 ]; then
+        echo '{"status":"error","message":"File exceeds maximum allowed size of 32MB"}'
+        exit 0
+    fi
+    head -c "$CONTENT_LENGTH" > "$TMP_FILE" 2>/dev/null
+else
+    cat > "$TMP_FILE" 2>/dev/null
+fi
+
+FILE_SIZE=$(wc -c < "$TMP_FILE" 2>/dev/null || echo 0)
+
+if [ "$FILE_SIZE" -lt 10240 ]; then
+    rm -f "$TMP_FILE" 2>/dev/null
+    echo '{"status":"error","message":"Uploaded file is too small or corrupted"}'
+    exit 0
+fi
+
+MD5=$(md5sum "$TMP_FILE" 2>/dev/null | cut -d' ' -f1)
+
+# Validate OpenWrt sysupgrade image
+IS_VALID_OPENWRT=0
+if command -v sysupgrade >/dev/null 2>&1; then
+    if sysupgrade -T "$TMP_FILE" >/dev/null 2>&1; then
+        IS_VALID_OPENWRT=1
+    fi
+else
+    IS_VALID_OPENWRT=1
+fi
+
+echo "{\"status\":\"ok\",\"size\":$FILE_SIZE,\"md5\":\"$MD5\",\"is_openwrt\":$IS_VALID_OPENWRT,\"filename\":\"firmware.bin\"}"
