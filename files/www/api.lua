@@ -1,6 +1,6 @@
 --[[
-    High-Performance Native In-Process API Handler for Audio Pro C3
-    Zero-fork execution engine running inside uhttpd-mod-lua
+    Native In-Process Unified API Engine for Audio Pro Addon C3
+    Zero-fork execution running natively inside uhttpd-mod-lua
 --]]
 
 local function read_file(path)
@@ -13,14 +13,6 @@ end
 
 local function write_file(path, content)
     local f = io.open(path, "w")
-    if not f then return false end
-    f:write(content)
-    f:close()
-    return true
-end
-
-local function append_file(path, content)
-    local f = io.open(path, "a")
     if not f then return false end
     f:write(content)
     f:close()
@@ -98,29 +90,58 @@ local function get_md5(str)
     return ""
 end
 
--- Global Entrypoint for uhttpd-mod-lua
+local function uci_get(key, default_val)
+    local f = io.popen("uci -q get " .. key .. " 2>/dev/null", "r")
+    if f then
+        local res = f:read("*l")
+        f:close()
+        if res and res ~= "" then return res end
+    end
+    return default_val or ""
+end
+
+local function verify_system_password(username, password)
+    if not username or username == "" or not password then return false end
+    local shadow = read_file("/etc/shadow")
+    if shadow then
+        for line in string.gmatch(shadow, "[^\r\n]+") do
+            local u, stored = string.match(line, "^([^:]+):([^:]+)")
+            if u == username then
+                if stored and stored ~= "" and stored ~= "*" and stored ~= "!" then
+                    local algo, salt = string.match(stored, "^%$([156])%$([^$]+)")
+                    if salt and algo then
+                        local cmd = string.format("openssl passwd -%s -salt '%s' '%s' 2>/dev/null", algo, string.gsub(salt, "'", "'\\''"), string.gsub(password, "'", "'\\''"))
+                        local f = io.popen(cmd, "r")
+                        if f then
+                            local computed = f:read("*l")
+                            f:close()
+                            if computed == stored then return true end
+                        end
+                    end
+                    return false
+                end
+                break
+            end
+        end
+    end
+    -- Initial setup fallback if no password is set in /etc/shadow
+    if username == "root" and password == "admin" then return true end
+    return false
+end
+
+-- Entrypoint for uhttpd-mod-lua
 function handle_request(env)
     local method = env.REQUEST_METHOD or "GET"
     local query_string = env.QUERY_STRING or ""
     
-    -- Read POST body if present
-    if method == "POST" and uhttpd and uhttpd.recv then
-        local body = ""
-        while true do
-            local chunk = uhttpd.recv(4096)
-            if not chunk or chunk == "" then break end
-            body = body .. chunk
-        end
-        if query_string == "" and body ~= "" then
-            query_string = body
-        end
-    end
-    
     local params = parse_params(query_string)
     local cookies = parse_cookies(env.HTTP_COOKIE or "")
     local action = params.action or ""
-    
-    -- Support direct parameter shorthand like ?volume=50 or ?input=bt
+    local now = os.time()
+    local client_ip = env.REMOTE_ADDR or "127.0.0.1"
+    local client_ua = env.HTTP_USER_AGENT or "unknown"
+    local fp = get_md5(client_ip .. "|" .. client_ua)
+
     if action == "" then
         for k, v in pairs(params) do
             if k == "volume" or k == "mute" or k == "unmute" or k == "input" or k == "status" then
@@ -130,8 +151,54 @@ function handle_request(env)
             end
         end
     end
-    
-    -- Artwork Binary Endpoint
+
+    -- Firmware Binary Upload Endpoint
+    if action == "upload" and method == "POST" then
+        local out_f = io.open("/tmp/firmware.bin", "wb")
+        local total = 0
+        if out_f and uhttpd and uhttpd.recv then
+            while true do
+                local chunk = uhttpd.recv(8192)
+                if not chunk or #chunk == 0 then break end
+                out_f:write(chunk)
+                total = total + #chunk
+                if total > 33554432 then break end
+            end
+            out_f:close()
+        end
+        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n\r\n")
+        if total > 10240 and total <= 33554432 then
+            local md5_pipe = io.popen("md5sum /tmp/firmware.bin 2>/dev/null", "r")
+            local f_md5 = "valid"
+            if md5_pipe then
+                local l = md5_pipe:read("*l") or ""
+                md5_pipe:close()
+                f_md5 = string.match(l, "^(%x+)") or "valid"
+            end
+            uhttpd.send(string.format('{"status":"ok","message":"Firmware uploaded","size":%d,"md5":"%s"}', total, f_md5))
+        else
+            os.remove("/tmp/firmware.bin")
+            uhttpd.send('{"status":"error","message":"Invalid firmware binary size"}')
+        end
+        return
+    end
+
+    -- Read POST body for non-upload API requests
+    if method == "POST" and action ~= "upload" and uhttpd and uhttpd.recv then
+        local body = ""
+        while true do
+            local chunk = uhttpd.recv(4096)
+            if not chunk or chunk == "" then break end
+            body = body .. chunk
+        end
+        if body ~= "" then
+            local post_params = parse_params(body)
+            for k, v in pairs(post_params) do params[k] = v end
+            if params.action then action = params.action end
+        end
+    end
+
+    -- Binary Artwork
     if action == "get_artwork" then
         local artwork = read_file("/tmp/audiopro_artwork.jpg")
         if artwork and #artwork > 0 then
@@ -144,7 +211,7 @@ function handle_request(env)
         end
     end
 
-    -- Download Certificate Endpoint
+    -- Certificate Download
     if action == "download_cert" then
         local cert = read_file("/etc/uhttpd.crt")
         if cert and #cert > 0 then
@@ -157,10 +224,81 @@ function handle_request(env)
         end
     end
 
-    -- Authentication Layer
+    -- Authentication Endpoints
     local auth_conf = read_file("/etc/audiopro_auth") or ""
     local auth_enabled = string.match(auth_conf, "AUTH_ENABLED=(%d+)") == "1"
-    
+    local session_ttl = tonumber(string.match(auth_conf, "SESSION_TTL=(%d+)") or "604800") or 604800
+
+    if action == "login" then
+        local u = params.username or "root"
+        local p = params.password or ""
+        local ip_safe = string.gsub(client_ip, "[^%w%.%:]", "")
+        os.execute("mkdir -p /tmp/ap_auth_fails /tmp/ap_sessions")
+        local fail_file = "/tmp/ap_auth_fails/" .. ip_safe
+        local fail_data = read_file(fail_file) or ""
+        local fail_cnt, fail_tm = string.match(fail_data, "(%d+)%s+(%d+)")
+        fail_cnt = tonumber(fail_cnt or "0") or 0
+        fail_tm = tonumber(fail_tm or "0") or 0
+
+        if fail_cnt >= 5 and (now - fail_tm) < 60 then
+            uhttpd.send("Status: 429 Too Many Requests\r\nContent-Type: application/json\r\n\r\n")
+            uhttpd.send('{"status":"error","code":429,"message":"Too many failed attempts. Please wait 30 seconds."}')
+            return
+        end
+
+        if verify_system_password(u, p) then
+            os.remove(fail_file)
+            local token = get_md5(tostring(now) .. "_" .. fp .. "_" .. tostring(math.random(100000, 999999)))
+            local exp = now + session_ttl
+            write_file("/tmp/ap_sessions/" .. token, string.format("username=%s\nexpires=%d\nfingerprint=%s\ncreated=%d\n", u, exp, fp, now))
+            uhttpd.send(string.format("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Strict\r\n\r\n", token, session_ttl))
+            uhttpd.send(string.format('{"status":"ok","message":"Authenticated","username":"%s","expires":%d}', json_escape(u), exp))
+            return
+        else
+            if (now - fail_tm) > 60 then fail_cnt = 1 else fail_cnt = fail_cnt + 1 end
+            write_file(fail_file, string.format("%d %d\n", fail_cnt, now))
+            uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n\r\n")
+            uhttpd.send('{"status":"error","code":403,"message":"Invalid credentials"}')
+            return
+        end
+    elseif action == "logout" then
+        local token = cookies.ap_sid or ""
+        if token ~= "" then os.remove("/tmp/ap_sessions/" .. token) end
+        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict\r\n\r\n")
+        uhttpd.send('{"status":"ok","message":"Logged out"}')
+        return
+    elseif action == "check_auth" or action == "check" then
+        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n\r\n")
+        if not auth_enabled then
+            uhttpd.send(string.format('{"auth_required":false,"logged_in":true,"username":"root","fingerprint":"%s"}', fp))
+            return
+        end
+        local token = cookies.ap_sid or ""
+        local is_logged_in = false
+        local user = ""
+        if token ~= "" then
+            local sess = read_file("/tmp/ap_sessions/" .. token)
+            if sess then
+                local exp = tonumber(string.match(sess, "expires=(%d+)") or "0")
+                local s_fp = string.match(sess, "fingerprint=([^\n\r]+)") or ""
+                local s_u = string.match(sess, "username=([^\n\r]+)") or "root"
+                if now < exp and s_fp == fp then
+                    is_logged_in = true
+                    user = s_u
+                else
+                    os.remove("/tmp/ap_sessions/" .. token)
+                end
+            end
+        end
+        if is_logged_in then
+            uhttpd.send(string.format('{"auth_required":true,"logged_in":true,"username":"%s","fingerprint":"%s"}', json_escape(user), fp))
+        else
+            uhttpd.send(string.format('{"auth_required":true,"logged_in":false,"fingerprint":"%s"}', fp))
+        end
+        return
+    end
+
+    -- Verify Auth Token for Protected Actions
     if auth_enabled then
         local token = cookies.ap_sid or ""
         if token == "" and env.HTTP_AUTHORIZATION then
@@ -173,12 +311,11 @@ function handle_request(env)
         token = string.match(token, "^(%x+)") or ""
         local is_valid = false
         if token ~= "" then
-            local sess_content = read_file("/tmp/ap_sessions/" .. token)
-            if sess_content then
-                local exp = tonumber(string.match(sess_content, "expires=(%d+)") or "0")
-                local s_fp = string.match(sess_content, "fingerprint=([^\n\r]+)") or ""
-                local cur_fp = get_md5((env.REMOTE_ADDR or "127.0.0.1") .. "|" .. (env.HTTP_USER_AGENT or "unknown"))
-                if os.time() < exp and s_fp == cur_fp then
+            local sess = read_file("/tmp/ap_sessions/" .. token)
+            if sess then
+                local exp = tonumber(string.match(sess, "expires=(%d+)") or "0")
+                local s_fp = string.match(sess, "fingerprint=([^\n\r]+)") or ""
+                if now < exp and s_fp == fp then
                     is_valid = true
                 end
             end
@@ -194,7 +331,7 @@ function handle_request(env)
     -- Default JSON Headers
     uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\n\r\n")
 
-    -- Dispatch Actions
+    -- Dispatch Core Actions
     if action == "status" then
         local bat = 100
         local bat_str = read_file("/tmp/battery_status") or ""
@@ -235,7 +372,7 @@ function handle_request(env)
         if now_playing == "" then now_playing = '{"active":false}' end
 
         local resp = string.format('{"status":"ok","battery":%d,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"AudioPro-C3","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"now_playing":%s}',
-            bat, json_escape(src), vol, tostring(mut), env.REMOTE_ADDR or "127.0.0.1", uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), now_playing)
+            bat, json_escape(src), vol, tostring(mut), client_ip, uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), now_playing)
         uhttpd.send(resp)
 
     elseif action == "volume" then
@@ -346,6 +483,204 @@ function handle_request(env)
         os.execute("killall -9 mpg123 madplay 2>/dev/null")
         uhttpd.send('{"status":"ok","message":"Streaming stopped"}')
 
+    elseif action == "wifi_scan" then
+        local f = io.popen("iwinfo wlan0 scan 2>/dev/null | grep 'ESSID:' | awk -F'\"' '{print $2}'", "r")
+        local networks = {}
+        if f then
+            for line in f:lines() do
+                if line ~= "" and not networks[line] then
+                    table.insert(networks, line)
+                    networks[line] = true
+                end
+            end
+            f:close()
+        end
+        local list_items = {}
+        for _, n in ipairs(networks) do
+            table.insert(list_items, string.format('{"ssid":"%s"}', json_escape(n)))
+        end
+        uhttpd.send(string.format('{"status":"ok","networks":[%s]}', table.concat(list_items, ",")))
+
+    elseif action == "wifi_connect" then
+        local ssid = params.ssid or ""
+        local key = params.key or ""
+        if ssid ~= "" then
+            os.execute(string.format("uci set wireless.sta_iface.ssid='%s' 2>/dev/null; uci set wireless.sta_iface.key='%s' 2>/dev/null; uci set wireless.sta_iface.disabled='0' 2>/dev/null; uci commit wireless 2>/dev/null; (sleep 2 && wifi reload) >/dev/null 2>&1 &",
+                string.gsub(ssid, "'", "'\\''"), string.gsub(key, "'", "'\\''")))
+            uhttpd.send('{"status":"ok","message":"Connecting to home Wi-Fi..."}')
+        else
+            uhttpd.send('{"status":"error","message":"SSID required"}')
+        end
+
+    elseif action == "reset_wifi" then
+        os.execute("(sleep 2 && /usr/bin/wifi-reset-ap) >/dev/null 2>&1 &")
+        uhttpd.send('{"status":"ok","message":"Resetting Wi-Fi to AP mode..."}')
+
+    elseif action == "flash_firmware" then
+        local keep = (params.keep_settings == "1" or params.keep_settings == "true")
+        local keep_flag = keep and "" or "-n"
+        if read_file("/tmp/firmware.bin") then
+            os.execute(string.format("(sleep 2 && sysupgrade %s /tmp/firmware.bin) >/dev/null 2>&1 &", keep_flag))
+            uhttpd.send('{"status":"ok","message":"Flashing started. Device will reboot in 2-3 minutes."}')
+        else
+            uhttpd.send('{"status":"error","message":"No firmware file uploaded"}')
+        end
+
+    elseif action == "get_config" then
+        local ap_ssid = uci_get("wireless.ap_iface.ssid", "AudioPro-C3-Setup")
+        local ap_key = uci_get("wireless.ap_iface.key", "")
+        local ap_chan = uci_get("wireless.radio0.channel", "auto")
+        local ap_dis = (uci_get("wireless.ap_iface.disabled", "0") == "1")
+
+        local sta_ssid = uci_get("wireless.sta_iface.ssid", "")
+        local sta_key = uci_get("wireless.sta_iface.key", "")
+        local sta_dis = (uci_get("wireless.sta_iface.disabled", "1") == "1")
+
+        local def_vol = tonumber(uci_get("mcud.main.default_volume", "25")) or 25
+        local auto_sleep = tonumber(uci_get("mcud.main.auto_sleep_min", "0")) or 0
+        local slp_aux = (uci_get("mcud.main.sleep_in_aux", "0") == "1")
+        local slp_bt = (uci_get("mcud.main.sleep_in_bt", "0") == "1")
+
+        local mqtt_en = (uci_get("mcud.main.mqtt_enabled", "1") == "1")
+        local mqtt_host = uci_get("mcud.main.mqtt_host", "127.0.0.1")
+        local mqtt_port = tonumber(uci_get("mcud.main.mqtt_port", "1883")) or 1883
+        local mqtt_pre = uci_get("mcud.main.mqtt_topic_prefix", "audiopro_c3")
+        local mqtt_user = uci_get("mcud.main.mqtt_user", "")
+
+        local hostname = uci_get("system.@system[0].hostname", "AudioPro-C3")
+
+        local resp = string.format('{"status":"ok","ap_ssid":"%s","ap_key":"%s","ap_channel":"%s","ap_disabled":%s,"sta_ssid":"%s","sta_key":"%s","sta_disabled":%s,"default_volume":%d,"auto_sleep_min":%d,"sleep_in_aux":%s,"sleep_in_bt":%s,"mqtt_enabled":%s,"mqtt_host":"%s","mqtt_port":%d,"mqtt_prefix":"%s","mqtt_user":"%s","hostname":"%s"}',
+            json_escape(ap_ssid), json_escape(ap_key), json_escape(ap_chan), tostring(ap_dis),
+            json_escape(sta_ssid), json_escape(sta_key), tostring(sta_dis),
+            def_vol, auto_sleep, tostring(slp_aux), tostring(slp_bt),
+            tostring(mqtt_en), json_escape(mqtt_host), mqtt_port, json_escape(mqtt_pre), json_escape(mqtt_user), json_escape(hostname))
+        uhttpd.send(resp)
+
+    elseif action == "get_security" then
+        local s_days = math.floor(session_ttl / 86400)
+        local https_en = (uci_get("uhttpd.main.listen_https", "") ~= "")
+        local https_redir = (uci_get("uhttpd.main.redirect_https", "0") == "1")
+        local has_cert = (read_file("/etc/uhttpd.crt") ~= nil)
+        uhttpd.send(string.format('{"status":"ok","auth_enabled":%s,"session_ttl":%d,"session_days":%d,"https_enabled":%s,"https_redirect":%s,"has_cert":%s}',
+            tostring(auth_enabled), session_ttl, s_days, tostring(https_en), tostring(https_redir), tostring(has_cert)))
+
+    elseif action == "save_security" then
+        local auth_en = (params.auth_enabled == "1" or params.auth_enabled == "true") and 1 or 0
+        local days = tonumber(params.session_days or "7") or 7
+        if days < 1 then days = 1 end
+        if days > 365 then days = 365 end
+        local ttl = days * 86400
+        write_file("/etc/audiopro_auth", string.format("AUTH_ENABLED=%d\nSESSION_TTL=%d\n", auth_en, ttl))
+
+        local https_en = (params.https_enabled == "1" or params.https_enabled == "true")
+        local https_redir = (params.https_redirect == "1" or params.https_redirect == "true")
+        if https_en then
+            os.execute("uci -q del uhttpd.main.listen_https 2>/dev/null; uci add_list uhttpd.main.listen_https='0.0.0.0:443' 2>/dev/null; uci add_list uhttpd.main.listen_https='[::]:443' 2>/dev/null")
+            if https_redir then
+                os.execute("uci set uhttpd.main.redirect_https='1' 2>/dev/null")
+            else
+                os.execute("uci set uhttpd.main.redirect_https='0' 2>/dev/null")
+            end
+        else
+            os.execute("uci -q del uhttpd.main.listen_https 2>/dev/null; uci set uhttpd.main.redirect_https='0' 2>/dev/null")
+        end
+        os.execute("uci commit uhttpd 2>/dev/null; (sleep 1 && /etc/init.d/uhttpd restart) >/dev/null 2>&1 &")
+        uhttpd.send(string.format('{"status":"ok","message":"Security settings saved","auth_enabled":%d,"session_ttl":%d,"session_days":%d}', auth_en, ttl, days))
+
+    elseif action == "save_ap" then
+        local ssid = params.ap_ssid or ""
+        local key = params.ap_key or ""
+        local chan = params.ap_channel or "auto"
+        local dis = (params.ap_disabled == "1" or params.ap_disabled == "true") and "1" or "0"
+
+        if ssid ~= "" then os.execute(string.format("uci set wireless.ap_iface.ssid='%s' 2>/dev/null", string.gsub(ssid, "'", "'\\''"))) end
+        if key ~= "" then
+            if #key >= 8 then
+                os.execute(string.format("uci set wireless.ap_iface.encryption='psk2' 2>/dev/null; uci set wireless.ap_iface.key='%s' 2>/dev/null", string.gsub(key, "'", "'\\''")))
+            else
+                uhttpd.send('{"status":"error","message":"AP password must be at least 8 characters"}')
+                return
+            end
+        else
+            os.execute("uci set wireless.ap_iface.encryption='none' 2>/dev/null; uci -q del wireless.ap_iface.key 2>/dev/null")
+        end
+        if chan ~= "" then os.execute(string.format("uci set wireless.radio0.channel='%s' 2>/dev/null", string.gsub(chan, "'", "'\\''"))) end
+        os.execute(string.format("uci set wireless.ap_iface.disabled='%s' 2>/dev/null; uci commit wireless 2>/dev/null; (sleep 1 && wifi reload) >/dev/null 2>&1 &", dis))
+        uhttpd.send('{"status":"ok","message":"AP settings applied"}')
+
+    elseif action == "save_audio" then
+        local dvol = tonumber(params.default_volume or "25") or 25
+        local aslp = tonumber(params.auto_sleep_min or "0") or 0
+        local slp_aux = (params.sleep_in_aux == "1" or params.sleep_in_aux == "true") and "1" or "0"
+        local slp_bt = (params.sleep_in_bt == "1" or params.sleep_in_bt == "true") and "1" or "0"
+
+        os.execute(string.format("uci set mcud.main.default_volume='%d'; uci set mcud.main.auto_sleep_min='%d'; uci set mcud.main.sleep_in_aux='%s'; uci set mcud.main.sleep_in_bt='%s'; uci commit mcud; /etc/init.d/mcud restart >/dev/null 2>&1 &",
+            dvol, aslp, slp_aux, slp_bt))
+        uhttpd.send('{"status":"ok","message":"Audio & Power settings saved"}')
+
+    elseif action == "save_device" then
+        local host = string.lower(string.gsub(params.hostname or "", "[^%w%-]", ""))
+        if host ~= "" then
+            os.execute(string.format("uci set system.@system[0].hostname='%s'; uci commit system; echo '%s' > /proc/sys/kernel/hostname 2>/dev/null; sed -i 's/name = .*/name = \"%s\";/' /etc/shairport-sync.conf 2>/dev/null; uci set shairport-sync.shairport_sync.name='%s' 2>/dev/null; uci commit shairport-sync 2>/dev/null",
+                host, host, host, host))
+            uhttpd.send(string.format('{"status":"ok","message":"Device name updated to %s"}', host))
+        else
+            uhttpd.send('{"status":"error","message":"Hostname cannot be empty"}')
+        end
+
+    elseif action == "save_mqtt" then
+        local en = (params.mqtt_enabled == "1" or params.mqtt_enabled == "true") and "1" or "0"
+        local host = params.mqtt_host or "127.0.0.1"
+        local port = tonumber(params.mqtt_port or "1883") or 1883
+        local pre = params.mqtt_prefix or "audiopro_c3"
+        local user = params.mqtt_user or ""
+        local pass = params.mqtt_pass or ""
+
+        os.execute(string.format("uci set mcud.main.mqtt_enabled='%s'; uci set mcud.main.mqtt_host='%s'; uci set mcud.main.mqtt_port='%d'; uci set mcud.main.mqtt_topic_prefix='%s'; uci set mcud.main.mqtt_user='%s'; uci set mcud.main.mqtt_password='%s'; uci commit mcud; /etc/init.d/mcud restart >/dev/null 2>&1 &",
+            en, string.gsub(host, "'", "'\\''"), port, string.gsub(pre, "'", "'\\''"), string.gsub(user, "'", "'\\''"), string.gsub(pass, "'", "'\\''")))
+        uhttpd.send('{"status":"ok","message":"MQTT settings saved"}')
+
+    elseif action == "get_presets" then
+        local p1_m = uci_get("audiopro_presets.1.mode", "ha")
+        local p1_n = uci_get("audiopro_presets.1.name", "Preset 1")
+        local p1_u = uci_get("audiopro_presets.1.url", "")
+        local p1_c = uci_get("audiopro_presets.1.command", "")
+
+        local p2_m = uci_get("audiopro_presets.2.mode", "ha")
+        local p2_n = uci_get("audiopro_presets.2.name", "Preset 2")
+        local p2_u = uci_get("audiopro_presets.2.url", "")
+        local p2_c = uci_get("audiopro_presets.2.command", "")
+
+        local p3_m = uci_get("audiopro_presets.3.mode", "ha")
+        local p3_n = uci_get("audiopro_presets.3.name", "Preset 3")
+        local p3_u = uci_get("audiopro_presets.3.url", "")
+        local p3_c = uci_get("audiopro_presets.3.command", "")
+
+        local p4_m = uci_get("audiopro_presets.4.mode", "ha")
+        local p4_n = uci_get("audiopro_presets.4.name", "Preset 4")
+        local p4_u = uci_get("audiopro_presets.4.url", "")
+        local p4_c = uci_get("audiopro_presets.4.command", "")
+
+        local resp = string.format('{"status":"ok","presets":[{"id":1,"name":"%s","mode":"%s","url":"%s","command":"%s"},{"id":2,"name":"%s","mode":"%s","url":"%s","command":"%s"},{"id":3,"name":"%s","mode":"%s","url":"%s","command":"%s"},{"id":4,"name":"%s","mode":"%s","url":"%s","command":"%s"}]}',
+            json_escape(p1_n), json_escape(p1_m), json_escape(p1_u), json_escape(p1_c),
+            json_escape(p2_n), json_escape(p2_m), json_escape(p2_u), json_escape(p2_c),
+            json_escape(p3_n), json_escape(p3_m), json_escape(p3_u), json_escape(p3_c),
+            json_escape(p4_n), json_escape(p4_m), json_escape(p4_u), json_escape(p4_c))
+        uhttpd.send(resp)
+
+    elseif action == "save_presets" then
+        local pid = tonumber(params.id or "1") or 1
+        if pid < 1 then pid = 1 end
+        if pid > 4 then pid = 4 end
+        local pname = params.name or ("Preset " .. pid)
+        local pmode = params.mode or "ha"
+        local purl = params.url or ""
+        local pcmd = params.command or ""
+
+        os.execute(string.format("uci set audiopro_presets.%d.name='%s' 2>/dev/null; uci set audiopro_presets.%d.mode='%s' 2>/dev/null; uci set audiopro_presets.%d.url='%s' 2>/dev/null; uci set audiopro_presets.%d.command='%s' 2>/dev/null; uci commit audiopro_presets 2>/dev/null",
+            pid, string.gsub(pname, "'", "'\\''"), pid, string.gsub(pmode, "'", "'\\''"), pid, string.gsub(purl, "'", "'\\''"), pid, string.gsub(pcmd, "'", "'\\''")))
+        uhttpd.send(string.format('{"status":"ok","message":"Preset %d updated"}', pid))
+
     elseif action == "reboot" then
         os.execute("(sleep 2 && reboot) >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Rebooting..."}')
@@ -355,15 +690,6 @@ function handle_request(env)
         uhttpd.send('{"status":"ok","message":"Powering off..."}')
 
     else
-        -- Fallback: delegate complex configuration tasks to cgi-bin
-        local f = io.popen(string.format("QUERY_STRING='%s' /www/cgi-bin/api 2>/dev/null", string.gsub(query_string, "'", "'\\''")), "r")
-        if f then
-            local raw = f:read("*a") or ""
-            f:close()
-            local json_body = string.match(raw, "\r?\n\r?\n(.*)$") or raw
-            uhttpd.send(json_body)
-        else
-            uhttpd.send('{"error":"unknown action"}')
-        end
+        uhttpd.send('{"status":"error","message":"Unknown API action"}')
     end
 end
