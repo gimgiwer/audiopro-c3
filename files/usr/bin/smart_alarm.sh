@@ -1,36 +1,43 @@
 #!/bin/sh
 # Audio Pro C3 - Smart Alarm Script
-# Плавно увеличивает громкость и включает любимую радиостанцию
+# Softly ramps up volume and starts selected internet radio stream
 
-# Настройки по умолчанию
-TARGET_VOL=${1:-40} # Целевая громкость 40%
-STREAM_URL=${2:-"http://icecast.vrtcdn.be/klara-high.mp3"} # Классическая музыка (Klara)
-FADE_STEP=2  # Шаг увеличения громкости (%)
-FADE_DELAY=10 # Задержка между шагами (секунды)
+TARGET_VOL=${1:-40}
+STREAM_URL=${2:-"http://icecast.vrtcdn.be/klara-high.mp3"}
+FADE_STEP=2
+FADE_DELAY=10
 
-# 1. Прибиваем текущие плееры, если они играют (через Arbiter или напрямую)
-killall mpg123 >/dev/null 2>&1
-killall snapclient >/dev/null 2>&1
-killall shairport-sync >/dev/null 2>&1
+set_volume() {
+    local v=$1
+    if [ -p /tmp/mcu_cmd_fifo ]; then
+        printf "AXX+VOL+%03d\n" "$v" > /tmp/mcu_cmd_fifo 2>/dev/null || true
+    fi
+    amixer -q -c 0 sset Music "${v}%" 2>/dev/null || true
+}
 
-# 2. Сбрасываем громкость ALSA на минимум (чтобы не было резкого удара по ушам)
-amixer sset Master 5% >/dev/null 2>&1
+# 1. Terminate competing playback processes
+killall -9 mpg123 >/dev/null 2>&1
+killall -9 snapclient >/dev/null 2>&1
+/etc/init.d/shairport-sync restart >/dev/null 2>&1
 
-# 3. Играем приветственный звук будильника
-aplay /usr/share/sounds/bell.wav >/dev/null 2>&1
+# 2. Reset volume to minimum (prevent sudden burst)
+set_volume 5
 
-# 4. Запускаем интернет-радио в фоне
-mpg123 "$STREAM_URL" >/dev/null 2>&1 &
+# 3. Play alarm chime
+aplay -q -D music_in /usr/share/sounds/bell.wav 2>/dev/null || aplay -q /usr/share/sounds/bell.wav 2>/dev/null || true
+
+# 4. Start radio stream in background
+mpg123 -a music_in "$STREAM_URL" >/dev/null 2>&1 &
 ALARM_PID=$!
 
-# 5. Плавное нарастание громкости (Fade-in)
+# 5. Smooth volume fade-in
 CURRENT_VOL=5
-while [ $CURRENT_VOL -lt $TARGET_VOL ]; do
+while [ "$CURRENT_VOL" -lt "$TARGET_VOL" ]; do
     CURRENT_VOL=$((CURRENT_VOL + FADE_STEP))
-    amixer sset Master ${CURRENT_VOL}% >/dev/null 2>&1
-    sleep $FADE_DELAY
+    set_volume "$CURRENT_VOL"
+    sleep "$FADE_DELAY"
 done
 
-# 6. Будильник играет ровно 1 час, затем сам выключается
+# 6. Play for 1 hour, then stop
 sleep 3600
-kill $ALARM_PID >/dev/null 2>&1
+kill "$ALARM_PID" >/dev/null 2>&1
