@@ -79,6 +79,25 @@ static int    g_last_bat = 100;
 
 static int uart_init(void);
 
+static inline void safe_write(int fd, const void *buf, size_t count) {
+    if (fd >= 0 && buf && count > 0) {
+        ssize_t ret = write(fd, buf, count);
+        (void)ret;
+    }
+}
+
+static void atomic_write_file(const char *path, const char *content) {
+    if (!path || !content) return;
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d", path, (int)getpid());
+    int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        safe_write(fd, content, strlen(content));
+        close(fd);
+        rename(tmp_path, path);
+    }
+}
+
 static int uart_send(const char *cmd) {
     if (g_uart_fd < 0) {
         g_uart_fd = uart_init();
@@ -115,13 +134,6 @@ static void play_sound(const char *path) {
         }
         execlp("aplay", "aplay", "-q", "-D", "music_in", path, (char *)NULL);
         _exit(1);
-    }
-}
-
-static inline void safe_write(int fd, const void *buf, size_t count) {
-    if (fd >= 0 && buf && count > 0) {
-        ssize_t ret = write(fd, buf, count);
-        (void)ret;
     }
 }
 
@@ -239,6 +251,11 @@ static void set_hardware_volume(int vol) {
     snprintf(cmd, sizeof(cmd), "AXX+VOL+%03d\n", g_current_vol);
     uart_send(cmd);
     mqtt_publish_volume(g_current_vol);
+
+    char vol_str[16];
+    snprintf(vol_str, sizeof(vol_str), "%d\n", g_current_vol);
+    atomic_write_file("/tmp/current_volume", vol_str);
+
     LOG_INFO("Master Hardware Volume set to %d%%", g_current_vol);
 }
 
@@ -433,12 +450,9 @@ static void set_audio_source(int source) {
     const char *src_name = names[g_current_source];
 
     mqtt_send_sensor("source", src_name);
-    int fd = open("/tmp/audio_source", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
-    if (fd >= 0) {
-        safe_write(fd, src_name, strlen(src_name));
-        safe_write(fd, "\n", 1);
-        close(fd);
-    }
+    char src_buf[32];
+    snprintf(src_buf, sizeof(src_buf), "%s\n", src_name);
+    atomic_write_file("/tmp/audio_source", src_buf);
 
     if (g_current_source == 0) {
         uart_send("AXX+INP+000\n");
@@ -513,12 +527,9 @@ static void process_mcu_command(const char *cmd) {
             mqtt_send_sensor("battery_alert", "normal");
         }
         g_last_bat = bat;
-        int fd = open("/tmp/battery_status", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
-        if (fd >= 0) {
-            safe_write(fd, cmd, strlen(cmd));
-            safe_write(fd, "\n", 1);
-            close(fd);
-        }
+        char bcmd[140];
+        snprintf(bcmd, sizeof(bcmd), "%s\n", cmd);
+        atomic_write_file("/tmp/battery_status", bcmd);
     } else if (strstr(cmd, "MCU+POW+OFF")) {
         LOG_INFO("MCU reported Power Off event. Initiating graceful shutdown...");
         g_running = 0;
