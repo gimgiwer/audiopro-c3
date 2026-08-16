@@ -467,6 +467,25 @@ SEC_EOF
             echo "{\"status\":\"ok\",\"playing\":true}"
         fi
         ;;
+    player_next|next)
+        send_mcu "AXX+TRK+001\n"
+        echo "next" > /tmp/player_cmd 2>/dev/null || true
+        echo "{\"status\":\"ok\",\"action\":\"next\"}"
+        ;;
+    player_prev|prev)
+        send_mcu "AXX+TRK+000\n"
+        echo "prev" > /tmp/player_cmd 2>/dev/null || true
+        echo "{\"status\":\"ok\",\"action\":\"prev\"}"
+        ;;
+    trigger_preset|preset)
+        PID_RAW=$(get_param id)
+        [ -z "$PID_RAW" ] && PID_RAW=$(get_param preset)
+        PID=$(printf "%d" "$PID_RAW" 2>/dev/null || echo 1)
+        [ "$PID" -lt 1 ] && PID=1
+        [ "$PID" -gt 4 ] && PID=4
+        (/usr/bin/audiopro_preset_handler.sh "$PID") >/dev/null 2>&1 &
+        echo "{\"status\":\"ok\",\"message\":\"Preset $PID triggered\"}"
+        ;;
     get_presets)
         P1_M=$(uci -q get audiopro_presets.1.mode 2>/dev/null || echo "ha")
         P1_N=$(uci -q get audiopro_presets.1.name 2>/dev/null || echo "Preset 1")
@@ -579,6 +598,10 @@ JSON_EOF
     reboot)
         (sleep 2 && reboot) >/dev/null 2>&1 &
         echo "{\"status\":\"ok\",\"message\":\"Rebooting...\"}"
+        ;;
+    poweroff|shutdown)
+        (sleep 2 && /sbin/poweroff) >/dev/null 2>&1 &
+        echo "{\"status\":\"ok\",\"message\":\"Powering off...\"}"
         ;;
     *)
         echo "{\"error\":\"unknown command\",\"usage\":\"?volume=50 | ?mute=1 | ?unmute=1 | ?input=wifi|bt|aux | ?status | ?action=get_config | ?action=get_presets | ?action=save_presets | ?action=get_eq | ?action=save_eq | ?action=save_ap | ?action=save_audio | ?action=save_mqtt | ?action=save_device | ?action=wifi_scan | ?action=wifi_connect | ?action=flash_firmware | ?action=check_firmware | ?action=get_security | ?action=save_security | ?action=player_play | ?action=player_pause | ?action=player_toggle | ?action=tts&url=... | ?action=play_stream&url=... | ?action=stop_stream\"}"
