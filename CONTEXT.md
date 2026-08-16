@@ -19,14 +19,38 @@
 ## 2. Аудио-Стек и Маршрутизация (ALSA)
 Колонка работает полностью локально без облаков Linkplay. Все аудиоплееры — это стандартные пакеты OpenWrt.
 
-### Установленные плееры (указываются в DEVICE_PACKAGES):
-* `librespot` — Spotify Connect.
-* `shairport-sync-mbedtls` — Apple AirPlay 2.
-* `gmrender-resurrect` — DLNA / UPnP.
-* `snapclient` — Синхронный Мультирум.
-* `squeezelite-full` — LMS-клиент.
-* `mpg123` — Web-радио.
-* `baresip` — SIP-клиент для Интеркома (Home Assistant).
+### Конфигурация Сборки (`image/mt76x8.mk`)
+Для того чтобы все плееры и службы попали в финальную прошивку, блок устройства **обязан** выглядеть следующим образом. Никаких урезанных вариантов!
+
+```makefile
+define Device/audiopro_c3
+  SOC := mt7628an
+  IMAGE_SIZE := 11456k
+  DEVICE_VENDOR := Audio Pro
+  DEVICE_MODEL := Addon C3
+  DEVICE_VARIANT := Linkplay A28 V01
+  DEVICE_DTS := mt7628an_audiopro_c3
+  KERNEL := kernel-bin | append-dtb | lzma | uImage lzma -O svr4
+  
+  # Обязательный полный список пакетов для "всеядной" колонки
+  DEVICE_PACKAGES := \
+    alsa-utils alsa-lib zram-swap mcud \
+    shairport-sync-mbedtls \
+    librespot \
+    gmrender-resurrect \
+    snapclient \
+    squeezelite-full \
+    mpg123 \
+    baresip \
+    kmod-snd-aloop \
+    wpad-basic-mbedtls \
+    libmosquitto-nossl mosquitto-client-nossl iwinfo \
+    uhttpd uhttpd-mod-lua
+  
+  SUPPORTED_DEVICES += audiopro,c3 linkplay,a28
+endef
+TARGET_DEVICES += audiopro_c3
+```
 
 ### Файлы маршрутизации и логики:
 * `files/etc/asound.conf` — Главный конфиг ALSA. Создает программный микшер (dmix) и разделяет потоки на два виртуальных канала:
