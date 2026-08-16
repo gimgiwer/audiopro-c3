@@ -1848,50 +1848,64 @@
 
         <!-- Quick EQ Presets -->
         <div class="eq-preset-row" style="display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 16px 0;">
-          <button type="button" class="btn-step-fine" style="font-weight:700;" onclick="setEqPreset('Default')">Default</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Audio Pro Signature')">Audio Pro C3</button>
+          <button type="button" class="btn-step-fine" style="font-weight:700;" onclick="setEqPreset('Default')">Default (Factory C3)</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Flat')">Flat (0 dB)</button>
           <button type="button" class="btn-step-fine" onclick="setEqPreset('Bass Boost')">Bass Boost</button>
           <button type="button" class="btn-step-fine" onclick="setEqPreset('Vocal')">Vocal</button>
           <button type="button" class="btn-step-fine" onclick="setEqPreset('Rock')">Rock</button>
           <button type="button" class="btn-step-fine" onclick="setEqPreset('Night')">Night</button>
         </div>
 
-        <!-- 5 Sliders: 60Hz, 250Hz, 1kHz, 4kHz, 12kHz -->
-        <div class="eq-sliders-grid" style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; text-align:center; padding:8px 0;">
+        <!-- 7 Sliders: 60Hz, 150Hz, 400Hz, 1kHz, 2.5kHz, 6kHz, 14kHz -->
+        <div class="eq-sliders-grid" style="display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; text-align:center; padding:8px 0;">
           <div class="eq-col">
-            <span class="eq-val" id="eqVal60" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <span class="eq-val" id="eqVal60" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+2 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand60" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand60" min="-12" max="12" step="1" value="2" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
             </div>
-            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">60 Hz</span>
+            <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">60Hz</span>
           </div>
           <div class="eq-col">
-            <span class="eq-val" id="eqVal250" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <span class="eq-val" id="eqVal150" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+1 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand250" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand150" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
             </div>
-            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">250 Hz</span>
+            <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">150Hz</span>
           </div>
           <div class="eq-col">
-            <span class="eq-val" id="eqVal1k" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <span class="eq-val" id="eqVal400" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand1k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand400" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
             </div>
-            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">1 kHz</span>
+            <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">400Hz</span>
           </div>
           <div class="eq-col">
-            <span class="eq-val" id="eqVal4k" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <span class="eq-val" id="eqVal1k" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand4k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand1k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
             </div>
-            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">4 kHz</span>
+            <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">1kHz</span>
           </div>
           <div class="eq-col">
-            <span class="eq-val" id="eqVal12k" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <span class="eq-val" id="eqVal2k5" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+1 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand12k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand2k5" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
             </div>
-            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">12 kHz</span>
+            <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">2.5k</span>
+          </div>
+          <div class="eq-col">
+            <span class="eq-val" id="eqVal6k" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+2 dB</span>
+            <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
+              <input type="range" id="eqBand6k" min="-12" max="12" step="1" value="2" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+            </div>
+            <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">6kHz</span>
+          </div>
+          <div class="eq-col">
+            <span class="eq-val" id="eqVal14k" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+1 dB</span>
+            <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
+              <input type="range" id="eqBand14k" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+            </div>
+            <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">14kHz</span>
           </div>
         </div>
       </section>
@@ -3444,12 +3458,12 @@
 
     // --- Equalizer & Presets 1..4 Actions Management ---
     const EQ_PRESETS = {
-      'Default': { b60: 0, b250: 0, b1k: 0, b4k: 0, b12k: 0 },
-      'Audio Pro Signature': { b60: 2, b250: 1, b1k: 0, b4k: 1, b12k: 2 },
-      'Bass Boost': { b60: 6, b250: 4, b1k: 0, b4k: 0, b12k: -1 },
-      'Vocal': { b60: -2, b250: 1, b1k: 4, b4k: 2, b12k: 0 },
-      'Rock': { b60: 5, b250: 2, b1k: -1, b4k: 3, b12k: 5 },
-      'Night': { b60: 4, b250: 2, b1k: -2, b4k: 1, b12k: 3 }
+      'Default': { b60: 2, b150: 1, b400: 0, b1k: 0, b2k5: 1, b6k: 2, b14k: 1 },
+      'Flat': { b60: 0, b150: 0, b400: 0, b1k: 0, b2k5: 0, b6k: 0, b14k: 0 },
+      'Bass Boost': { b60: 6, b150: 4, b400: 2, b1k: 0, b2k5: -1, b6k: -1, b14k: -2 },
+      'Vocal': { b60: -2, b150: -1, b400: 1, b1k: 3, b2k5: 3, b6k: 2, b14k: 0 },
+      'Rock': { b60: 5, b150: 3, b400: 0, b1k: -1, b2k5: 1, b6k: 3, b14k: 4 },
+      'Night': { b60: 3, b150: 2, b400: -1, b1k: 1, b2k5: 2, b6k: 1, b14k: 2 }
     };
 
     let eqDebounceTimer = null;
@@ -3460,18 +3474,24 @@
         .then(data => {
           if (data.status === 'ok') {
             const b60 = document.getElementById('eqBand60');
-            const b250 = document.getElementById('eqBand250');
+            const b150 = document.getElementById('eqBand150');
+            const b400 = document.getElementById('eqBand400');
             const b1k = document.getElementById('eqBand1k');
-            const b4k = document.getElementById('eqBand4k');
-            const b12k = document.getElementById('eqBand12k');
-            if (b60) b60.value = data.b60 || 0;
-            if (b250) b250.value = data.b250 || 0;
-            if (b1k) b1k.value = data.b1k || 0;
-            if (b4k) b4k.value = data.b4k || 0;
-            if (b12k) b12k.value = data.b12k || 0;
+            const b2k5 = document.getElementById('eqBand2k5');
+            const b6k = document.getElementById('eqBand6k');
+            const b14k = document.getElementById('eqBand14k');
+
+            if (b60) b60.value = typeof data.b60 !== 'undefined' ? data.b60 : 2;
+            if (b150) b150.value = typeof data.b150 !== 'undefined' ? data.b150 : 1;
+            if (b400) b400.value = typeof data.b400 !== 'undefined' ? data.b400 : 0;
+            if (b1k) b1k.value = typeof data.b1k !== 'undefined' ? data.b1k : 0;
+            if (b2k5) b2k5.value = typeof data.b2k5 !== 'undefined' ? data.b2k5 : 1;
+            if (b6k) b6k.value = typeof data.b6k !== 'undefined' ? data.b6k : 2;
+            if (b14k) b14k.value = typeof data.b14k !== 'undefined' ? data.b14k : 1;
+
             updateEqLabels();
             const badge = document.getElementById('eqActivePresetBadge');
-            if (badge) badge.textContent = data.preset || 'Flat';
+            if (badge) badge.textContent = data.preset || 'Default';
           }
         })
         .catch(err => console.warn('Get EQ error:', err));
@@ -3479,19 +3499,23 @@
 
     function updateEqLabels() {
       const b60 = document.getElementById('eqBand60');
-      const b250 = document.getElementById('eqBand250');
+      const b150 = document.getElementById('eqBand150');
+      const b400 = document.getElementById('eqBand400');
       const b1k = document.getElementById('eqBand1k');
-      const b4k = document.getElementById('eqBand4k');
-      const b12k = document.getElementById('eqBand12k');
+      const b2k5 = document.getElementById('eqBand2k5');
+      const b6k = document.getElementById('eqBand6k');
+      const b14k = document.getElementById('eqBand14k');
       if (!b60) return;
 
-      const v60 = b60.value, v250 = b250.value, v1k = b1k.value, v4k = b4k.value, v12k = b12k.value;
-      const l60 = document.getElementById('eqVal60'), l250 = document.getElementById('eqVal250'), l1k = document.getElementById('eqVal1k'), l4k = document.getElementById('eqVal4k'), l12k = document.getElementById('eqVal12k');
+      const v60 = b60.value, v150 = b150.value, v400 = b400.value, v1k = b1k.value, v2k5 = b2k5.value, v6k = b6k.value, v14k = b14k.value;
+      const l60 = document.getElementById('eqVal60'), l150 = document.getElementById('eqVal150'), l400 = document.getElementById('eqVal400'), l1k = document.getElementById('eqVal1k'), l2k5 = document.getElementById('eqVal2k5'), l6k = document.getElementById('eqVal6k'), l14k = document.getElementById('eqVal14k');
       if (l60) l60.textContent = `${v60 > 0 ? '+' : ''}${v60} dB`;
-      if (l250) l250.textContent = `${v250 > 0 ? '+' : ''}${v250} dB`;
+      if (l150) l150.textContent = `${v150 > 0 ? '+' : ''}${v150} dB`;
+      if (l400) l400.textContent = `${v400 > 0 ? '+' : ''}${v400} dB`;
       if (l1k) l1k.textContent = `${v1k > 0 ? '+' : ''}${v1k} dB`;
-      if (l4k) l4k.textContent = `${v4k > 0 ? '+' : ''}${v4k} dB`;
-      if (l12k) l12k.textContent = `${v12k > 0 ? '+' : ''}${v12k} dB`;
+      if (l2k5) l2k5.textContent = `${v2k5 > 0 ? '+' : ''}${v2k5} dB`;
+      if (l6k) l6k.textContent = `${v6k > 0 ? '+' : ''}${v6k} dB`;
+      if (l14k) l14k.textContent = `${v14k > 0 ? '+' : ''}${v14k} dB`;
     }
 
     function onEqSliderChange() {
@@ -3505,12 +3529,14 @@
     function setEqPreset(name) {
       if (!EQ_PRESETS[name]) return;
       const p = EQ_PRESETS[name];
-      const b60 = document.getElementById('eqBand60'), b250 = document.getElementById('eqBand250'), b1k = document.getElementById('eqBand1k'), b4k = document.getElementById('eqBand4k'), b12k = document.getElementById('eqBand12k');
+      const b60 = document.getElementById('eqBand60'), b150 = document.getElementById('eqBand150'), b400 = document.getElementById('eqBand400'), b1k = document.getElementById('eqBand1k'), b2k5 = document.getElementById('eqBand2k5'), b6k = document.getElementById('eqBand6k'), b14k = document.getElementById('eqBand14k');
       if (b60) b60.value = p.b60;
-      if (b250) b250.value = p.b250;
+      if (b150) b150.value = p.b150;
+      if (b400) b400.value = p.b400;
       if (b1k) b1k.value = p.b1k;
-      if (b4k) b4k.value = p.b4k;
-      if (b12k) b12k.value = p.b12k;
+      if (b2k5) b2k5.value = p.b2k5;
+      if (b6k) b6k.value = p.b6k;
+      if (b14k) b14k.value = p.b14k;
       updateEqLabels();
       const badge = document.getElementById('eqActivePresetBadge');
       if (badge) badge.textContent = name;
@@ -3518,14 +3544,16 @@
     }
 
     function saveEq(presetName) {
-      const b60 = document.getElementById('eqBand60') ? document.getElementById('eqBand60').value : 0;
-      const b250 = document.getElementById('eqBand250') ? document.getElementById('eqBand250').value : 0;
+      const b60 = document.getElementById('eqBand60') ? document.getElementById('eqBand60').value : 2;
+      const b150 = document.getElementById('eqBand150') ? document.getElementById('eqBand150').value : 1;
+      const b400 = document.getElementById('eqBand400') ? document.getElementById('eqBand400').value : 0;
       const b1k = document.getElementById('eqBand1k') ? document.getElementById('eqBand1k').value : 0;
-      const b4k = document.getElementById('eqBand4k') ? document.getElementById('eqBand4k').value : 0;
-      const b12k = document.getElementById('eqBand12k') ? document.getElementById('eqBand12k').value : 0;
-      const pre = presetName || (document.getElementById('eqActivePresetBadge') ? document.getElementById('eqActivePresetBadge').textContent : 'Flat');
+      const b2k5 = document.getElementById('eqBand2k5') ? document.getElementById('eqBand2k5').value : 1;
+      const b6k = document.getElementById('eqBand6k') ? document.getElementById('eqBand6k').value : 2;
+      const b14k = document.getElementById('eqBand14k') ? document.getElementById('eqBand14k').value : 1;
+      const pre = presetName || (document.getElementById('eqActivePresetBadge') ? document.getElementById('eqActivePresetBadge').textContent : 'Default');
 
-      const params = `action=save_eq&b60=${b60}&b250=${b250}&b1k=${b1k}&b4k=${b4k}&b12k=${b12k}&preset=${encodeURIComponent(pre)}`;
+      const params = `action=save_eq&b60=${b60}&b150=${b150}&b400=${b400}&b1k=${b1k}&b2k5=${b2k5}&b6k=${b6k}&b14k=${b14k}&preset=${encodeURIComponent(pre)}`;
       apiFetch(`/cgi-bin/api?${params}`)
         .then(res => res.json())
         .catch(err => console.warn('Save EQ error:', err));
