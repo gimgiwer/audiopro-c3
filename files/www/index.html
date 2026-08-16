@@ -2407,7 +2407,7 @@
             </div>
 
             <div id="certDownloadBox" style="margin-bottom:12px;">
-              <a href="/cgi-bin/api?action=download_cert" download="audiopro-c3.crt" class="btn-step-fine" style="display:inline-flex; align-items:center; gap:6px; font-size:0.78rem; text-decoration:none; padding:8px 12px; height:auto;">
+              <a href="/api?action=download_cert" download="audiopro-c3.crt" class="btn-step-fine" style="display:inline-flex; align-items:center; gap:6px; font-size:0.78rem; text-decoration:none; padding:8px 12px; height:auto;">
                 <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" style="width:14px;height:14px;">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
@@ -2845,7 +2845,7 @@
 
     // Custom Fetch Wrapper with automatic 403 handling & Lua /api acceleration
     function apiFetch(url, options = {}) {
-      const targetUrl = url.replace('/cgi-bin/api', '/api');
+      const targetUrl = url.replace('/api', '/api');
       return fetch(targetUrl, options).then(res => {
         if (res.status === 403) {
           showLoginOverlay();
@@ -2983,7 +2983,7 @@
 
     // --- Authentication & Session Security ---
     function checkAuth() {
-      fetch('/cgi-bin/auth?action=check')
+      fetch('/api?action=check_auth')
         .then(res => res.json())
         .then(data => {
           state.authRequired = !!data.auth_required;
@@ -3031,7 +3031,7 @@
       el.loginSubmitBtn.innerHTML = '<span>Verifying...</span>';
 
       const params = `action=login&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
-      fetch('/cgi-bin/auth', {
+      fetch('/api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params
@@ -3069,7 +3069,7 @@
 
     function logout() {
       haptic(20);
-      fetch('/cgi-bin/auth?action=logout')
+      fetch('/api?action=logout')
         .then(() => {
           state.loggedIn = false;
           showToast('Logged out');
@@ -3092,7 +3092,7 @@
     }
 
     function loadSecurityConfig() {
-      apiFetch('/cgi-bin/api?action=get_security')
+      apiFetch('/api?action=get_security')
         .then(res => res.json())
         .then(data => {
           if (el.cfgAuthEnabled) el.cfgAuthEnabled.checked = (data.auth_enabled === 1 || data.auth_enabled === '1');
@@ -3119,7 +3119,7 @@
       const httpsRedir = (el.cfgHttpsRedirect && el.cfgHttpsRedirect.checked) ? '1' : '0';
 
       const params = `action=save_security&auth_enabled=${en}&session_days=${days}&https_enabled=${httpsEn}&https_redirect=${httpsRedir}`;
-      apiFetch(`/cgi-bin/api?${params}`)
+      apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(data => {
           showToast(data.message || 'Security settings saved');
@@ -3157,7 +3157,7 @@
       if (np.artwork) {
         if (state.lastTrackKey !== trackKey) {
           state.lastTrackKey = trackKey;
-          el.npArtworkImg.src = `/cgi-bin/api?action=get_artwork&t=${np.updated || Date.now()}`;
+          el.npArtworkImg.src = `/api?action=get_artwork&t=${np.updated || Date.now()}`;
           el.npArtworkImg.style.display = 'block';
           if (el.npFallbackIcon) el.npFallbackIcon.style.display = 'none';
         }
@@ -3169,7 +3169,7 @@
 
     function togglePlayback() {
       haptic(15);
-      apiFetch('/cgi-bin/api?action=player_toggle')
+      apiFetch('/api?action=player_toggle')
         .then(res => res.json())
         .then(data => {
           showToast(data.playing ? 'Playback resumed' : 'Playback paused');
@@ -3271,7 +3271,7 @@
         return;
       }
       state.lastVolSentTime = now;
-      apiFetch(`/cgi-bin/api?volume=${vol}`)
+      apiFetch(`/api?volume=${vol}`)
         .then(res => res.json())
         .catch(err => console.warn('Volume set error:', err));
     }
@@ -3316,7 +3316,7 @@
       state.isMuted = !state.isMuted;
       renderVolume(state.volume, state.isMuted);
       const dict = i18n[state.lang] || i18n.en;
-      const endpoint = state.isMuted ? '/cgi-bin/api?mute=1' : '/cgi-bin/api?unmute=1';
+      const endpoint = state.isMuted ? '/api?mute=1' : '/api?unmute=1';
       apiFetch(endpoint)
         .then(res => res.json())
         .then(() => showToast(state.isMuted ? dict.sound_muted : dict.sound_unmuted))
@@ -3328,7 +3328,7 @@
       haptic(18);
       state.source = sourceName;
       renderSource(sourceName);
-      apiFetch(`/cgi-bin/api?input=${sourceName}`)
+      apiFetch(`/api?input=${sourceName}`)
         .then(res => res.json())
         .then(() => {
           const names = { wifi: 'Wi-Fi / AirPlay', bt: 'Bluetooth', aux: 'AUX 3.5 mm' };
@@ -3344,7 +3344,7 @@
       el.scanBtn.classList.add('spinning');
       el.scanBtnText.textContent = dict.wifi_scanning;
 
-      apiFetch('/cgi-bin/api?action=wifi_scan')
+      apiFetch('/api?action=wifi_scan')
         .then(res => res.json())
         .then(data => {
           el.scanBtn.classList.remove('spinning');
@@ -3409,7 +3409,7 @@
       showToast(`Configuring ${ssid}...`);
 
       const params = `action=wifi_connect&ssid=${encodeURIComponent(ssid)}&key=${encodeURIComponent(pass)}`;
-      apiFetch(`/cgi-bin/api?${params}`)
+      apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(data => {
           showToast(`Connecting to ${ssid}... wait 10 sec`);
@@ -3428,7 +3428,7 @@
 
     // Load full settings from API
     function loadFullConfig() {
-      apiFetch('/cgi-bin/api?action=get_config')
+      apiFetch('/api?action=get_config')
         .then(res => res.json())
         .then(cfg => {
           state.configLoaded = true;
@@ -3466,7 +3466,7 @@
       const dis = !el.cfgApEnabled.checked;
 
       const params = `action=save_ap&ap_ssid=${encodeURIComponent(ssid)}&ap_key=${encodeURIComponent(key)}&ap_channel=${chan}&ap_disabled=${dis ? '1' : '0'}`;
-      apiFetch(`/cgi-bin/api?${params}`)
+      apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(d => showToast(d.message || 'AP settings saved'))
         .catch(() => showToast('Failed to save AP settings'));
@@ -3482,7 +3482,7 @@
       const slpBt = el.cfgSleepBt.checked ? '1' : '0';
 
       const params = `action=save_audio&default_volume=${defVol}&auto_sleep_min=${sleepMin}&sleep_in_aux=${slpAux}&sleep_in_bt=${slpBt}`;
-      apiFetch(`/cgi-bin/api?${params}`)
+      apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(d => showToast(d.message || 'Audio settings saved'))
         .catch(() => showToast('Failed to save audio settings'));
@@ -3493,7 +3493,7 @@
       e.preventDefault();
       haptic(20);
       const name = el.cfgHostname.value.trim();
-      apiFetch(`/cgi-bin/api?action=save_device&hostname=${encodeURIComponent(name)}`)
+      apiFetch(`/api?action=save_device&hostname=${encodeURIComponent(name)}`)
         .then(res => res.json())
         .then(d => {
           if (el.heroHostname) el.heroHostname.textContent = name;
@@ -3514,7 +3514,7 @@
       const pass = el.cfgMqttPass.value.trim();
 
       const params = `action=save_mqtt&mqtt_enabled=${en}&mqtt_host=${encodeURIComponent(host)}&mqtt_port=${port}&mqtt_prefix=${encodeURIComponent(pre)}&mqtt_user=${encodeURIComponent(user)}&mqtt_pass=${encodeURIComponent(pass)}`;
-      apiFetch(`/cgi-bin/api?${params}`)
+      apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(d => showToast(d.message || 'MQTT settings saved'))
         .catch(() => showToast('Failed to save MQTT'));
@@ -3533,7 +3533,7 @@
     let eqDebounceTimer = null;
 
     function loadEq() {
-      apiFetch('/cgi-bin/api?action=get_eq')
+      apiFetch('/api?action=get_eq')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok') {
@@ -3618,13 +3618,13 @@
       const pre = presetName || (document.getElementById('eqActivePresetBadge') ? document.getElementById('eqActivePresetBadge').textContent : 'Default');
 
       const params = `action=save_eq&b60=${b60}&b150=${b150}&b400=${b400}&b1k=${b1k}&b2k5=${b2k5}&b6k=${b6k}&b14k=${b14k}&preset=${encodeURIComponent(pre)}`;
-      apiFetch(`/cgi-bin/api?${params}`)
+      apiFetch(`/api?${params}`)
         .then(res => res.json())
         .catch(err => console.warn('Save EQ error:', err));
     }
 
     function loadPresets() {
-      apiFetch('/cgi-bin/api?action=get_presets')
+      apiFetch('/api?action=get_presets')
         .then(res => res.json())
         .then(data => {
           if (data.status === 'ok' && data.presets) {
@@ -3697,7 +3697,7 @@
         params += `&command=${encodeURIComponent(target)}`;
       }
 
-      apiFetch(`/cgi-bin/api?${params}`)
+      apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(d => showToast(d.message || `Preset ${id} saved`))
         .catch(() => showToast(`Failed to save Preset ${id}`));
@@ -3783,7 +3783,7 @@
       el.fwProgressBarFill.style.width = '0%';
 
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/cgi-bin/upload', true);
+      xhr.open('POST', '/api?action=upload', true);
       xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 
       xhr.upload.onprogress = (e) => {
@@ -3844,7 +3844,7 @@
       el.firmwareFileInfo.style.display = 'none';
       el.flashingStatusBox.style.display = 'flex';
 
-      apiFetch(`/cgi-bin/api?action=flash_firmware&keep_settings=${keep}`)
+      apiFetch(`/api?action=flash_firmware&keep_settings=${keep}`)
         .then(res => res.json())
         .then(data => {
           showToast(data.message || 'Flashing started');
@@ -3867,7 +3867,7 @@
         if (el.flashingTimerText) el.flashingTimerText.innerHTML = `Rebooting... please wait <strong>${secondsLeft}s</strong>`;
 
         if (secondsLeft <= 60 && secondsLeft % 4 === 0) {
-          fetch('/cgi-bin/api?status')
+          fetch('/api?status')
             .then(res => {
               if (res.ok) {
                 clearInterval(countdownTimer);
@@ -3892,7 +3892,7 @@
         : 'Reset Wi-Fi network and activate setup Access Point AudioPro-C3-Setup?';
       if (confirm(confirmMsg)) {
         haptic(30);
-        apiFetch('/cgi-bin/api?action=reset_wifi')
+        apiFetch('/api?action=reset_wifi')
           .then(() => showToast('Wi-Fi reset to Access Point mode'))
           .catch(() => showToast('Reset command sent'));
       }
@@ -3905,7 +3905,7 @@
         : 'Are you sure you want to reboot Audio Pro C3?';
       if (confirm(confirmMsg)) {
         haptic(30);
-        apiFetch('/cgi-bin/api?action=reboot')
+        apiFetch('/api?action=reboot')
           .then(() => showToast('Rebooting...'))
           .catch(() => showToast('Reboot command sent'));
       }
@@ -3925,7 +3925,7 @@
     // Background Polling Loop (every 3 seconds)
     function pollStatus() {
       if (state.isFlashing) return;
-      apiFetch('/cgi-bin/api?status')
+      apiFetch('/api?status')
         .then(res => {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           return res.json();
