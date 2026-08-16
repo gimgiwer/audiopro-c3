@@ -16,6 +16,3 @@ config mcud 'main'
 	option mqtt_user ''
 	option mqtt_pass ''
 	option mqtt_topic_prefix 'audiopro_c3'
-	# Token required by the CGI ?action=reboot endpoint.
-	# Set to any random string; leave empty to disable reboot via HTTP.
-	option reboot_token ''

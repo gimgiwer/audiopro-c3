@@ -3,6 +3,23 @@
     Zero-fork execution running natively inside uhttpd-mod-lua
 --]]
 
+-- Global Initialization (Runs once when uhttpd loads the module)
+local function seed_prng()
+    local f = io.open("/dev/urandom", "r")
+    if f then
+        local bytes = f:read(4)
+        f:close()
+        if bytes then
+            local seed = 0
+            for i = 1, 4 do seed = seed * 256 + string.byte(bytes, i) end
+            math.randomseed(seed)
+            return
+        end
+    end
+    math.randomseed(os.time())
+end
+seed_prng()
+
 local function read_file(path)
     local f = io.open(path, "r")
     if not f then return nil end
