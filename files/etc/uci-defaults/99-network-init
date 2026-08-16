@@ -5,6 +5,17 @@ uci set dropbear.@dropbear[0].PasswordAuth='on'
 uci set dropbear.@dropbear[0].RootPasswordAuth='on'
 uci commit dropbear 2>/dev/null
 
+# Configure Ethernet LAN as automatic DHCP client (smart speaker mode)
+uci set network.lan.proto='dhcp'
+uci -q delete network.lan.ipaddr
+uci -q delete network.lan.netmask
+uci -q delete network.lan.ip6assign
+uci commit network 2>/dev/null
+
+# Disable dnsmasq DHCP server on LAN to prevent conflict with home router
+uci set dhcp.lan.ignore='1' 2>/dev/null
+uci commit dhcp 2>/dev/null
+
 # Enable 32MB ZRAM Swap with ultra-fast lz4 compression on 64MB RAM SoC
 if [ -e /dev/zram0 ]; then
     echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lzo-rle > /sys/block/zram0/comp_algorithm 2>/dev/null
