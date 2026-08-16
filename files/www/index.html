@@ -1009,6 +1009,25 @@
       transform: translateX(20px);
     }
 
+    .btn-day-toggle {
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-day-toggle.active {
+      background: var(--accent);
+      color: #000000;
+      border-color: var(--accent);
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
+
     /* Buttons */
     .btn-primary {
       width: 100%;
@@ -1934,6 +1953,81 @@
           <div id="presetItemsContainer" style="display:flex; flex-direction:column; gap:12px;">
             <!-- Rendered dynamically by JS -->
           </div>
+        </div>
+      </section>
+
+      <!-- Autonomous Smart Alarm Card -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('smartAlarmSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M5 3 2 6M22 6l-3-3M6.38 18.7 4 21M17.64 18.67 20 21"/>
+            </svg>
+            <span>Autonomous Smart Alarm</span>
+          </div>
+          <svg id="smartAlarmSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="smartAlarmSection" class="accordion-body">
+          <div class="helper-box">
+            Autonomous scheduled wake-up with gentle volume fade-in and high-priority Web Radio streaming via dedicated ALSA <code>alarm_in</code> channel.
+          </div>
+
+          <form onsubmit="saveAlarmSettings(event)">
+            <div class="form-group" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+              <div>
+                <strong style="font-size:0.9rem; color:var(--text-primary);">Alarm Schedule</strong>
+                <div style="font-size:0.75rem; color:var(--text-secondary);">Enable autonomous cron wake-up</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="alarmEnabledToggle">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:14px;">
+              <div>
+                <label style="font-size:0.75rem; color:var(--text-secondary);">Wake-up Time</label>
+                <input type="time" id="alarmTimeInput" class="input-field" style="margin-top:4px;" value="07:00" required>
+              </div>
+              <div>
+                <label style="font-size:0.75rem; color:var(--text-secondary);">Target Volume (%)</label>
+                <input type="number" id="alarmVolumeInput" class="input-field" style="margin-top:4px;" min="5" max="100" value="40" required>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:14px;">
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Active Days</label>
+              <div id="alarmDaysContainer" style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                <button type="button" class="btn-day-toggle active" data-day="1" onclick="toggleAlarmDay(this)">Mon</button>
+                <button type="button" class="btn-day-toggle active" data-day="2" onclick="toggleAlarmDay(this)">Tue</button>
+                <button type="button" class="btn-day-toggle active" data-day="3" onclick="toggleAlarmDay(this)">Wed</button>
+                <button type="button" class="btn-day-toggle active" data-day="4" onclick="toggleAlarmDay(this)">Thu</button>
+                <button type="button" class="btn-day-toggle active" data-day="5" onclick="toggleAlarmDay(this)">Fri</button>
+                <button type="button" class="btn-day-toggle" data-day="6" onclick="toggleAlarmDay(this)">Sat</button>
+                <button type="button" class="btn-day-toggle" data-day="0" onclick="toggleAlarmDay(this)">Sun</button>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:16px;">
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Radio Stream URL</label>
+              <input type="text" id="alarmStreamUrlInput" class="input-field" style="margin-top:4px;" placeholder="http://..." value="http://icecast.vrtcdn.be/klara-high.mp3">
+            </div>
+
+            <div style="display:flex; gap:8px;">
+              <button type="submit" class="btn-primary" style="flex:2; height:38px;">
+                <span>Save Alarm</span>
+              </button>
+              <button type="button" class="btn-header" style="flex:1; height:38px; border-radius:var(--radius-sm);" onclick="testAlarm()">
+                <span>Test</span>
+              </button>
+              <button type="button" class="btn-header" style="flex:1; height:38px; border-radius:var(--radius-sm);" onclick="stopAlarm()">
+                <span>Stop</span>
+              </button>
+            </div>
+          </form>
         </div>
       </section>
 
@@ -3718,6 +3812,84 @@
         .catch(() => showToast(`Failed to save Preset ${id}`));
     }
 
+    // --- Smart Alarm Management ---
+    function toggleAlarmDay(btn) {
+      haptic(10);
+      btn.classList.toggle('active');
+    }
+
+    function getSelectedAlarmDays() {
+      const activeBtns = document.querySelectorAll('#alarmDaysContainer .btn-day-toggle.active');
+      const days = [];
+      activeBtns.forEach(b => days.push(b.getAttribute('data-day')));
+      return days.join(',');
+    }
+
+    function setSelectedAlarmDays(daysStr) {
+      const days = (daysStr || '').split(',');
+      document.querySelectorAll('#alarmDaysContainer .btn-day-toggle').forEach(b => {
+        const d = b.getAttribute('data-day');
+        if (days.includes(d)) {
+          b.classList.add('active');
+        } else {
+          b.classList.remove('active');
+        }
+      });
+    }
+
+    function loadAlarmSettings() {
+      apiFetch('/api?action=get_alarm')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok' && data.alarm) {
+            const a = data.alarm;
+            const toggle = document.getElementById('alarmEnabledToggle');
+            const timeIn = document.getElementById('alarmTimeInput');
+            const volIn = document.getElementById('alarmVolumeInput');
+            const urlIn = document.getElementById('alarmStreamUrlInput');
+
+            if (toggle) toggle.checked = !!a.enabled;
+            if (timeIn) timeIn.value = a.time || '07:00';
+            if (volIn) volIn.value = a.target_volume || 40;
+            if (urlIn) urlIn.value = a.stream_url || 'http://icecast.vrtcdn.be/klara-high.mp3';
+            setSelectedAlarmDays(a.days || '1,2,3,4,5');
+          }
+        })
+        .catch(err => console.warn('Get alarm error:', err));
+    }
+
+    function saveAlarmSettings(e) {
+      if (e) e.preventDefault();
+      haptic(20);
+      const en = document.getElementById('alarmEnabledToggle') ? (document.getElementById('alarmEnabledToggle').checked ? '1' : '0') : '0';
+      const time = document.getElementById('alarmTimeInput') ? document.getElementById('alarmTimeInput').value : '07:00';
+      const vol = document.getElementById('alarmVolumeInput') ? document.getElementById('alarmVolumeInput').value : '40';
+      const url = document.getElementById('alarmStreamUrlInput') ? document.getElementById('alarmStreamUrlInput').value.trim() : '';
+      const days = getSelectedAlarmDays();
+
+      const params = `action=save_alarm&enabled=${en}&time=${encodeURIComponent(time)}&target_volume=${vol}&days=${encodeURIComponent(days)}&stream_url=${encodeURIComponent(url)}`;
+      apiFetch(`/api?${params}`)
+        .then(res => res.json())
+        .then(d => showToast(d.message || 'Alarm settings saved'))
+        .catch(() => showToast('Failed to save alarm'));
+    }
+
+    function testAlarm() {
+      haptic(25);
+      showToast('Triggering alarm test...');
+      apiFetch('/api?action=test_alarm')
+        .then(res => res.json())
+        .catch(err => console.warn('Test alarm error:', err));
+    }
+
+    function stopAlarm() {
+      haptic(25);
+      showToast('Stopping alarm...');
+      apiFetch('/api?action=stop_alarm')
+        .then(res => res.json())
+        .catch(err => console.warn('Stop alarm error:', err));
+    }
+
     // --- Firmware Upload & Flashing Logic ---
     function formatBytes(bytes) {
       if (bytes === 0) return '0 B';
@@ -4014,6 +4186,7 @@
       checkAuth();
       loadEq();
       loadPresets();
+      loadAlarmSettings();
       pollStatus();
       setInterval(pollStatus, 3000);
     });
