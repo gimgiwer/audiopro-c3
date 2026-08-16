@@ -15,12 +15,14 @@ duck_down() {
     amixer -q -c 0 sset Spotify 50% 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 50% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 50% 2>/dev/null || true
+    amixer -q -c 0 sset Alarm 50% 2>/dev/null || true
     amixer -q -c 0 sset VoIP 70% 2>/dev/null || true
     usleep 40000
     amixer -q -c 0 sset Music 20% 2>/dev/null || true
     amixer -q -c 0 sset Spotify 20% 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 20% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 20% 2>/dev/null || true
+    amixer -q -c 0 sset Alarm 20% 2>/dev/null || true
     amixer -q -c 0 sset VoIP "$voip_target" 2>/dev/null || true
 }
 
@@ -31,12 +33,14 @@ duck_up() {
     amixer -q -c 0 sset Spotify 60% 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 60% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 60% 2>/dev/null || true
+    amixer -q -c 0 sset Alarm 60% 2>/dev/null || true
     usleep 40000
     amixer -q -c 0 sset VoIP 100% 2>/dev/null || true
     amixer -q -c 0 sset Music 100% 2>/dev/null || true
     amixer -q -c 0 sset Spotify 100% 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 100% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 100% 2>/dev/null || true
+    amixer -q -c 0 sset Alarm 100% 2>/dev/null || true
 }
 
 case "$ACTION" in
