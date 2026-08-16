@@ -60,7 +60,7 @@ get_priority() {
     esac
 }
 
-# Qwen Max Optimized Slot Strategy (Hard Limit: 2 + TTS)
+# Stream slot arbitration strategy (Limit: 2 concurrent streams + TTS)
 # Slot 0 (TTS/Alerts) - Managed separately via Ducking
 # Slot 1 (Medium Prio): Spotify, AirPlay
 # Slot 2 (Low Prio): WebRadio, Squeeze

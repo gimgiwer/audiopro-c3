@@ -1,22 +1,31 @@
 #!/bin/sh
 ACTION="${1:-status}"
-HA_SERVER="${2:-192.168.1.100}"
+HA_SERVER="${2:-127.0.0.1}"
 PORT="${3:-5000}"
 
 case "$ACTION" in
     enable|start)
         insmod snd-aloop 2>/dev/null || true
         cat > /etc/asound.conf << 'ASOUND_EOF'
+pcm.master_headroom {
+    type softvol
+    slave.pcm "hw:Loopback,0,0"
+    control { name "MasterHeadroom" card 0 }
+    min_dB -51.0
+    max_dB -1.0
+    resolution 256
+}
+
 pcm.dmixer {
     type dmix
     ipc_key 1024
-    ipc_perm 0666
+    ipc_perm 0660
     slave {
-        pcm "hw:Loopback,0,0"
+        pcm "master_headroom"
         mmap_emulation 1
         period_time 0
         period_size 1024
-        buffer_size 4096
+        buffer_size 8192
         rate 44100
         channels 2
         format S16_LE
@@ -40,6 +49,14 @@ pcm.airplay_in {
     max_dB 0.0
 }
 
+pcm.squeeze_in {
+    type softvol
+    slave.pcm "dmixer"
+    control { name "Squeeze" card 0 }
+    min_dB -51.0
+    max_dB 0.0
+}
+
 pcm.music_in {
     type softvol
     slave.pcm "dmixer"
@@ -48,35 +65,68 @@ pcm.music_in {
     max_dB 0.0
 }
 
-pcm.!default { type plug; slave.pcm "music_in"; }
-ctl.!default { type hw; card 0; }
+pcm.tts_in {
+    type softvol
+    slave.pcm "dmixer"
+    control { name "TTS" card 0 }
+    min_dB -51.0
+    max_dB 0.0
+}
+
+pcm.voip_in {
+    type softvol
+    slave.pcm "dmixer"
+    control { name "VoIP" card 0 }
+    min_dB -51.0
+    max_dB 0.0
+}
+
+pcm.!default {
+    type plug
+    slave.pcm "music_in"
+}
+
+ctl.!default {
+    type hw
+    card 0
+}
 ASOUND_EOF
         sync
         sleep 0.3
         killall -9 aec_bridge 2>/dev/null || true
         
-        # Start native C daemon (handles hardware DAC bridge and TCP stream with ~0.2% CPU)
+        # Start native C daemon (handles hardware DAC bridge and TCP stream)
         /usr/bin/aec_bridge "$HA_SERVER" "$PORT" >/dev/null 2>&1 &
         
         # Restart audio daemons to bind to new asound.conf
         /etc/init.d/librespot restart 2>/dev/null || true
         /etc/init.d/shairport-sync restart 2>/dev/null || true
         /etc/init.d/squeezelite restart 2>/dev/null || true
+        /etc/init.d/baresip restart 2>/dev/null || true
         
         echo "AEC Loopback Tap ENABLED (via aec_bridge C daemon) -> streaming to $HA_SERVER:$PORT"
         ;;
     disable|stop)
         cat > /etc/asound.conf << 'ASOUND_DIRECT'
+pcm.master_headroom {
+    type softvol
+    slave.pcm "hw:0,0"
+    control { name "MasterHeadroom" card 0 }
+    min_dB -51.0
+    max_dB -1.0
+    resolution 256
+}
+
 pcm.dmixer {
     type dmix
     ipc_key 1024
-    ipc_perm 0666
+    ipc_perm 0660
     slave {
-        pcm "hw:0,0"
+        pcm "master_headroom"
         mmap_emulation 1
         period_time 0
         period_size 1024
-        buffer_size 4096
+        buffer_size 8192
         rate 44100
         channels 2
         format S16_LE
@@ -100,6 +150,14 @@ pcm.airplay_in {
     max_dB 0.0
 }
 
+pcm.squeeze_in {
+    type softvol
+    slave.pcm "dmixer"
+    control { name "Squeeze" card 0 }
+    min_dB -51.0
+    max_dB 0.0
+}
+
 pcm.music_in {
     type softvol
     slave.pcm "dmixer"
@@ -108,8 +166,31 @@ pcm.music_in {
     max_dB 0.0
 }
 
-pcm.!default { type plug; slave.pcm "music_in"; }
-ctl.!default { type hw; card 0; }
+pcm.tts_in {
+    type softvol
+    slave.pcm "dmixer"
+    control { name "TTS" card 0 }
+    min_dB -51.0
+    max_dB 0.0
+}
+
+pcm.voip_in {
+    type softvol
+    slave.pcm "dmixer"
+    control { name "VoIP" card 0 }
+    min_dB -51.0
+    max_dB 0.0
+}
+
+pcm.!default {
+    type plug
+    slave.pcm "music_in"
+}
+
+ctl.!default {
+    type hw
+    card 0
+}
 ASOUND_DIRECT
         sync
         sleep 0.3
@@ -119,6 +200,7 @@ ASOUND_DIRECT
         /etc/init.d/librespot restart 2>/dev/null || true
         /etc/init.d/shairport-sync restart 2>/dev/null || true
         /etc/init.d/squeezelite restart 2>/dev/null || true
+        /etc/init.d/baresip restart 2>/dev/null || true
         
         echo "AEC Loopback Tap DISABLED -> restored direct zero-latency DAC mode"
         ;;

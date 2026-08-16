@@ -16,10 +16,10 @@ config mcud 'main'
 	# Log level: 0=ERROR, 1=WARN, 2=INFO (DEFAULT), 3=DEBUG
 	option log_level '2'
 	option mqtt_enabled '1'
-	option mqtt_host '192.168.1.202'
+	option mqtt_host '127.0.0.1'
 	option mqtt_port '1883'
 	option mqtt_user ''
-	option mqtt_pass ''
+	option mqtt_password ''
 	option mqtt_topic_prefix 'audiopro_c3'
 	
 	# --- Audio Arbiter Settings ---

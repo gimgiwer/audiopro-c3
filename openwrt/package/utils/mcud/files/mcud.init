@@ -22,7 +22,8 @@ start_service() {
     config_get mqtt_host main mqtt_host "127.0.0.1"
     config_get mqtt_port main mqtt_port "1883"
     config_get mqtt_user main mqtt_user ""
-    config_get mqtt_pass main mqtt_pass ""
+    config_get mqtt_pass main mqtt_password ""
+    [ -z "$mqtt_pass" ] && config_get mqtt_pass main mqtt_pass ""
     config_get mqtt_prefix main mqtt_topic_prefix "audiopro_c3"
 
     local args="-v $default_vol -s $auto_sleep -l $log_lvl"

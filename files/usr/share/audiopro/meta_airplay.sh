@@ -10,17 +10,18 @@ ARTWORK_JPG="/tmp/audiopro_artwork.jpg"
 TITLE=""
 ARTIST=""
 ALBUM=""
-PLAYING="1"
+PLAYING="true"
 
 update_json() {
     local has_art=0
     [ -f "$ARTWORK_JPG" ] && [ -s "$ARTWORK_JPG" ] && has_art=1
     
-    local e_title=$(echo "$TITLE" | sed "s/\"/\\\\\"/g")
-    local e_artist=$(echo "$ARTIST" | sed "s/\"/\\\\\"/g")
-    local e_album=$(echo "$ALBUM" | sed "s/\"/\\\\\"/g")
+    local e_title=$(printf '%s' "$TITLE" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n' '  ')
+    local e_artist=$(printf '%s' "$ARTIST" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n' '  ')
+    local e_album=$(printf '%s' "$ALBUM" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n' '  ')
     
-    cat << JSON_EOF > "$META_JSON"
+    local tmp_file="${META_JSON}.tmp.$$"
+    cat << JSON_EOF > "$tmp_file"
 {
   "active": true,
   "source": "airplay",
@@ -32,6 +33,7 @@ update_json() {
   "updated": $(date +%s)
 }
 JSON_EOF
+    mv -f "$tmp_file" "$META_JSON" 2>/dev/null || true
 }
 
 # Main event loop over XML pipe
@@ -71,9 +73,13 @@ while true; do
                         update_json
                     fi
                     ;;
-                *70667374*|*70737474*) # Play / Pause stream status
-                    PLAYING="1"
+                *70737474*) # Play stream status (pstt)
+                    PLAYING="true"
                     /usr/bin/audio_arbiter.sh airplay &
+                    update_json
+                    ;;
+                *70667374*) # Pause/flush stream status (pfst)
+                    PLAYING="false"
                     update_json
                     ;;
             esac

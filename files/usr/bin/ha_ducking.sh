@@ -50,6 +50,11 @@ case "$ACTION" in
         is_crit="normal"
         [ "$ACTION" = "critical" ] || [ "$MODE" = "critical" ] && is_crit="critical"
 
+        # Serialize concurrent TTS playbacks via flock
+        LOCKFILE="/tmp/ha_ducking.lock"
+        exec 9>"$LOCKFILE"
+        flock -x 9 2>/dev/null || true
+
         duck_down "$is_crit"
         sleep 0.1
         amixer -q -c 0 sset TTS 100% 2>/dev/null || true
@@ -69,6 +74,8 @@ case "$ACTION" in
         
         sleep 0.2
         duck_up
+        flock -u 9 2>/dev/null || true
+        exec 9>&-
         ;;
     *)
         echo "Usage: $0 {start|stop|play <file_or_url> [normal|critical]|critical <file_or_url>}"
