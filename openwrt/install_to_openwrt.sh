@@ -22,10 +22,7 @@ mkdir -p "$OPENWRT_DIR/target/linux/ramips/dts"
 cp "$REPO_ROOT/dts/mt7628an_audiopro_c3.dts" "$OPENWRT_DIR/target/linux/ramips/dts/"
 echo "[+] Device Tree installed: target/linux/ramips/dts/mt7628an_audiopro_c3.dts"
 
-# 2. Kernel Patch
-mkdir -p "$OPENWRT_DIR/target/linux/ramips/patches-5.15"
-cp "$REPO_ROOT/openwrt/patches/836-mt7688-i2s-audio-crash-workaround.patch" "$OPENWRT_DIR/target/linux/ramips/patches-5.15/"
-echo "[+] Kernel 5.15 patch installed: 836-mt7688-i2s-audio-crash-workaround.patch"
+# 2. Kernel Patch (ASoC driver for MT7628 is natively integrated via 835-asoc in OpenWrt 23.05)
 
 # 3. mcud Package
 mkdir -p "$OPENWRT_DIR/package/utils/mcud"
