@@ -1,0 +1,3664 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Audio Pro Addon C3</title>
+  <style>
+    /* Dark Theme (Pure OLED Black with Minimal Sapphire Accents) */
+    :root, [data-theme="dark"] {
+      --bg-base: #000000;
+      --bg-surface: #0a0c10;
+      --bg-card: #0d0f14;
+      --bg-card-hover: #141720;
+      --bg-input: #12151c;
+      --bg-slider-track: #181b24;
+      --accent: #3b82f6;
+      --accent-light: #60a5fa;
+      --accent-dark: #1d4ed8;
+      --accent-glow: rgba(59, 130, 246, 0.25);
+      --accent-alpha: rgba(59, 130, 246, 0.12);
+      --text-primary: #ffffff;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-active: rgba(59, 130, 246, 0.5);
+      --status-green: #10b981;
+      --status-amber: #f59e0b;
+      --status-red: #ef4444;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+      --radius-full: 9999px;
+      --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.6);
+      --shadow-accent: 0 2px 12px rgba(59, 130, 246, 0.25);
+      --badge-bg: rgba(59, 130, 246, 0.1);
+      --badge-border: rgba(59, 130, 246, 0.25);
+      --source-active-bg: #141824;
+      --switch-bg: #222733;
+      --switch-active: #3b82f6;
+      --btn-main-bg: #ffffff;
+      --btn-main-text: #000000;
+      --transition: all 0.2s ease;
+    }
+
+    /* Light Theme (Clean Crisp White with Minimal Cobalt Accents) */
+    [data-theme="light"] {
+      --bg-base: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-card: #ffffff;
+      --bg-card-hover: #f1f5f9;
+      --bg-input: #f1f5f9;
+      --bg-slider-track: #e2e8f0;
+      --accent: #2563eb;
+      --accent-light: #3b82f6;
+      --accent-dark: #1d4ed8;
+      --accent-glow: rgba(37, 99, 235, 0.18);
+      --accent-alpha: rgba(37, 99, 235, 0.08);
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+      --border-subtle: rgba(0, 0, 0, 0.08);
+      --border-active: rgba(37, 99, 235, 0.5);
+      --status-green: #059669;
+      --status-amber: #d97706;
+      --status-red: #dc2626;
+      --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.05);
+      --shadow-accent: 0 2px 10px rgba(37, 99, 235, 0.2);
+      --badge-bg: rgba(37, 99, 235, 0.08);
+      --badge-border: rgba(37, 99, 235, 0.2);
+      --source-active-bg: #eff6ff;
+      --switch-bg: #cbd5e1;
+      --switch-active: #2563eb;
+      --btn-main-bg: #0f172a;
+      --btn-main-text: #ffffff;
+      --transition: all 0.2s ease;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body, button, input, select, textarea {
+      font-family: system-ui, "Geist", "Geist Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+
+    input, select, textarea {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      transition: background-color 0.25s ease, color 0.25s ease;
+    }
+
+    .app-container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Solid Flat Card */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+      overflow: hidden;
+      transition: var(--transition);
+    }
+
+    /* Header */
+    .header-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+    }
+
+    .brand-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .brand-title {
+      font-size: 1.1rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-badge {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      padding: 2px 7px;
+      border-radius: var(--radius-full);
+      background: var(--badge-bg);
+      border: 1px solid var(--badge-border);
+      color: var(--accent);
+      text-shadow: 0 0 10px var(--accent-glow);
+    }
+
+    .brand-sub {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Header Controls */
+    .btn-header {
+      min-width: 34px;
+      height: 34px;
+      padding: 0 8px;
+      border-radius: var(--radius-full);
+      background: rgba(125, 125, 125, 0.08);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-header:hover {
+      color: var(--accent);
+      border-color: var(--border-active);
+      transform: scale(1.05);
+    }
+
+    .btn-header svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    /* Connection Status */
+    .connection-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 5px 9px;
+      border-radius: var(--radius-full);
+      background: rgba(125, 125, 125, 0.08);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      transition: var(--transition);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--status-green);
+      box-shadow: 0 0 8px var(--status-green);
+      transition: var(--transition);
+    }
+
+    .status-dot.pulsing {
+      animation: pulse 2s infinite;
+    }
+
+    .connection-badge.reconnecting .status-dot {
+      background: var(--status-amber);
+      box-shadow: 0 0 8px var(--status-amber);
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.85); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    /* Battery Widget */
+    .battery-widget {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      padding: 5px 9px;
+      border-radius: var(--radius-full);
+      background: rgba(125, 125, 125, 0.08);
+      border: 1px solid var(--border-subtle);
+      font-feature-settings: "tnum";
+      font-variant-numeric: tabular-nums;
+    }
+
+    .battery-svg {
+      width: 20px;
+      height: 11px;
+    }
+
+    .battery-fill {
+      fill: var(--status-green);
+      transition: width 0.3s ease, fill 0.3s ease;
+    }
+
+    /* Main Navigation Tabs */
+    .nav-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      padding: 4px;
+      border-radius: var(--radius-md);
+    }
+
+    .tab-btn {
+      height: 38px;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: var(--transition);
+    }
+
+    .tab-btn.active {
+      background: var(--bg-card);
+      color: var(--accent);
+      box-shadow: var(--shadow-accent);
+      border: 1px solid var(--border-active);
+    }
+
+    .tab-btn svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    /* Tab Panes */
+    .tab-pane {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .tab-pane.hidden {
+      display: none;
+    }
+
+    /* Hero Status Card & Visualizer */
+    .hero-status-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .hero-top-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .hero-device-name {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+    }
+
+    .hero-active-source-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 12px;
+      border-radius: var(--radius-full);
+      background: var(--badge-bg);
+      border: 1px solid var(--badge-border);
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    /* Animated Audio Wave Equalizer */
+    .audio-waves {
+      display: flex;
+      align-items: center;
+      gap: 2.5px;
+      height: 12px;
+    }
+
+    .wave-bar {
+      width: 2.5px;
+      background: var(--accent);
+      border-radius: 1px;
+      animation: wave 1.2s ease-in-out infinite alternate;
+    }
+
+    .wave-bar:nth-child(1) { height: 4px; animation-delay: 0.1s; }
+    .wave-bar:nth-child(2) { height: 11px; animation-delay: 0.3s; }
+    .wave-bar:nth-child(3) { height: 7px; animation-delay: 0.2s; }
+    .wave-bar:nth-child(4) { height: 9px; animation-delay: 0.4s; }
+
+    @keyframes wave {
+      0% { height: 3px; }
+      100% { height: 12px; }
+    }
+
+    /* Telemetry Cards Grid */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .telemetry-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      box-shadow: var(--shadow-card);
+    }
+
+    .telemetry-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .telemetry-label svg {
+      width: 14px;
+      height: 14px;
+      color: var(--accent);
+    }
+
+    .telemetry-val {
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin-top: 2px;
+      font-feature-settings: "tnum";
+      font-variant-numeric: tabular-nums;
+    }
+
+    .telemetry-sub {
+      font-size: 0.68rem;
+      color: var(--text-secondary);
+    }
+
+    /* Section Header */
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .section-title svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    .section-value-box {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .section-num-input {
+      width: 48px;
+      padding: 3px 6px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--accent);
+      font-size: 0.88rem;
+      font-weight: 800;
+      text-align: right;
+      font-family: inherit;
+    }
+
+    .section-num-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    /* Granular Fine Step Buttons */
+    .vol-granular-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .btn-step-fine {
+      height: 32px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-step-fine:hover, .btn-step-fine:active {
+      color: var(--accent);
+      border-color: var(--border-active);
+      background: var(--bg-card-hover);
+    }
+
+    /* Volume Section */
+    .volume-box {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .volume-main-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: var(--transition);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-icon:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-active);
+      color: var(--accent);
+    }
+
+    .btn-icon:active {
+      transform: scale(0.92);
+    }
+
+    .btn-icon.muted {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: var(--status-red);
+    }
+
+    .btn-icon svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    /* Range Slider */
+    .slider-container {
+      position: relative;
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+    }
+
+    .volume-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 10px;
+      border-radius: var(--radius-full);
+      background: var(--bg-slider-track);
+      outline: none;
+      cursor: pointer;
+      position: relative;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .volume-slider::-webkit-slider-runnable-track {
+      height: 10px;
+      border-radius: var(--radius-full);
+      background: transparent;
+    }
+
+    .volume-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 2px solid var(--accent);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      cursor: pointer;
+      margin-top: -7px;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+
+    .volume-slider::-moz-range-thumb {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 2px solid var(--accent);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+
+    .volume-slider:active::-webkit-slider-thumb {
+      transform: scale(1.15);
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Vol Steppers & Presets */
+    .vol-actions-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .vol-presets {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn-preset {
+      padding: 6px 12px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      border-radius: var(--radius-sm);
+      background: rgba(125, 125, 125, 0.08);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-preset:hover, .btn-preset:active {
+      background: rgba(125, 125, 125, 0.16);
+      border-color: var(--border-active);
+      color: var(--accent);
+    }
+
+    .vol-steppers {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn-step {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      font-size: 1.1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-step:active {
+      transform: scale(0.9);
+      background: var(--bg-card-hover);
+    }
+
+    /* Source Selector Grid */
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .source-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: var(--transition);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .source-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-active);
+      transform: translateY(-2px);
+    }
+
+    .source-card:active {
+      transform: translateY(0) scale(0.97);
+    }
+
+    .source-card.active {
+      background: var(--source-active-bg);
+      border-color: var(--accent);
+      box-shadow: var(--shadow-accent);
+    }
+
+    .source-card.active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 15%;
+      right: 15%;
+      height: 2px;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      border-radius: 2px;
+    }
+
+    .source-icon {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: var(--transition);
+    }
+
+    .source-card.active .source-icon {
+      color: var(--accent);
+      transform: scale(1.12);
+    }
+
+    .source-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .source-name {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      letter-spacing: 0.03em;
+      transition: var(--transition);
+      text-align: center;
+    }
+
+    .source-card.active .source-name {
+      color: var(--text-primary);
+    }
+
+    .source-sub {
+      font-size: 0.62rem;
+      color: var(--text-muted);
+      margin-top: -4px;
+      text-align: center;
+    }
+
+    .source-card.active .source-sub {
+      color: var(--accent);
+    }
+
+    /* Accordion Settings Sections */
+    .accordion-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      padding: 4px 0;
+    }
+
+    .toggle-chevron {
+      width: 18px;
+      height: 18px;
+      color: var(--text-muted);
+      transition: var(--transition);
+    }
+
+    .toggle-chevron.open {
+      transform: rotate(180deg);
+      color: var(--accent);
+    }
+
+    .accordion-body {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border-subtle);
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      animation: fadeIn 0.22s ease forwards;
+    }
+
+    .accordion-body.show {
+      display: flex;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Form Fields */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .form-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-field, .select-field {
+      width: 100%;
+      height: 42px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 0 14px;
+      font-size: 0.88rem;
+      color: var(--text-primary);
+      outline: none;
+      transition: var(--transition);
+    }
+
+    .select-field {
+      cursor: pointer;
+    }
+
+    .input-field:focus, .select-field:focus {
+      border-color: var(--border-active);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .input-addon-btn {
+      position: absolute;
+      right: 6px;
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition);
+    }
+
+    .input-addon-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .input-addon-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .scan-btn {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--accent);
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: var(--transition);
+    }
+
+    .scan-btn:hover {
+      opacity: 0.8;
+    }
+
+    .scan-btn svg {
+      width: 13px;
+      height: 13px;
+    }
+
+    .scan-btn.spinning svg {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+
+    .network-select {
+      width: 100%;
+      height: 42px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 0 14px;
+      font-size: 0.88rem;
+      color: var(--text-primary);
+      outline: none;
+      margin-bottom: 6px;
+      cursor: pointer;
+      display: none;
+    }
+
+    .network-select.show {
+      display: block;
+    }
+
+    /* iOS Style Toggle Switch */
+    .switch-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+    }
+
+    .switch-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .switch-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .switch-desc {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+    }
+
+    .switch-label {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .switch-label input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--switch-bg);
+      transition: .25s;
+      border-radius: var(--radius-full);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .switch-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .25s;
+      border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+
+    input:checked + .switch-slider {
+      background-color: var(--switch-active);
+    }
+
+    input:checked + .switch-slider:before {
+      transform: translateX(20px);
+    }
+
+    /* Buttons */
+    .btn-primary {
+      width: 100%;
+      height: 44px;
+      border-radius: var(--radius-md);
+      background: var(--btn-main-bg);
+      border: none;
+      color: var(--btn-main-text);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: var(--shadow-card);
+      transition: var(--transition);
+      margin-top: 4px;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+
+    .btn-primary:active {
+      transform: translateY(1px);
+      opacity: 0.85;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-primary svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .btn-danger {
+      width: 100%;
+      height: 42px;
+      border-radius: var(--radius-md);
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: var(--status-red);
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: var(--transition);
+    }
+
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.2);
+    }
+
+    .btn-danger:active {
+      transform: scale(0.98);
+    }
+
+    /* Firmware Upload & Flashing Styles */
+    .firmware-dropzone {
+      border: 2px dashed var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 22px 16px;
+      text-align: center;
+      background: var(--bg-surface);
+      cursor: pointer;
+      transition: var(--transition);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .firmware-dropzone:hover, .firmware-dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--bg-card-hover);
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    .firmware-dropzone svg {
+      width: 32px;
+      height: 32px;
+      color: var(--accent);
+    }
+
+    .dropzone-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .dropzone-sub {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .file-info-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+    }
+
+    .file-name-text {
+      font-weight: 700;
+      color: var(--text-primary);
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-size-text {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    /* Progress Bar */
+    .progress-container {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 8px;
+      background: var(--bg-slider-track);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.2s ease;
+      border-radius: var(--radius-full);
+    }
+
+    .progress-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .warning-callout {
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 0.74rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .warning-callout svg {
+      width: 16px;
+      height: 16px;
+      color: var(--status-red);
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .helper-box {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+      background: rgba(125, 125, 125, 0.05);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      border-left: 2px solid var(--accent);
+    }
+
+    /* Now Playing Track Card */
+    .now-playing-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .now-playing-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .np-main-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .np-artwork-wrap {
+      width: 68px;
+      height: 68px;
+      border-radius: var(--radius-md);
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .np-artwork-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .np-artwork-fallback {
+      width: 28px;
+      height: 28px;
+      color: var(--text-muted);
+    }
+
+    .np-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .np-badge-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 2px;
+    }
+
+    .np-source-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 6px;
+      border-radius: var(--radius-full);
+      background: var(--accent-alpha);
+      color: var(--accent);
+    }
+
+    .np-track-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .np-track-artist {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .np-track-album {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .np-controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding-top: 4px;
+      border-top: 1px solid rgba(125, 125, 125, 0.1);
+    }
+
+    .np-ctrl-btn {
+      width: 38px;
+      height: 38px;
+      border-radius: var(--radius-full);
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .np-ctrl-btn:hover:not(:disabled) {
+      border-color: var(--border-active);
+      color: var(--accent);
+      transform: scale(1.05);
+    }
+
+    .np-ctrl-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    .np-ctrl-btn.play-pause {
+      width: 44px;
+      height: 44px;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
+      box-shadow: var(--shadow-accent);
+    }
+
+    .np-ctrl-btn.play-pause:hover {
+      background: var(--accent-light);
+      transform: scale(1.08);
+    }
+
+    .np-ctrl-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .np-ctrl-btn.play-pause svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    /* Full-Screen Login Modal Overlay */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 9999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .login-overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 360px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-active);
+      border-radius: var(--radius-lg);
+      padding: 28px 24px;
+      box-shadow: var(--shadow-card), var(--shadow-accent);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      text-align: center;
+      transform: scale(0.95);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .login-overlay.show .login-card {
+      transform: scale(1);
+    }
+
+    .login-logo {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-md);
+      background: var(--accent-alpha);
+      border: 1px solid var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 4px auto;
+      color: var(--accent);
+    }
+
+    .login-logo svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .login-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+
+    .login-subtitle {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: -12px;
+    }
+
+    .login-error-box {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 0.74rem;
+      color: var(--status-red);
+      display: none;
+      text-align: left;
+    }
+
+    .login-error-box.show {
+      display: block;
+    }
+
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      text-align: left;
+    }
+
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: calc(20px + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--bg-card);
+      border: 1px solid var(--border-active);
+      color: var(--text-primary);
+      padding: 12px 20px;
+      border-radius: var(--radius-full);
+      font-size: 0.8rem;
+      font-weight: 600;
+      box-shadow: var(--shadow-card), var(--shadow-accent);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
+      z-index: 1000;
+      white-space: nowrap;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .toast-icon {
+      width: 16px;
+      height: 16px;
+      color: var(--accent);
+    }
+
+    /* Footer */
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 12px;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-container">
+
+    <!-- Header Section -->
+    <header class="card header-card">
+      <div class="brand-group">
+        <div class="brand-title">
+          <span>AUDIO PRO</span>
+          <span class="brand-badge">ADDON C3</span>
+        </div>
+        <span class="brand-sub">Hi-Fi Wireless Sound</span>
+      </div>
+
+      <div class="header-controls">
+        <!-- Language Switcher (EN / RU) -->
+        <button id="langBtn" class="btn-header" onclick="toggleLanguage()" title="Switch Language / Сменить язык" aria-label="Switch Language">
+          <span id="langText">EN</span>
+        </button>
+
+        <!-- Theme Toggle Button -->
+        <button id="themeToggleBtn" class="btn-header" onclick="toggleTheme()" title="Toggle Theme / Сменить тему" aria-label="Toggle Theme">
+          <svg id="themeIcon" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+        </button>
+
+        <!-- Security / Logout Button (Dynamic) -->
+        <button id="authHeaderBtn" class="btn-header" style="display:none;" onclick="handleHeaderAuthClick()" title="Security / Logout" aria-label="Security">
+          <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </button>
+
+        <!-- Connection Status Badge -->
+        <div id="connectionBadge" class="connection-badge" title="Connection Status">
+          <div class="status-dot pulsing"></div>
+          <span id="connectionText">Online</span>
+        </div>
+
+        <!-- Battery Indicator -->
+        <div class="battery-widget" title="Battery Status">
+          <svg class="battery-svg" viewBox="0 0 24 12" xmlns="http://www.w3.org/2000/svg">
+            <rect x="1" y="1" width="19" height="10" rx="2" fill="none" stroke="currentColor" opacity="0.4" stroke-width="1.5"/>
+            <rect id="batteryLevelBar" class="battery-fill" x="2.5" y="2.5" width="14" height="7" rx="1"/>
+            <path d="M21 4.5V7.5" stroke="currentColor" opacity="0.4" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span id="batteryPercent">--%</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button id="tabBtnStatus" class="tab-btn active" onclick="switchTab('status')">
+        <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+          <rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>
+        </svg>
+        <span data-i18n="tab_status">Status</span>
+      </button>
+
+      <button id="tabBtnControls" class="tab-btn" onclick="switchTab('controls')">
+        <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>
+        </svg>
+        <span data-i18n="tab_controls">Controls</span>
+      </button>
+
+      <button id="tabBtnSettings" class="tab-btn" onclick="switchTab('settings')">
+        <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span data-i18n="tab_settings">Settings</span>
+      </button>
+    </nav>
+
+    <!-- TAB 1: STATUS DASHBOARD (DEFAULT) -->
+    <main id="tabStatus" class="tab-pane">
+
+      <!-- Hero Device Status Card -->
+      <section class="card hero-status-card">
+        <div class="hero-top-row">
+          <div>
+            <div id="heroHostname" class="hero-device-name">AudioPro-C3</div>
+            <div class="brand-sub">Hi-Fi Wireless Audio System</div>
+          </div>
+          <div class="hero-active-source-badge">
+            <div class="audio-waves">
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+            </div>
+            <span id="heroSourceText">Wi-Fi</span>
+          </div>
+        </div>
+
+        <!-- Live Volume & Precision Slider in Hero -->
+        <div class="volume-box">
+          <div class="section-header" style="margin-bottom: 6px;">
+            <span class="section-title" data-i18n="vol_title">Master Volume</span>
+            <div class="section-value-box">
+              <input type="number" id="heroVolInput" class="section-num-input" min="0" max="100" value="25" onchange="setVolume(this.value)">
+              <span style="font-size:0.8rem; font-weight:700; color:var(--accent)">%</span>
+            </div>
+          </div>
+          <div class="volume-main-row">
+            <button class="btn-icon" aria-label="Mute" onclick="toggleMute()">
+              <svg class="heroVolumeIcon" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>
+              </svg>
+            </button>
+            <div class="slider-container">
+              <input type="range" id="heroVolumeSlider" class="volume-slider" min="0" max="100" step="1" value="25" aria-label="Master Volume">
+            </div>
+          </div>
+          <!-- Fine +/- 1% Steps -->
+          <div class="vol-granular-row">
+            <button class="btn-step-fine" onclick="stepVolume(-5)">−5%</button>
+            <button class="btn-step-fine" onclick="stepVolume(-1)">−1%</button>
+            <button class="btn-step-fine" onclick="stepVolume(1)">+1%</button>
+            <button class="btn-step-fine" onclick="stepVolume(5)">+5%</button>
+          </div>
+        </div>
+
+        <!-- Quick Source Toggle in Hero -->
+        <div class="source-grid">
+          <button id="hero-src-wifi" class="source-card active" onclick="switchSource('wifi')">
+            <div class="source-icon">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/></svg>
+            </div>
+            <div class="source-name">Wi-Fi</div>
+          </button>
+          <button id="hero-src-bt" class="source-card" onclick="switchSource('bt')">
+            <div class="source-icon">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="m7 7l10 10l-5 5V2l5 5L7 17"/></svg>
+            </div>
+            <div class="source-name">Bluetooth</div>
+          </button>
+          <button id="hero-src-aux" class="source-card" onclick="switchSource('aux')">
+            <div class="source-icon">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1zm0 2v-2M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10m16 11v-2M3 5V3M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2zm3-5V3"/></svg>
+            </div>
+            <div class="source-name">AUX In</div>
+          </button>
+        </div>
+      </section>
+
+      <!-- Now Playing Track Card (Dynamic) -->
+      <section id="nowPlayingCard" class="now-playing-card" style="display:none;">
+        <div class="np-main-row">
+          <div class="np-artwork-wrap">
+            <img id="npArtworkImg" class="np-artwork-img" src="" alt="Album Artwork" style="display:none;" onerror="this.style.display='none'; document.getElementById('npFallbackIcon').style.display='block';">
+            <svg id="npFallbackIcon" class="np-artwork-fallback" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </div>
+          <div class="np-info">
+            <div class="np-badge-row">
+              <span id="npSourceBadge" class="np-source-badge">AirPlay</span>
+            </div>
+            <div id="npTrackTitle" class="np-track-title">Unknown Track</div>
+            <div id="npTrackArtist" class="np-track-artist">Unknown Artist</div>
+            <div id="npTrackAlbum" class="np-track-album"></div>
+          </div>
+        </div>
+
+        <!-- Player Controls (Play/Pause, Disabled Prev/Next) -->
+        <div class="np-controls-row">
+          <button class="np-ctrl-btn" disabled title="Previous (Not available)" aria-label="Previous">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/>
+            </svg>
+          </button>
+          <button id="npPlayPauseBtn" class="np-ctrl-btn play-pause" onclick="togglePlayback()" title="Play / Pause" aria-label="Play or Pause">
+            <svg id="npPlayPauseIcon" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/>
+            </svg>
+          </button>
+          <button class="np-ctrl-btn" disabled title="Next (Not available)" aria-label="Next">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/>
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <!-- System Telemetry Cards Grid -->
+      <section class="telemetry-grid">
+        <!-- Network Telemetry -->
+        <div class="telemetry-card">
+          <div class="telemetry-label">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/></svg>
+            <span data-i18n="tel_network">Network</span>
+          </div>
+          <div id="telNetworkVal" class="telemetry-val">Access Point</div>
+          <div id="telIpVal" class="telemetry-sub">IP: 10.10.10.254</div>
+        </div>
+
+        <!-- Battery Telemetry -->
+        <div class="telemetry-card">
+          <div class="telemetry-label">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><rect width="16" height="10" x="2" y="7" rx="2"/><path d="M22 11v2"/></svg>
+            <span data-i18n="tel_battery">Battery</span>
+          </div>
+          <div id="telBatVal" class="telemetry-val">100%</div>
+          <div id="telBatSub" class="telemetry-sub" data-i18n="tel_bat_healthy">Li-ion • Optimal</div>
+        </div>
+
+        <!-- Streaming Services -->
+        <div class="telemetry-card">
+          <div class="telemetry-label">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            <span data-i18n="tel_services">Streaming</span>
+          </div>
+          <div class="telemetry-val">AirPlay / Spotify</div>
+          <div class="telemetry-sub" data-i18n="tel_srv_ready">Services Active</div>
+        </div>
+
+        <!-- System & Hardware -->
+        <div class="telemetry-card">
+          <div class="telemetry-label">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10v10H7z"/></svg>
+            <span data-i18n="tel_hardware">Hardware</span>
+          </div>
+          <div id="telMemVal" class="telemetry-val">64MB RAM</div>
+          <div id="telUptimeVal" class="telemetry-sub">Uptime: --</div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- TAB 2: CONTROLS -->
+    <main id="tabControls" class="tab-pane hidden">
+
+      <!-- Master Volume Control -->
+      <section class="card">
+        <div class="section-header">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>
+            </svg>
+            <span data-i18n="vol_title">Master Volume</span>
+          </div>
+          <div class="section-value-box">
+            <input type="number" id="volInput" class="section-num-input" min="0" max="100" value="25" onchange="setVolume(this.value)">
+            <span style="font-size:0.8rem; font-weight:700; color:var(--accent)">%</span>
+          </div>
+        </div>
+
+        <div class="volume-box">
+          <div class="volume-main-row">
+            <button id="muteBtn" class="btn-icon" aria-label="Mute / Unmute" onclick="toggleMute()">
+              <svg id="volumeIcon" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>
+              </svg>
+            </button>
+
+            <div class="slider-container">
+              <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" step="1" value="25" aria-label="Master Volume">
+            </div>
+          </div>
+
+          <!-- Fine +/- 1% and +/- 10% Steps -->
+          <div class="vol-granular-row">
+            <button class="btn-step-fine" onclick="stepVolume(-10)">−10%</button>
+            <button class="btn-step-fine" onclick="stepVolume(-1)">−1%</button>
+            <button class="btn-step-fine" onclick="stepVolume(1)">+1%</button>
+            <button class="btn-step-fine" onclick="stepVolume(10)">+10%</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Source Selector -->
+      <section class="card">
+        <div class="section-header">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2zm3-5V3M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1zm0 2v-2M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10"/>
+            </svg>
+            <span data-i18n="src_title">Audio Source</span>
+          </div>
+        </div>
+
+        <div class="source-grid">
+          <!-- Wi-Fi / AirPlay -->
+          <button id="src-wifi" class="source-card active" onclick="switchSource('wifi')">
+            <div class="source-icon">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/>
+              </svg>
+            </div>
+            <div class="source-name">Wi-Fi</div>
+            <div class="source-sub">AirPlay / Spotify</div>
+          </button>
+
+          <!-- Bluetooth -->
+          <button id="src-bt" class="source-card" onclick="switchSource('bt')">
+            <div class="source-icon">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <path d="m7 7l10 10l-5 5V2l5 5L7 17"/>
+              </svg>
+            </div>
+            <div class="source-name">Bluetooth</div>
+            <div class="source-sub">A2DP Audio</div>
+          </button>
+
+          <!-- AUX In -->
+          <button id="src-aux" class="source-card" onclick="switchSource('aux')">
+            <div class="source-icon">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <g><path d="M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1zm0 2v-2"/><path d="M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10m16 11v-2M3 5V3"/><path d="M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2zm3-5V3"/></g>
+              </svg>
+            </div>
+            <div class="source-name">AUX In</div>
+            <div class="source-sub">3.5 mm Jack</div>
+          </button>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- TAB 3: ADVANCED SETTINGS (GRANULAR CONTROLS) -->
+    <main id="tabSettings" class="tab-pane hidden">
+
+      <!-- Home Wi-Fi Setup (STA) -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('homeWifiSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/>
+            </svg>
+            <span data-i18n="wifi_home_title">Home Wi-Fi Network</span>
+          </div>
+          <svg id="homeWifiSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="homeWifiSection" class="accordion-body">
+          <div class="helper-box" data-i18n="wifi_helper">
+            Connect the speaker to your home Wi-Fi router for wireless streaming via AirPlay and Spotify Connect.
+          </div>
+
+          <form onsubmit="connectWifi(event)">
+            <div class="form-group">
+              <div class="form-label">
+                <span data-i18n="wifi_ssid">Network Name (SSID)</span>
+                <button type="button" id="scanBtn" class="scan-btn" onclick="scanNetworks()">
+                  <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8m0 0V3m0 5h5m-5 4a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16m0 0v5m0-5h-5"/>
+                  </svg>
+                  <span id="scanBtnText" data-i18n="wifi_scan">Scan Networks</span>
+                </button>
+              </div>
+
+              <select id="networkSelect" class="network-select" onchange="onNetworkSelect(this)">
+                <option value="" data-i18n="wifi_select_opt">-- Select a scanned network --</option>
+              </select>
+
+              <div class="input-wrapper">
+                <input type="text" id="wifiSsid" class="input-field" placeholder="Home Wi-Fi SSID" required autocomplete="off">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">
+                <span data-i18n="wifi_pass">Wi-Fi Password</span>
+              </div>
+              <div class="input-wrapper">
+                <input type="password" id="wifiPass" class="input-field" placeholder="Password" autocomplete="off">
+                <button type="button" class="input-addon-btn" onclick="togglePasswordVisibility('wifiPass', 'eyeIcon1')" aria-label="Toggle password">
+                  <svg id="eyeIcon1" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" id="wifiSubmitBtn" class="btn-primary">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/>
+              </svg>
+              <span data-i18n="wifi_connect_btn">Connect to Home Network</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- SoftAP Configuration (Точка доступа) -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('apSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5M12 12h.01M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/>
+            </svg>
+            <span data-i18n="ap_title">Access Point (SoftAP)</span>
+          </div>
+          <svg id="apSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="apSection" class="accordion-body">
+          <div class="helper-box" data-i18n="ap_helper">
+            Direct broadcast Wi-Fi network for standalone setup and connection.
+          </div>
+
+          <form onsubmit="saveApSettings(event)">
+            <div class="switch-row">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="ap_enabled">Access Point Enabled</span>
+                <span class="switch-desc" data-i18n="ap_enabled_desc">Broadcast setup network</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="cfgApEnabled" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="cfgApSsid" data-i18n="ap_ssid">AP Network Name (SSID)</label>
+              <input type="text" id="cfgApSsid" class="input-field" placeholder="AudioPro-C3-Setup" required>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="cfgApKey" data-i18n="ap_key">AP Password</label>
+                <div class="input-wrapper">
+                  <input type="password" id="cfgApKey" class="input-field" placeholder="Min. 8 characters">
+                  <button type="button" class="input-addon-btn" onclick="togglePasswordVisibility('cfgApKey', 'eyeIcon2')" aria-label="Toggle password">
+                    <svg id="eyeIcon2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="cfgApChannel" data-i18n="ap_channel">Channel (1-13 / Auto)</label>
+                <select id="cfgApChannel" class="select-field">
+                  <option value="auto">Auto</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                  <option value="9">9</option>
+                  <option value="10">10</option>
+                  <option value="11">11</option>
+                  <option value="12">12</option>
+                  <option value="13">13</option>
+                </select>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary">
+              <span data-i18n="save_btn">Save AP Settings</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Audio & Power Management (Granular 1% & 1min controls) -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('audioSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+            <span data-i18n="audio_power_title">Audio & Power Policy</span>
+          </div>
+          <svg id="audioSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="audioSection" class="accordion-body">
+          <form onsubmit="saveAudioSettings(event)">
+            <!-- Granular Startup Volume Input -->
+            <div class="form-group">
+              <div class="form-label">
+                <span data-i18n="def_vol_label">Startup Volume (0–100%)</span>
+                <span id="cfgDefVolDisplay" style="color:var(--accent); font-weight:700;">25%</span>
+              </div>
+              <div style="display:flex; gap:10px; align-items:center;">
+                <input type="range" id="cfgDefVolRange" min="0" max="100" step="1" value="25" class="volume-slider" style="flex:1;" oninput="syncDefVol(this.value)">
+                <input type="number" id="cfgDefVol" min="0" max="100" value="25" class="input-field" style="width:68px; text-align:center;" oninput="syncDefVol(this.value)">
+              </div>
+            </div>
+
+            <!-- Granular Sleep Timeout Input -->
+            <div class="form-group">
+              <div class="form-label">
+                <span data-i18n="auto_sleep_label">Auto-Sleep Timeout (Minutes, 0=Disabled)</span>
+              </div>
+              <div class="input-wrapper">
+                <input type="number" id="cfgAutoSleep" class="input-field" min="0" max="360" step="1" placeholder="0 = Disabled" required>
+              </div>
+            </div>
+
+            <div class="switch-row">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="sleep_aux_title">Sleep in AUX Mode</span>
+                <span class="switch-desc" data-i18n="sleep_aux_desc">Enable inactivity timer in 3.5mm input</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="cfgSleepAux">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="switch-row">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="sleep_bt_title">Sleep in Bluetooth Mode</span>
+                <span class="switch-desc" data-i18n="sleep_bt_desc">Enable timer when Bluetooth is idle</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="cfgSleepBt">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <button type="submit" class="btn-primary">
+              <span data-i18n="save_audio_btn">Save Audio Settings</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Device Identity -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('deviceSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span data-i18n="dev_name_title">Speaker Name (AirPlay / Spotify)</span>
+          </div>
+          <svg id="deviceSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="deviceSection" class="accordion-body">
+          <form onsubmit="saveDeviceName(event)">
+            <div class="form-group">
+              <label class="form-label" for="cfgHostname" data-i18n="hostname_label">Device Network Name (Hostname)</label>
+              <input type="text" id="cfgHostname" class="input-field" placeholder="AudioPro-C3" required>
+            </div>
+            <button type="submit" class="btn-primary">
+              <span data-i18n="save_dev_btn">Update Speaker Name</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Home Assistant / MQTT -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('mqttSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <span data-i18n="mqtt_title">Home Assistant / MQTT</span>
+          </div>
+          <svg id="mqttSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="mqttSection" class="accordion-body">
+          <div class="helper-box" data-i18n="mqtt_helper">
+            MQTT Discovery for battery, buttons, and volume integration in Home Assistant.
+          </div>
+
+          <form onsubmit="saveMqttSettings(event)">
+            <div class="switch-row">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="mqtt_enabled">MQTT Client Enabled</span>
+                <span class="switch-desc" data-i18n="mqtt_enabled_desc">Publish status to broker</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="cfgMqttEnabled" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="cfgMqttHost">Broker Host</label>
+                <input type="text" id="cfgMqttHost" class="input-field" placeholder="192.168.1.202">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="cfgMqttPort">Port</label>
+                <input type="number" id="cfgMqttPort" class="input-field" min="1" max="65535" placeholder="1883">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="cfgMqttPrefix">Topic Prefix</label>
+              <input type="text" id="cfgMqttPrefix" class="input-field" placeholder="audiopro_c3">
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="cfgMqttUser">Username</label>
+                <input type="text" id="cfgMqttUser" class="input-field" placeholder="user">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="cfgMqttPass">Password</label>
+                <input type="password" id="cfgMqttPass" class="input-field" placeholder="pass">
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary">
+              <span data-i18n="save_mqtt_btn">Save MQTT Settings</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Firmware Upgrade / Flash Binary Section -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('firmwareSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <span data-i18n="fw_title">Firmware Upgrade</span>
+          </div>
+          <svg id="firmwareSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="firmwareSection" class="accordion-body">
+          <div class="helper-box" data-i18n="fw_helper">
+            Upload and flash OpenWrt sysupgrade image (.bin) to update speaker firmware.
+          </div>
+
+          <!-- Hidden Native File Input -->
+          <input type="file" id="firmwareFileInput" accept=".bin,.img" style="display:none;" onchange="onFirmwareFileSelected(event)">
+
+          <!-- Drag and drop zone -->
+          <div id="firmwareDropzone" class="firmware-dropzone" onclick="document.getElementById('firmwareFileInput').click()">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <div class="dropzone-title" data-i18n="fw_drop_title">Click or Drag & Drop Binary (.bin)</div>
+            <div class="dropzone-sub" data-i18n="fw_drop_sub">Max size 32 MB • sysupgrade image</div>
+          </div>
+
+          <!-- Selected File & Upload Info -->
+          <div id="firmwareFileInfo" style="display:none; flex-direction:column; gap:10px;">
+            <div class="file-info-box">
+              <div>
+                <div id="fwFileName" class="file-name-text">firmware.bin</div>
+                <div id="fwFileMd5" style="font-size:0.65rem; color:var(--text-muted); font-family:monospace; margin-top:2px;"></div>
+              </div>
+              <div id="fwFileSize" class="file-size-text">0 MB</div>
+            </div>
+
+            <!-- Upload Progress Bar -->
+            <div id="fwProgressContainer" class="progress-container" style="display:none;">
+              <div class="progress-label-row">
+                <span id="fwProgressStatus" data-i18n="fw_uploading">Uploading...</span>
+                <span id="fwProgressPercent">0%</span>
+              </div>
+              <div class="progress-bar-wrap">
+                <div id="fwProgressBarFill" class="progress-bar-fill"></div>
+              </div>
+            </div>
+
+            <!-- Flashing options -->
+            <div class="switch-row">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="fw_keep_settings">Keep Settings</span>
+                <span class="switch-desc" data-i18n="fw_keep_settings_desc">Preserve Wi-Fi and audio configurations</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="fwKeepSettings" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <!-- Warning Notice -->
+            <div class="warning-callout">
+              <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              <span data-i18n="fw_warning">Do not unplug power or turn off the speaker while flashing! The speaker will automatically reboot when completed (~2-3 minutes).</span>
+            </div>
+
+            <!-- Flash Action Buttons -->
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="btn-step-fine" style="flex:1; height:44px;" onclick="resetFirmwareSelection()">
+                <span data-i18n="fw_cancel">Cancel</span>
+              </button>
+              <button type="button" id="startFlashBtn" class="btn-primary" style="flex:2;" onclick="startFlashingProcess()">
+                <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>
+                </svg>
+                <span data-i18n="fw_flash_btn">Flash Firmware</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Active Flashing Overlay / Timer Box -->
+          <div id="flashingStatusBox" style="display:none; flex-direction:column; gap:12px; padding:16px; background:var(--bg-surface); border:1px solid var(--border-active); border-radius:var(--radius-md); text-align:center;">
+            <div style="font-size:1rem; font-weight:800; color:var(--accent);" data-i18n="fw_flashing_title">Flashing in Progress</div>
+            <div class="audio-waves" style="justify-content:center; height:18px; margin:4px 0;">
+              <div class="wave-bar" style="height:14px;"></div>
+              <div class="wave-bar" style="height:18px;"></div>
+              <div class="wave-bar" style="height:12px;"></div>
+              <div class="wave-bar" style="height:16px;"></div>
+            </div>
+            <div id="flashingTimerText" style="font-size:0.82rem; color:var(--text-secondary);">Rebooting... please wait <strong>120s</strong></div>
+            <div class="progress-bar-wrap">
+              <div id="rebootProgressFill" class="progress-bar-fill" style="width:0%;"></div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Web UI Security & Authentication Section -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('securitySection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <span data-i18n="sec_title">Security & Authentication</span>
+          </div>
+          <svg id="securitySectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="securitySection" class="accordion-body">
+          <div class="helper-box" data-i18n="sec_helper">
+            Uses Linux PAM / shadow system credentials (same username and password as SSH). Session is cryptographically bound to client IP and browser fingerprint.
+          </div>
+
+          <form onsubmit="saveSecuritySettings(event)">
+            <div class="switch-row">
+              <div class="switch-info">
+                <span class="switch-title" data-i18n="sec_enable">Require Password</span>
+                <span class="switch-desc" data-i18n="sec_enable_desc">Protect Web UI with SSH / root login</span>
+              </div>
+              <label class="switch-label">
+                <input type="checkbox" id="cfgAuthEnabled">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">
+                <span data-i18n="sec_session_days">Session Duration (Days)</span>
+              </div>
+              <div class="input-wrapper">
+                <input type="number" id="cfgSessionDays" class="input-field" min="1" max="365" step="1" value="7" required>
+              </div>
+            </div>
+
+            <div style="font-size:0.72rem; color:var(--text-muted); background:rgba(125,125,125,0.05); padding:8px 12px; border-radius:var(--radius-sm); border-left:2px solid var(--accent); margin-bottom:12px;">
+              <span data-i18n="sec_binding_info">Persistent cookie with IP & browser fingerprint lock. Disconnecting or switching network requires re-authentication.</span>
+            </div>
+
+            <div style="display:flex; gap:8px;">
+              <button type="button" id="secLogoutBtn" class="btn-step-fine" style="flex:1; height:44px; display:none;" onclick="logout()">
+                <span data-i18n="sec_logout">Logout</span>
+              </button>
+              <button type="submit" class="btn-primary" style="flex:2;">
+                <span data-i18n="sec_save_btn">Save Security</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- System Operations -->
+      <section class="card">
+        <div class="section-header">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 14.14 14.14"/>
+            </svg>
+            <span data-i18n="sys_ops">System Actions</span>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <button class="btn-danger" onclick="resetWifiToAp()">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" style="width:16px;height:16px;">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8m0 0V3m0 5h5m-5 4a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16m0 0v5m0-5h-5"/>
+            </svg>
+            <span data-i18n="btn_reset_wifi">Reset Wi-Fi to AP Mode</span>
+          </button>
+
+          <button class="btn-danger" onclick="rebootDevice()">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" style="width:16px;height:16px;">
+              <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
+            </svg>
+            <span data-i18n="btn_reboot">Reboot Speaker</span>
+          </button>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>IP: <strong id="ipDisplay">10.10.10.254</strong></span>
+      <span>Linkplay A28 • MT7688</span>
+      <span>OpenWrt 23.05</span>
+    </footer>
+
+  </div>
+
+  <!-- Full-Screen Login Modal Overlay (System Authentication) -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </div>
+      <div>
+        <div class="login-title">Audio Pro C3</div>
+        <div class="login-subtitle" data-i18n="auth_subtitle">System Authentication Required</div>
+      </div>
+
+      <div id="loginErrorBox" class="login-error-box">
+        <span id="loginErrorText">Invalid username or password</span>
+      </div>
+
+      <form class="login-form" onsubmit="submitLogin(event)">
+        <div class="form-group">
+          <label class="form-label" for="loginUser" data-i18n="auth_username">Username</label>
+          <input type="text" id="loginUser" class="input-field" value="root" autocomplete="username" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="loginPass" data-i18n="auth_password">Password</label>
+          <div class="input-wrapper">
+            <input type="password" id="loginPass" class="input-field" autocomplete="current-password" placeholder="System password" required>
+            <button type="button" class="btn-toggle-eye" onclick="togglePasswordVisibility('loginPass', 'loginPassEye')">
+              <svg id="loginPassEye" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="loginSubmitBtn" class="btn-primary" style="margin-top:6px;">
+          <span data-i18n="auth_signin_btn">Sign In</span>
+        </button>
+      </form>
+
+      <div style="font-size:0.68rem; color:var(--text-muted); line-height:1.3;" data-i18n="auth_hint">
+        Use the same Linux root credentials as SSH access.
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">
+    <svg class="toast-icon" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+      <path d="M20 6 9 17l-5-5"/>
+    </svg>
+    <span id="toastMsg">Успешно</span>
+  </div>
+
+  <script>
+    // i18n Translations Dictionary
+    const i18n = {
+      en: {
+        tab_status: "Status",
+        tab_controls: "Controls",
+        tab_settings: "Settings",
+        vol_title: "Master Volume",
+        src_title: "Audio Source",
+        tel_network: "Network",
+        tel_battery: "Battery",
+        tel_services: "Streaming",
+        tel_hardware: "Hardware",
+        tel_bat_healthy: "Li-ion • Optimal",
+        tel_srv_ready: "Services Active",
+        wifi_home_title: "Home Wi-Fi Network",
+        wifi_helper: "Connect speaker to your home Wi-Fi for AirPlay & Spotify Connect.",
+        wifi_ssid: "Network Name (SSID)",
+        wifi_scan: "Scan Networks",
+        wifi_scanning: "Scanning...",
+        wifi_select_opt: "-- Select a scanned network --",
+        wifi_pass: "Wi-Fi Password",
+        wifi_connect_btn: "Connect to Home Network",
+        wifi_connecting: "Connecting...",
+        ap_title: "Access Point (SoftAP)",
+        ap_helper: "Direct Wi-Fi broadcast for standalone control without external router.",
+        ap_enabled: "Access Point Enabled",
+        ap_enabled_desc: "Broadcast configuration Wi-Fi",
+        ap_ssid: "AP Network Name (SSID)",
+        ap_key: "AP Password (WPA2)",
+        ap_channel: "Channel (1-13 / Auto)",
+        save_btn: "Save AP Settings",
+        audio_power_title: "Audio & Power Policy",
+        def_vol_label: "Startup Default Volume (0–100%)",
+        auto_sleep_label: "Auto-Sleep Inactivity Timer (Minutes, 0=Disabled)",
+        sleep_aux_title: "Sleep in AUX Mode",
+        sleep_aux_desc: "Inactivity sleep when 3.5mm line is idle",
+        sleep_bt_title: "Sleep in Bluetooth Mode",
+        sleep_bt_desc: "Inactivity sleep when Bluetooth is disconnected",
+        save_audio_btn: "Save Audio Policy",
+        dev_name_title: "Speaker Name (AirPlay / Spotify)",
+        hostname_label: "Network Hostname / mDNS Name",
+        save_dev_btn: "Update Speaker Name",
+        mqtt_title: "Home Assistant / MQTT",
+        mqtt_helper: "Auto-discovery for Home Assistant entities (battery, buttons, volume).",
+        mqtt_enabled: "MQTT Client Enabled",
+        mqtt_enabled_desc: "Publish telemetry to MQTT broker",
+        save_mqtt_btn: "Save MQTT Settings",
+        fw_title: "Firmware Upgrade",
+        fw_helper: "Upload and flash OpenWrt sysupgrade image (.bin) to update speaker firmware.",
+        fw_drop_title: "Click or Drag & Drop Binary (.bin)",
+        fw_drop_sub: "Max size 32 MB • sysupgrade image",
+        fw_uploading: "Uploading binary...",
+        fw_keep_settings: "Keep Settings",
+        fw_keep_settings_desc: "Preserve Wi-Fi and audio configurations",
+        fw_warning: "Do not unplug power or turn off the speaker while flashing! The speaker will automatically reboot when completed (~2-3 minutes).",
+        fw_cancel: "Cancel",
+        fw_flash_btn: "Flash Firmware",
+        fw_flashing_title: "Flashing in Progress",
+        fw_upload_success: "Firmware binary uploaded",
+        fw_upload_err: "Failed to upload firmware binary",
+        fw_flash_confirm: "Are you sure you want to flash this firmware binary? Do NOT power off the device!",
+        sec_title: "Security & Authentication",
+        sec_helper: "Uses Linux PAM / shadow system credentials (same username and password as SSH). Session is cryptographically bound to client IP and browser fingerprint.",
+        sec_enable: "Require Password",
+        sec_enable_desc: "Protect Web UI with SSH / root login",
+        sec_session_days: "Session Duration (Days)",
+        sec_binding_info: "Persistent cookie with IP & browser fingerprint lock. Disconnecting or switching network requires re-authentication.",
+        sec_logout: "Logout",
+        sec_save_btn: "Save Security",
+        auth_subtitle: "System Authentication Required",
+        auth_username: "Username",
+        auth_password: "Password",
+        auth_signin_btn: "Sign In",
+        auth_hint: "Use the same Linux root credentials as SSH access.",
+        auth_err_invalid: "Invalid username or password",
+        np_title: "Now Playing",
+        np_idle: "No Track Playing",
+        sys_ops: "System Actions",
+        btn_reset_wifi: "Reset Wi-Fi to AP Mode",
+        btn_reboot: "Reboot Speaker",
+        sound_muted: "Muted",
+        sound_unmuted: "Unmuted",
+        theme_light: "Light Theme (Cobalt Blue)",
+        theme_dark: "OLED Dark Theme",
+        ap_mode: "Access Point Mode"
+      },
+      ru: {
+        tab_status: "Статус",
+        tab_controls: "Управление",
+        tab_settings: "Настройки",
+        vol_title: "Громкость",
+        src_title: "Источник звука",
+        tel_network: "Сеть",
+        tel_battery: "Батарея",
+        tel_services: "Стриминг",
+        tel_hardware: "Железо",
+        tel_bat_healthy: "Li-ion • В норме",
+        tel_srv_ready: "Службы активны",
+        wifi_home_title: "Домашний Wi-Fi",
+        wifi_helper: "Подключение колонки к домашней сети для AirPlay и Spotify Connect.",
+        wifi_ssid: "Имя сети (SSID)",
+        wifi_scan: "Найти сети",
+        wifi_scanning: "Поиск...",
+        wifi_select_opt: "-- Выберите найденную сеть --",
+        wifi_pass: "Пароль Wi-Fi",
+        wifi_connect_btn: "Подключить к домашней сети",
+        wifi_connecting: "Подключение...",
+        ap_title: "Точка доступа (SoftAP)",
+        ap_helper: "Собственная сеть колонки для прямого управления без внешнего роутера.",
+        ap_enabled: "Точка доступа включена",
+        ap_enabled_desc: "Раздавать сеть AudioPro для настройки",
+        ap_ssid: "Имя сети AP (SSID)",
+        ap_key: "Пароль AP (WPA2)",
+        ap_channel: "Канал 2.4 GHz (1-13 / Авто)",
+        save_btn: "Сохранить параметры AP",
+        audio_power_title: "Звук и Энергосбережение",
+        def_vol_label: "Стартовая громкость при включении (0–100%)",
+        auto_sleep_label: "Автопереход в сон при простое (минут, 0=отключен)",
+        sleep_aux_title: "Усыплять в режиме AUX",
+        sleep_aux_desc: "Таймер сна при простое кабеля 3.5 мм",
+        sleep_bt_title: "Усыплять в режиме Bluetooth",
+        sleep_bt_desc: "Таймер сна при паузе в Bluetooth",
+        save_audio_btn: "Сохранить параметры звука",
+        dev_name_title: "Имя колонки (AirPlay / Spotify)",
+        hostname_label: "Сетевое имя устройства (Hostname / mDNS)",
+        save_dev_btn: "Обновить имя устройства",
+        mqtt_title: "Интеграция MQTT (Home Assistant)",
+        mqtt_helper: "Автообнаружение в Home Assistant (MQTT Discovery) для передачи АКБ и кнопок.",
+        mqtt_enabled: "MQTT клиент включен",
+        mqtt_enabled_desc: "Публиковать сенсоры в брокер",
+        save_mqtt_btn: "Сохранить MQTT",
+        fw_title: "Обновление прошивки",
+        fw_helper: "Загрузка и прошивка бинарного образа OpenWrt sysupgrade (.bin) для обновления колонки.",
+        fw_drop_title: "Нажмите или перетащите файл (.bin)",
+        fw_drop_sub: "Макс. размер 32 МБ • образ sysupgrade",
+        fw_uploading: "Загрузка бинарника...",
+        fw_keep_settings: "Сохранить настройки",
+        fw_keep_settings_desc: "Сохранить Wi-Fi и параметры звука",
+        fw_warning: "Не выключайте питание колонки во время прошивки! Колонка автоматически перезагрузится после завершения (~2-3 мин).",
+        fw_cancel: "Отмена",
+        fw_flash_btn: "Прошить устройство",
+        fw_flashing_title: "Идет прошивка устройства",
+        fw_upload_success: "Бинарник прошивки загружен",
+        fw_upload_err: "Ошибка загрузки бинарника",
+        fw_flash_confirm: "Вы уверены, что хотите запустить процесс прошивки? НЕ отключайте питание устройства!",
+        sec_title: "Безопасность и Доступ",
+        sec_helper: "Использует системные учетные данные Linux shadow (как в SSH). Сессия криптографически привязана к IP и браузеру.",
+        sec_enable: "Требовать пароль",
+        sec_enable_desc: "Защитить веб-интерфейс паролем root / SSH",
+        sec_session_days: "Срок действия сессии (дней)",
+        sec_binding_info: "Персистентная cookie с блокировкой по IP и браузеру. Смена сети требует повторного входа.",
+        sec_logout: "Выйти из сессии",
+        sec_save_btn: "Сохранить параметры безопасности",
+        auth_subtitle: "Требуется системная авторизация",
+        auth_username: "Имя пользователя",
+        auth_password: "Пароль",
+        auth_signin_btn: "Войти",
+        auth_hint: "Используются те же системные учетные данные root, что и для SSH.",
+        auth_err_invalid: "Неверный логин или пароль",
+        np_title: "Сейчас играет",
+        np_idle: "Воспроизведение остановлено",
+        sys_ops: "Системные операции",
+        btn_reset_wifi: "Сбросить Wi-Fi в режим точки доступа",
+        btn_reboot: "Перезагрузить устройство",
+        sound_muted: "Звук отключен",
+        sound_unmuted: "Звук включен",
+        theme_light: "Светлая тема (Cobalt Blue)",
+        theme_dark: "OLED Тёмная тема",
+        ap_mode: "Режим точки доступа"
+      }
+    };
+
+    // State management
+    const state = {
+      lang: 'en',
+      theme: 'dark',
+      activeTab: 'status',
+      volume: 25,
+      isMuted: false,
+      source: 'wifi',
+      battery: 100,
+      ip: '10.10.10.254',
+      staSsid: '',
+      staConnected: false,
+      isDraggingVolume: false,
+      lastVolSentTime: 0,
+      volThrottleTimer: null,
+      online: true,
+      failedPolls: 0,
+      configLoaded: false,
+      selectedFirmwareFile: null,
+      uploadedFirmwareMd5: null,
+      isFlashing: false,
+      authRequired: false,
+      loggedIn: true,
+      authUsername: 'root',
+      lastTrackKey: ''
+    };
+
+    // DOM Elements
+    const el = {
+      langBtn: document.getElementById('langBtn'),
+      langText: document.getElementById('langText'),
+      themeToggleBtn: document.getElementById('themeToggleBtn'),
+      themeIcon: document.getElementById('themeIcon'),
+      authHeaderBtn: document.getElementById('authHeaderBtn'),
+      tabBtnStatus: document.getElementById('tabBtnStatus'),
+      tabBtnControls: document.getElementById('tabBtnControls'),
+      tabBtnSettings: document.getElementById('tabBtnSettings'),
+      tabStatus: document.getElementById('tabStatus'),
+      tabControls: document.getElementById('tabControls'),
+      tabSettings: document.getElementById('tabSettings'),
+      // Status Hero Elements
+      heroHostname: document.getElementById('heroHostname'),
+      heroSourceText: document.getElementById('heroSourceText'),
+      heroVolumeSlider: document.getElementById('heroVolumeSlider'),
+      heroVolInput: document.getElementById('heroVolInput'),
+      // Now Playing Elements
+      nowPlayingCard: document.getElementById('nowPlayingCard'),
+      npArtworkImg: document.getElementById('npArtworkImg'),
+      npFallbackIcon: document.getElementById('npFallbackIcon'),
+      npSourceBadge: document.getElementById('npSourceBadge'),
+      npTrackTitle: document.getElementById('npTrackTitle'),
+      npTrackArtist: document.getElementById('npTrackArtist'),
+      npTrackAlbum: document.getElementById('npTrackAlbum'),
+      npPlayPauseBtn: document.getElementById('npPlayPauseBtn'),
+      npPlayPauseIcon: document.getElementById('npPlayPauseIcon'),
+      // Controls Volume Elements
+      volumeSlider: document.getElementById('volumeSlider'),
+      volInput: document.getElementById('volInput'),
+      muteBtn: document.getElementById('muteBtn'),
+      volumeIcon: document.getElementById('volumeIcon'),
+      // Telemetry Elements
+      telNetworkVal: document.getElementById('telNetworkVal'),
+      telIpVal: document.getElementById('telIpVal'),
+      telBatVal: document.getElementById('telBatVal'),
+      telMemVal: document.getElementById('telMemVal'),
+      telUptimeVal: document.getElementById('telUptimeVal'),
+      // Header Indicators
+      batteryPercent: document.getElementById('batteryPercent'),
+      batteryLevelBar: document.getElementById('batteryLevelBar'),
+      connectionBadge: document.getElementById('connectionBadge'),
+      connectionText: document.getElementById('connectionText'),
+      ipDisplay: document.getElementById('ipDisplay'),
+      // Config fields
+      wifiSsid: document.getElementById('wifiSsid'),
+      wifiPass: document.getElementById('wifiPass'),
+      wifiSubmitBtn: document.getElementById('wifiSubmitBtn'),
+      networkSelect: document.getElementById('networkSelect'),
+      scanBtn: document.getElementById('scanBtn'),
+      scanBtnText: document.getElementById('scanBtnText'),
+      toast: document.getElementById('toast'),
+      toastMsg: document.getElementById('toastMsg'),
+      cfgApEnabled: document.getElementById('cfgApEnabled'),
+      cfgApSsid: document.getElementById('cfgApSsid'),
+      cfgApKey: document.getElementById('cfgApKey'),
+      cfgApChannel: document.getElementById('cfgApChannel'),
+      cfgDefVolRange: document.getElementById('cfgDefVolRange'),
+      cfgDefVol: document.getElementById('cfgDefVol'),
+      cfgDefVolDisplay: document.getElementById('cfgDefVolDisplay'),
+      cfgAutoSleep: document.getElementById('cfgAutoSleep'),
+      cfgSleepAux: document.getElementById('cfgSleepAux'),
+      cfgSleepBt: document.getElementById('cfgSleepBt'),
+      cfgHostname: document.getElementById('cfgHostname'),
+      cfgMqttEnabled: document.getElementById('cfgMqttEnabled'),
+      cfgMqttHost: document.getElementById('cfgMqttHost'),
+      cfgMqttPort: document.getElementById('cfgMqttPort'),
+      cfgMqttPrefix: document.getElementById('cfgMqttPrefix'),
+      cfgMqttUser: document.getElementById('cfgMqttUser'),
+      cfgMqttPass: document.getElementById('cfgMqttPass'),
+      // Firmware Elements
+      firmwareFileInput: document.getElementById('firmwareFileInput'),
+      firmwareDropzone: document.getElementById('firmwareDropzone'),
+      firmwareFileInfo: document.getElementById('firmwareFileInfo'),
+      fwFileName: document.getElementById('fwFileName'),
+      fwFileSize: document.getElementById('fwFileSize'),
+      fwFileMd5: document.getElementById('fwFileMd5'),
+      fwProgressContainer: document.getElementById('fwProgressContainer'),
+      fwProgressStatus: document.getElementById('fwProgressStatus'),
+      fwProgressPercent: document.getElementById('fwProgressPercent'),
+      fwProgressBarFill: document.getElementById('fwProgressBarFill'),
+      fwKeepSettings: document.getElementById('fwKeepSettings'),
+      startFlashBtn: document.getElementById('startFlashBtn'),
+      flashingStatusBox: document.getElementById('flashingStatusBox'),
+      flashingTimerText: document.getElementById('flashingTimerText'),
+      rebootProgressFill: document.getElementById('rebootProgressFill'),
+      // Security Elements
+      cfgAuthEnabled: document.getElementById('cfgAuthEnabled'),
+      cfgSessionDays: document.getElementById('cfgSessionDays'),
+      secLogoutBtn: document.getElementById('secLogoutBtn'),
+      loginOverlay: document.getElementById('loginOverlay'),
+      loginUser: document.getElementById('loginUser'),
+      loginPass: document.getElementById('loginPass'),
+      loginSubmitBtn: document.getElementById('loginSubmitBtn'),
+      loginErrorBox: document.getElementById('loginErrorBox'),
+      loginErrorText: document.getElementById('loginErrorText')
+    };
+
+    // Haptic feedback helper
+    function haptic(ms = 12) {
+      if (window.navigator && window.navigator.vibrate) {
+        try { window.navigator.vibrate(ms); } catch (e) {}
+      }
+    }
+
+    // Custom Fetch Wrapper with automatic 403 handling
+    function apiFetch(url, options = {}) {
+      return fetch(url, options).then(res => {
+        if (res.status === 403) {
+          showLoginOverlay();
+          throw new Error('Authentication required');
+        }
+        return res;
+      });
+    }
+
+    // Language Management & Auto-Detection
+    function applyLanguage(lang) {
+      state.lang = (lang === 'ru') ? 'ru' : 'en';
+      document.documentElement.setAttribute('lang', state.lang);
+      localStorage.setItem('audiopro_lang', state.lang);
+      if (el.langText) el.langText.textContent = state.lang.toUpperCase();
+
+      const dict = i18n[state.lang] || i18n.en;
+      document.querySelectorAll('[data-i18n]').forEach(elem => {
+        const key = elem.getAttribute('data-i18n');
+        if (dict[key]) elem.textContent = dict[key];
+      });
+    }
+
+    function toggleLanguage() {
+      haptic(15);
+      const nextLang = (state.lang === 'ru') ? 'en' : 'ru';
+      applyLanguage(nextLang);
+      showToast(nextLang === 'ru' ? 'Язык: Русский' : 'Language: English');
+    }
+
+    function initLanguage() {
+      const savedLang = localStorage.getItem('audiopro_lang');
+      if (savedLang === 'ru' || savedLang === 'en') {
+        applyLanguage(savedLang);
+        return;
+      }
+      const browserLang = (navigator.languages && navigator.languages[0]) || navigator.language || 'en';
+      if (/^(ru|uk|be)/i.test(browserLang)) {
+        applyLanguage('ru');
+      } else {
+        applyLanguage('en');
+      }
+    }
+
+    // Switch Main Tabs (status / controls / settings)
+    function switchTab(tabName) {
+      haptic(14);
+      state.activeTab = tabName;
+      ['status', 'controls', 'settings'].forEach(t => {
+        const btn = document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1));
+        const pane = document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn && pane) {
+          if (t === tabName) {
+            btn.classList.add('active');
+            pane.classList.remove('hidden');
+          } else {
+            btn.classList.remove('active');
+            pane.classList.add('hidden');
+          }
+        }
+      });
+
+      if (tabName === 'settings') {
+        if (!state.configLoaded) loadFullConfig();
+        loadSecurityConfig();
+      }
+    }
+
+    // Toggle Accordion sections
+    function toggleAccordion(id) {
+      haptic(10);
+      const section = document.getElementById(id);
+      const chevron = document.getElementById(id + 'Chevron');
+      if (section) {
+        const isShow = section.classList.toggle('show');
+        if (chevron) chevron.classList.toggle('open', isShow);
+      }
+    }
+
+    // Theme Management
+    function applyTheme(themeName) {
+      state.theme = themeName;
+      document.documentElement.setAttribute('data-theme', themeName);
+      localStorage.setItem('audiopro_theme', themeName);
+
+      if (themeName === 'light') {
+        el.themeIcon.innerHTML = '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/>';
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', '#f8fafc');
+      } else {
+        el.themeIcon.innerHTML = '<path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/><circle cx="12" cy="12" r="4"/>';
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', '#000000');
+      }
+      updateSliderBackground(state.volume);
+    }
+
+    function toggleTheme() {
+      haptic(15);
+      const nextTheme = state.theme === 'dark' ? 'light' : 'dark';
+      applyTheme(nextTheme);
+      const dict = i18n[state.lang] || i18n.en;
+      showToast(nextTheme === 'light' ? dict.theme_light : dict.theme_dark);
+    }
+
+    function initTheme() {
+      const savedTheme = localStorage.getItem('audiopro_theme');
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        applyTheme(savedTheme);
+      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        applyTheme('light');
+      } else {
+        applyTheme('dark');
+      }
+    }
+
+    // Toast Message
+    let toastTimeout = null;
+    function showToast(msg) {
+      el.toastMsg.textContent = msg;
+      el.toast.classList.add('show');
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        el.toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // --- Authentication & Session Security ---
+    function checkAuth() {
+      fetch('/cgi-bin/auth?action=check')
+        .then(res => res.json())
+        .then(data => {
+          state.authRequired = !!data.auth_required;
+          state.loggedIn = !!data.logged_in;
+          state.authUsername = data.username || 'root';
+
+          if (state.authRequired) {
+            el.authHeaderBtn.style.display = 'flex';
+            if (el.secLogoutBtn) el.secLogoutBtn.style.display = 'block';
+            if (!state.loggedIn) {
+              showLoginOverlay();
+            } else {
+              hideLoginOverlay();
+            }
+          } else {
+            el.authHeaderBtn.style.display = 'none';
+            if (el.secLogoutBtn) el.secLogoutBtn.style.display = 'none';
+            hideLoginOverlay();
+          }
+        })
+        .catch(err => console.warn('Auth check error:', err));
+    }
+
+    function showLoginOverlay() {
+      if (el.loginOverlay) el.loginOverlay.classList.add('show');
+      if (el.loginPass) {
+        el.loginPass.value = '';
+        el.loginPass.focus();
+      }
+      if (el.loginErrorBox) el.loginErrorBox.classList.remove('show');
+    }
+
+    function hideLoginOverlay() {
+      if (el.loginOverlay) el.loginOverlay.classList.remove('show');
+      if (el.loginErrorBox) el.loginErrorBox.classList.remove('show');
+    }
+
+    function submitLogin(e) {
+      e.preventDefault();
+      haptic(20);
+      const user = el.loginUser.value.trim() || 'root';
+      const pass = el.loginPass.value;
+
+      el.loginSubmitBtn.disabled = true;
+      el.loginSubmitBtn.innerHTML = '<span>Verifying...</span>';
+
+      const params = `action=login&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
+      fetch('/cgi-bin/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params
+      })
+      .then(res => {
+        if (res.status === 403) throw new Error('Invalid credentials');
+        return res.json();
+      })
+      .then(data => {
+        el.loginSubmitBtn.disabled = false;
+        el.loginSubmitBtn.innerHTML = `<span data-i18n="auth_signin_btn">${(i18n[state.lang] || i18n.en).auth_signin_btn}</span>`;
+
+        if (data.status === 'ok') {
+          state.loggedIn = true;
+          state.authUsername = data.username || user;
+          hideLoginOverlay();
+          showToast(`Welcome, ${state.authUsername}`);
+          pollStatus();
+        } else {
+          showLoginError(data.message || (i18n[state.lang] || i18n.en).auth_err_invalid);
+        }
+      })
+      .catch(err => {
+        el.loginSubmitBtn.disabled = false;
+        el.loginSubmitBtn.innerHTML = `<span data-i18n="auth_signin_btn">${(i18n[state.lang] || i18n.en).auth_signin_btn}</span>`;
+        showLoginError((i18n[state.lang] || i18n.en).auth_err_invalid);
+      });
+    }
+
+    function showLoginError(msg) {
+      if (el.loginErrorText) el.loginErrorText.textContent = msg;
+      if (el.loginErrorBox) el.loginErrorBox.classList.add('show');
+      haptic(35);
+    }
+
+    function logout() {
+      haptic(20);
+      fetch('/cgi-bin/auth?action=logout')
+        .then(() => {
+          state.loggedIn = false;
+          showToast('Logged out');
+          showLoginOverlay();
+        })
+        .catch(() => {
+          state.loggedIn = false;
+          showLoginOverlay();
+        });
+    }
+
+    function handleHeaderAuthClick() {
+      haptic(15);
+      if (state.loggedIn) {
+        switchTab('settings');
+        toggleAccordion('securitySection');
+      } else {
+        showLoginOverlay();
+      }
+    }
+
+    function loadSecurityConfig() {
+      apiFetch('/cgi-bin/api?action=get_security')
+        .then(res => res.json())
+        .then(data => {
+          if (el.cfgAuthEnabled) el.cfgAuthEnabled.checked = (data.auth_enabled === 1 || data.auth_enabled === '1');
+          if (el.cfgSessionDays) el.cfgSessionDays.value = data.session_days || 7;
+        })
+        .catch(err => console.warn('Load security error:', err));
+    }
+
+    function saveSecuritySettings(e) {
+      e.preventDefault();
+      haptic(25);
+      const en = el.cfgAuthEnabled.checked ? '1' : '0';
+      const days = el.cfgSessionDays.value || '7';
+
+      const params = `action=save_security&auth_enabled=${en}&session_days=${days}`;
+      apiFetch(`/cgi-bin/api?${params}`)
+        .then(res => res.json())
+        .then(data => {
+          showToast(data.message || 'Security settings saved');
+          checkAuth();
+        })
+        .catch(() => showToast('Failed to save security settings'));
+    }
+
+    // --- Now Playing & Media Controls ---
+    function renderNowPlaying(np) {
+      if (!np || !np.active) {
+        if (el.nowPlayingCard) el.nowPlayingCard.style.display = 'none';
+        return;
+      }
+
+      if (el.nowPlayingCard) el.nowPlayingCard.style.display = 'flex';
+      if (el.npTrackTitle) el.npTrackTitle.textContent = np.title || 'Unknown Track';
+      if (el.npTrackArtist) el.npTrackArtist.textContent = np.artist || 'Unknown Artist';
+      if (el.npTrackAlbum) el.npTrackAlbum.textContent = np.album || '';
+      
+      const srcName = (np.source === 'spotify') ? 'Spotify Connect' : (np.source === 'airplay') ? 'AirPlay' : np.source.toUpperCase();
+      if (el.npSourceBadge) el.npSourceBadge.textContent = srcName;
+
+      // Play/Pause icon state
+      if (el.npPlayPauseIcon) {
+        if (np.playing) {
+          el.npPlayPauseIcon.innerHTML = '<rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/>';
+        } else {
+          el.npPlayPauseIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+        }
+      }
+
+      // Artwork rendering
+      const trackKey = `${np.source}_${np.title}_${np.artist}`;
+      if (np.artwork) {
+        if (state.lastTrackKey !== trackKey) {
+          state.lastTrackKey = trackKey;
+          el.npArtworkImg.src = `/cgi-bin/api?action=get_artwork&t=${np.updated || Date.now()}`;
+          el.npArtworkImg.style.display = 'block';
+          if (el.npFallbackIcon) el.npFallbackIcon.style.display = 'none';
+        }
+      } else {
+        if (el.npArtworkImg) el.npArtworkImg.style.display = 'none';
+        if (el.npFallbackIcon) el.npFallbackIcon.style.display = 'block';
+      }
+    }
+
+    function togglePlayback() {
+      haptic(15);
+      apiFetch('/cgi-bin/api?action=player_toggle')
+        .then(res => res.json())
+        .then(data => {
+          showToast(data.playing ? 'Playback resumed' : 'Playback paused');
+          pollStatus();
+        })
+        .catch(err => console.warn('Player toggle error:', err));
+    }
+
+    // Update Slider visual track fill
+    function updateSliderBackground(val) {
+      const percentage = Math.max(0, Math.min(100, val));
+      const trackColor = state.theme === 'light' ? '#e2e8f0' : '#181b24';
+      const accent = state.theme === 'light' ? '#2563eb' : '#3b82f6';
+      const grad = `linear-gradient(to right, ${accent} 0%, ${accent} ${percentage}%, ${trackColor} ${percentage}%, ${trackColor} 100%)`;
+      if (el.volumeSlider) el.volumeSlider.style.background = grad;
+      if (el.heroVolumeSlider) el.heroVolumeSlider.style.background = grad;
+    }
+
+    // Render volume state
+    function renderVolume(vol, isMute = state.isMuted) {
+      vol = Math.max(0, Math.min(100, parseInt(vol, 10) || 0));
+      if (el.volInput) el.volInput.value = vol;
+      if (el.heroVolInput) el.heroVolInput.value = vol;
+      if (el.volumeSlider) el.volumeSlider.value = vol;
+      if (el.heroVolumeSlider) el.heroVolumeSlider.value = vol;
+      updateSliderBackground(vol);
+
+      const icons = document.querySelectorAll('.heroVolumeIcon, #volumeIcon');
+      if (isMute) {
+        if (el.muteBtn) el.muteBtn.classList.add('muted');
+        icons.forEach(icon => {
+          icon.innerHTML = '<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM22 9l-6 6m0-6l6 6"/>';
+        });
+      } else {
+        if (el.muteBtn) el.muteBtn.classList.remove('muted');
+        if (vol === 0) {
+          icons.forEach(icon => {
+            icon.innerHTML = '<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/>';
+          });
+        } else {
+          icons.forEach(icon => {
+            icon.innerHTML = '<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>';
+          });
+        }
+      }
+    }
+
+    // Render battery status
+    function renderBattery(percent) {
+      if (el.batteryPercent) el.batteryPercent.textContent = `${percent}%`;
+      if (el.telBatVal) el.telBatVal.textContent = `${percent}%`;
+      const fillWidth = Math.max(1, Math.min(14, (percent / 100) * 14));
+      if (el.batteryLevelBar) {
+        el.batteryLevelBar.setAttribute('width', fillWidth.toString());
+        if (percent <= 15) {
+          el.batteryLevelBar.style.fill = 'var(--status-red)';
+        } else if (percent <= 35) {
+          el.batteryLevelBar.style.fill = 'var(--status-amber)';
+        } else {
+          el.batteryLevelBar.style.fill = 'var(--status-green)';
+        }
+      }
+    }
+
+    // Render source selector
+    function renderSource(src) {
+      const normalized = (src === 'i2s' || src === 'wifi') ? 'wifi' : (src === 'bluetooth' || src === 'bt') ? 'bt' : 'aux';
+      document.querySelectorAll('.source-card').forEach(card => card.classList.remove('active'));
+      const active1 = document.getElementById(`src-${normalized}`);
+      const active2 = document.getElementById(`hero-src-${normalized}`);
+      if (active1) active1.classList.add('active');
+      if (active2) active2.classList.add('active');
+
+      const names = { wifi: 'Wi-Fi', bt: 'Bluetooth', aux: 'AUX 3.5mm' };
+      if (el.heroSourceText) el.heroSourceText.textContent = names[normalized] || normalized.toUpperCase();
+    }
+
+    // Render connection state
+    function renderConnection(isOnline) {
+      if (isOnline) {
+        el.connectionBadge.className = 'connection-badge';
+        el.connectionText.textContent = 'Online';
+      } else {
+        el.connectionBadge.className = 'connection-badge reconnecting';
+        el.connectionText.textContent = 'Reconnecting...';
+      }
+    }
+
+    // Granular sync for startup volume inputs in settings
+    function syncDefVol(val) {
+      val = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
+      if (el.cfgDefVolRange) el.cfgDefVolRange.value = val;
+      if (el.cfgDefVol) el.cfgDefVol.value = val;
+      if (el.cfgDefVolDisplay) el.cfgDefVolDisplay.textContent = `${val}%`;
+    }
+
+    // Throttled volume API call
+    function sendVolumeRequest(vol) {
+      const now = Date.now();
+      if (now - state.lastVolSentTime < 120) {
+        if (state.volThrottleTimer) clearTimeout(state.volThrottleTimer);
+        state.volThrottleTimer = setTimeout(() => sendVolumeRequest(vol), 120);
+        return;
+      }
+      state.lastVolSentTime = now;
+      apiFetch(`/cgi-bin/api?volume=${vol}`)
+        .then(res => res.json())
+        .catch(err => console.warn('Volume set error:', err));
+    }
+
+    // Attach Volume slider event listeners
+    [el.volumeSlider, el.heroVolumeSlider].forEach(slider => {
+      if (!slider) return;
+      slider.addEventListener('input', (e) => {
+        state.isDraggingVolume = true;
+        const vol = parseInt(e.target.value, 10);
+        state.volume = vol;
+        renderVolume(vol, state.isMuted);
+        sendVolumeRequest(vol);
+      });
+      slider.addEventListener('change', (e) => {
+        const vol = parseInt(e.target.value, 10);
+        state.volume = vol;
+        sendVolumeRequest(vol);
+        setTimeout(() => { state.isDraggingVolume = false; }, 300);
+      });
+    });
+
+    // Step volume (+1, -1, +5, -5, +10, -10)
+    function stepVolume(delta) {
+      haptic(10);
+      let newVol = Math.max(0, Math.min(100, state.volume + delta));
+      setVolume(newVol);
+    }
+
+    // Set discrete volume down to single digit
+    function setVolume(vol) {
+      haptic(12);
+      vol = Math.max(0, Math.min(100, parseInt(vol, 10) || 0));
+      state.volume = vol;
+      renderVolume(vol, state.isMuted);
+      sendVolumeRequest(vol);
+    }
+
+    // Toggle Mute
+    function toggleMute() {
+      haptic(18);
+      state.isMuted = !state.isMuted;
+      renderVolume(state.volume, state.isMuted);
+      const dict = i18n[state.lang] || i18n.en;
+      const endpoint = state.isMuted ? '/cgi-bin/api?mute=1' : '/cgi-bin/api?unmute=1';
+      apiFetch(endpoint)
+        .then(res => res.json())
+        .then(() => showToast(state.isMuted ? dict.sound_muted : dict.sound_unmuted))
+        .catch(err => console.warn('Mute error:', err));
+    }
+
+    // Switch Source
+    function switchSource(sourceName) {
+      haptic(18);
+      state.source = sourceName;
+      renderSource(sourceName);
+      apiFetch(`/cgi-bin/api?input=${sourceName}`)
+        .then(res => res.json())
+        .then(() => {
+          const names = { wifi: 'Wi-Fi / AirPlay', bt: 'Bluetooth', aux: 'AUX 3.5 mm' };
+          showToast(`Source: ${names[sourceName] || sourceName}`);
+        })
+        .catch(err => console.warn('Source error:', err));
+    }
+
+    // Scan available Wi-Fi networks
+    function scanNetworks() {
+      haptic(12);
+      const dict = i18n[state.lang] || i18n.en;
+      el.scanBtn.classList.add('spinning');
+      el.scanBtnText.textContent = dict.wifi_scanning;
+
+      apiFetch('/cgi-bin/api?action=wifi_scan')
+        .then(res => res.json())
+        .then(data => {
+          el.scanBtn.classList.remove('spinning');
+          el.scanBtnText.textContent = dict.wifi_scan;
+
+          if (data && data.networks && data.networks.length > 0) {
+            el.networkSelect.innerHTML = `<option value="">-- ${dict.wifi_scan} (${data.networks.length}) --</option>`;
+            data.networks.forEach(net => {
+              const opt = document.createElement('option');
+              opt.value = net;
+              opt.textContent = net;
+              el.networkSelect.appendChild(opt);
+            });
+            el.networkSelect.classList.add('show');
+            showToast(`Found ${data.networks.length} networks`);
+          } else {
+            showToast('No networks found. Enter SSID manually');
+          }
+        })
+        .catch(err => {
+          el.scanBtn.classList.remove('spinning');
+          el.scanBtnText.textContent = dict.wifi_scan;
+          showToast('Scan error. Enter SSID manually');
+        });
+    }
+
+    function onNetworkSelect(select) {
+      if (select.value) {
+        el.wifiSsid.value = select.value;
+        el.wifiPass.focus();
+      }
+    }
+
+    // Password visibility toggle
+    function togglePasswordVisibility(inputId, iconId) {
+      haptic(10);
+      const input = document.getElementById(inputId);
+      const icon = document.getElementById(iconId);
+      if (input.type === 'password') {
+        input.type = 'text';
+        icon.innerHTML = '<path d="m2 2 20 20M9.88 9.88a3 3 0 1 0 4.24 4.24M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>';
+      } else {
+        input.type = 'password';
+        icon.innerHTML = '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>';
+      }
+    }
+
+    // Connect to Home Wi-Fi
+    function connectWifi(e) {
+      e.preventDefault();
+      const ssid = el.wifiSsid.value.trim();
+      const pass = el.wifiPass.value;
+
+      if (!ssid) {
+        showToast('Please enter Wi-Fi SSID');
+        return;
+      }
+
+      haptic(25);
+      el.wifiSubmitBtn.disabled = true;
+      el.wifiSubmitBtn.innerHTML = `<span>Connecting to ${ssid}...</span>`;
+      showToast(`Configuring ${ssid}...`);
+
+      const params = `action=wifi_connect&ssid=${encodeURIComponent(ssid)}&key=${encodeURIComponent(pass)}`;
+      apiFetch(`/cgi-bin/api?${params}`)
+        .then(res => res.json())
+        .then(data => {
+          showToast(`Connecting to ${ssid}... wait 10 sec`);
+          setTimeout(() => {
+            el.wifiSubmitBtn.disabled = false;
+            const dict = i18n[state.lang] || i18n.en;
+            el.wifiSubmitBtn.innerHTML = `<svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/></svg><span>${dict.wifi_connect_btn}</span>`;
+          }, 6000);
+        })
+        .catch(err => {
+          el.wifiSubmitBtn.disabled = false;
+          el.wifiSubmitBtn.innerHTML = '<span>Try Again</span>';
+          showToast('Failed to send Wi-Fi settings');
+        });
+    }
+
+    // Load full settings from API
+    function loadFullConfig() {
+      apiFetch('/cgi-bin/api?action=get_config')
+        .then(res => res.json())
+        .then(cfg => {
+          state.configLoaded = true;
+          if (cfg.ap_ssid) el.cfgApSsid.value = cfg.ap_ssid;
+          if (cfg.ap_key) el.cfgApKey.value = cfg.ap_key;
+          if (cfg.ap_channel) el.cfgApChannel.value = cfg.ap_channel;
+          el.cfgApEnabled.checked = !cfg.ap_disabled;
+
+          if (typeof cfg.default_volume !== 'undefined') syncDefVol(cfg.default_volume);
+          if (typeof cfg.auto_sleep_min !== 'undefined') el.cfgAutoSleep.value = cfg.auto_sleep_min;
+          el.cfgSleepAux.checked = !!cfg.sleep_in_aux;
+          el.cfgSleepBt.checked = !!cfg.sleep_in_bt;
+
+          if (cfg.hostname) {
+            el.cfgHostname.value = cfg.hostname;
+            if (el.heroHostname) el.heroHostname.textContent = cfg.hostname;
+          }
+
+          el.cfgMqttEnabled.checked = !!cfg.mqtt_enabled;
+          if (cfg.mqtt_host) el.cfgMqttHost.value = cfg.mqtt_host;
+          if (cfg.mqtt_port) el.cfgMqttPort.value = cfg.mqtt_port;
+          if (cfg.mqtt_prefix) el.cfgMqttPrefix.value = cfg.mqtt_prefix;
+          if (cfg.mqtt_user) el.cfgMqttUser.value = cfg.mqtt_user;
+        })
+        .catch(err => console.warn('Get config error:', err));
+    }
+
+    // Save AP Settings
+    function saveApSettings(e) {
+      e.preventDefault();
+      haptic(20);
+      const ssid = el.cfgApSsid.value.trim();
+      const key = el.cfgApKey.value;
+      const chan = el.cfgApChannel.value;
+      const dis = !el.cfgApEnabled.checked;
+
+      const params = `action=save_ap&ap_ssid=${encodeURIComponent(ssid)}&ap_key=${encodeURIComponent(key)}&ap_channel=${chan}&ap_disabled=${dis ? '1' : '0'}`;
+      apiFetch(`/cgi-bin/api?${params}`)
+        .then(res => res.json())
+        .then(d => showToast(d.message || 'AP settings saved'))
+        .catch(() => showToast('Failed to save AP settings'));
+    }
+
+    // Save Audio Settings
+    function saveAudioSettings(e) {
+      e.preventDefault();
+      haptic(20);
+      const defVol = el.cfgDefVol.value;
+      const sleepMin = el.cfgAutoSleep.value;
+      const slpAux = el.cfgSleepAux.checked ? '1' : '0';
+      const slpBt = el.cfgSleepBt.checked ? '1' : '0';
+
+      const params = `action=save_audio&default_volume=${defVol}&auto_sleep_min=${sleepMin}&sleep_in_aux=${slpAux}&sleep_in_bt=${slpBt}`;
+      apiFetch(`/cgi-bin/api?${params}`)
+        .then(res => res.json())
+        .then(d => showToast(d.message || 'Audio settings saved'))
+        .catch(() => showToast('Failed to save audio settings'));
+    }
+
+    // Save Device Name
+    function saveDeviceName(e) {
+      e.preventDefault();
+      haptic(20);
+      const name = el.cfgHostname.value.trim();
+      apiFetch(`/cgi-bin/api?action=save_device&hostname=${encodeURIComponent(name)}`)
+        .then(res => res.json())
+        .then(d => {
+          if (el.heroHostname) el.heroHostname.textContent = name;
+          showToast(d.message || 'Device name updated');
+        })
+        .catch(() => showToast('Failed to update device name'));
+    }
+
+    // Save MQTT Settings
+    function saveMqttSettings(e) {
+      e.preventDefault();
+      haptic(20);
+      const en = el.cfgMqttEnabled.checked ? '1' : '0';
+      const host = el.cfgMqttHost.value.trim();
+      const port = el.cfgMqttPort.value.trim();
+      const pre = el.cfgMqttPrefix.value.trim();
+      const user = el.cfgMqttUser.value.trim();
+      const pass = el.cfgMqttPass.value.trim();
+
+      const params = `action=save_mqtt&mqtt_enabled=${en}&mqtt_host=${encodeURIComponent(host)}&mqtt_port=${port}&mqtt_prefix=${encodeURIComponent(pre)}&mqtt_user=${encodeURIComponent(user)}&mqtt_pass=${encodeURIComponent(pass)}`;
+      apiFetch(`/cgi-bin/api?${params}`)
+        .then(res => res.json())
+        .then(d => showToast(d.message || 'MQTT settings saved'))
+        .catch(() => showToast('Failed to save MQTT'));
+    }
+
+    // --- Firmware Upload & Flashing Logic ---
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function setupDragAndDrop() {
+      const dropzone = el.firmwareDropzone;
+      if (!dropzone) return;
+
+      ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.add('dragover');
+        }, false);
+      });
+
+      ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.remove('dragover');
+        }, false);
+      });
+
+      dropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files && files.length > 0) {
+          processFirmwareFile(files[0]);
+        }
+      }, false);
+    }
+
+    function onFirmwareFileSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      if (file) {
+        processFirmwareFile(file);
+      }
+    }
+
+    function processFirmwareFile(file) {
+      if (file.size > 33554432) {
+        showToast('File too large (Max 32MB)');
+        return;
+      }
+      haptic(15);
+      state.selectedFirmwareFile = file;
+      el.fwFileName.textContent = file.name;
+      el.fwFileSize.textContent = formatBytes(file.size);
+      el.fwFileMd5.textContent = '';
+      el.firmwareDropzone.style.display = 'none';
+      el.firmwareFileInfo.style.display = 'flex';
+      el.startFlashBtn.disabled = true;
+
+      uploadFirmwareFile(file);
+    }
+
+    function resetFirmwareSelection() {
+      haptic(10);
+      state.selectedFirmwareFile = null;
+      state.uploadedFirmwareMd5 = null;
+      el.firmwareFileInput.value = '';
+      el.firmwareFileInfo.style.display = 'none';
+      el.firmwareDropzone.style.display = 'flex';
+      el.fwProgressContainer.style.display = 'none';
+      el.fwProgressBarFill.style.width = '0%';
+    }
+
+    function uploadFirmwareFile(file) {
+      el.fwProgressContainer.style.display = 'flex';
+      el.fwProgressStatus.textContent = (i18n[state.lang] || i18n.en).fw_uploading;
+      el.fwProgressPercent.textContent = '0%';
+      el.fwProgressBarFill.style.width = '0%';
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/cgi-bin/upload', true);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          el.fwProgressPercent.textContent = `${percent}%`;
+          el.fwProgressBarFill.style.width = `${percent}%`;
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          try {
+            const resp = JSON.parse(xhr.responseText);
+            if (resp.status === 'ok') {
+              state.uploadedFirmwareMd5 = resp.md5;
+              el.fwFileMd5.textContent = `MD5: ${resp.md5}`;
+              el.fwProgressStatus.textContent = 'Verified (Ready)';
+              el.fwProgressPercent.textContent = '100%';
+              el.fwProgressBarFill.style.width = '100%';
+              el.startFlashBtn.disabled = false;
+              haptic(20);
+              showToast((i18n[state.lang] || i18n.en).fw_upload_success);
+            } else {
+              showToast(resp.message || 'Upload error');
+              el.fwProgressStatus.textContent = 'Upload failed';
+            }
+          } catch (e) {
+            showToast('Invalid server response');
+          }
+        } else if (xhr.status === 403) {
+          showLoginOverlay();
+          showToast('Authentication required to upload firmware');
+        } else {
+          showToast((i18n[state.lang] || i18n.en).fw_upload_err);
+          el.fwProgressStatus.textContent = 'Upload failed';
+        }
+      };
+
+      xhr.onerror = () => {
+        showToast((i18n[state.lang] || i18n.en).fw_upload_err);
+        el.fwProgressStatus.textContent = 'Upload error';
+      };
+
+      xhr.send(file);
+    }
+
+    function startFlashingProcess() {
+      const dict = i18n[state.lang] || i18n.en;
+      if (!confirm(dict.fw_flash_confirm)) {
+        return;
+      }
+
+      haptic(40);
+      state.isFlashing = true;
+      const keep = el.fwKeepSettings.checked ? '1' : '0';
+
+      el.firmwareFileInfo.style.display = 'none';
+      el.flashingStatusBox.style.display = 'flex';
+
+      apiFetch(`/cgi-bin/api?action=flash_firmware&keep_settings=${keep}`)
+        .then(res => res.json())
+        .then(data => {
+          showToast(data.message || 'Flashing started');
+          runFlashingCountdown();
+        })
+        .catch(err => {
+          showToast('Flashing request dispatched');
+          runFlashingCountdown();
+        });
+    }
+
+    function runFlashingCountdown() {
+      let secondsLeft = 120;
+      const totalSeconds = 120;
+
+      const countdownTimer = setInterval(() => {
+        secondsLeft--;
+        const progressPct = Math.round(((totalSeconds - secondsLeft) / totalSeconds) * 100);
+        if (el.rebootProgressFill) el.rebootProgressFill.style.width = `${progressPct}%`;
+        if (el.flashingTimerText) el.flashingTimerText.innerHTML = `Rebooting... please wait <strong>${secondsLeft}s</strong>`;
+
+        if (secondsLeft <= 60 && secondsLeft % 4 === 0) {
+          fetch('/cgi-bin/api?status')
+            .then(res => {
+              if (res.ok) {
+                clearInterval(countdownTimer);
+                showToast('Speaker updated & online!');
+                setTimeout(() => window.location.reload(), 1500);
+              }
+            })
+            .catch(() => {});
+        }
+
+        if (secondsLeft <= 0) {
+          clearInterval(countdownTimer);
+          window.location.reload();
+        }
+      }, 1000);
+    }
+
+    // Reset Wi-Fi to AP mode
+    function resetWifiToAp() {
+      const confirmMsg = (state.lang === 'ru') 
+        ? 'Сбросить подключение к Wi-Fi и включить стандартную точку доступа AudioPro-C3-Setup?' 
+        : 'Reset Wi-Fi network and activate setup Access Point AudioPro-C3-Setup?';
+      if (confirm(confirmMsg)) {
+        haptic(30);
+        apiFetch('/cgi-bin/api?action=reset_wifi')
+          .then(() => showToast('Wi-Fi reset to Access Point mode'))
+          .catch(() => showToast('Reset command sent'));
+      }
+    }
+
+    // Reboot device
+    function rebootDevice() {
+      const confirmMsg = (state.lang === 'ru')
+        ? 'Вы уверены, что хотите перезагрузить Audio Pro C3?'
+        : 'Are you sure you want to reboot Audio Pro C3?';
+      if (confirm(confirmMsg)) {
+        haptic(30);
+        apiFetch('/cgi-bin/api?action=reboot')
+          .then(() => showToast('Rebooting...'))
+          .catch(() => showToast('Reboot command sent'));
+      }
+    }
+
+    // Format uptime helper
+    function formatUptime(seconds) {
+      if (!seconds) return '--';
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor((seconds % 86400) / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      if (d > 0) return `${d}d ${h}h`;
+      if (h > 0) return `${h}h ${m}m`;
+      return `${m}m`;
+    }
+
+    // Background Polling Loop (every 3 seconds)
+    function pollStatus() {
+      if (state.isFlashing) return;
+      apiFetch('/cgi-bin/api?status')
+        .then(res => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then(data => {
+          state.failedPolls = 0;
+          renderConnection(true);
+
+          if (typeof data.battery !== 'undefined') {
+            state.battery = data.battery;
+            renderBattery(data.battery);
+          }
+
+          if (data.hostname && el.heroHostname) {
+            el.heroHostname.textContent = data.hostname;
+          }
+
+          if (data.source) {
+            state.source = data.source;
+            renderSource(data.source);
+          }
+
+          if (typeof data.volume !== 'undefined' && !state.isDraggingVolume) {
+            state.volume = data.volume;
+            if (typeof data.mute !== 'undefined') state.isMuted = data.mute;
+            renderVolume(data.volume, state.isMuted);
+          }
+
+          if (data.ip) {
+            state.ip = data.ip;
+            if (el.ipDisplay) el.ipDisplay.textContent = data.ip;
+            if (el.telIpVal) el.telIpVal.textContent = `IP: ${data.ip}`;
+          }
+
+          if (data.sta_connected && data.sta_ssid) {
+            if (el.telNetworkVal) el.telNetworkVal.textContent = data.sta_ssid;
+          } else {
+            const dict = i18n[state.lang] || i18n.en;
+            if (el.telNetworkVal) el.telNetworkVal.textContent = dict.ap_mode;
+          }
+
+          if (data.uptime && el.telUptimeVal) {
+            el.telUptimeVal.textContent = `Uptime: ${formatUptime(data.uptime)}`;
+          }
+
+          if (data.mem_free && el.telMemVal) {
+            el.telMemVal.textContent = `${data.mem_free} Free`;
+          }
+
+          // Render Now Playing metadata
+          if (data.now_playing) {
+            renderNowPlaying(data.now_playing);
+          }
+        })
+        .catch(err => {
+          state.failedPolls++;
+          if (state.failedPolls >= 2) {
+            renderConnection(false);
+          }
+        });
+    }
+
+    // Initial setup on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      initLanguage();
+      initTheme();
+      setupDragAndDrop();
+      renderVolume(state.volume, state.isMuted);
+      renderBattery(state.battery);
+      renderSource(state.source);
+      checkAuth();
+      pollStatus();
+      setInterval(pollStatus, 3000);
+    });
+  </script>
+</body>
+</html>

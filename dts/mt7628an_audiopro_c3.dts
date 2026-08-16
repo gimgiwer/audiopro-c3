@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+#include "mt7628an.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+    compatible = "audiopro,c3", "linkplay,a28", "mediatek,mt7628an-soc";
+    model = "Audio Pro C3 (Linkplay A28 V01)";
+
+    aliases {
+        serial0 = &uart1;     /* Linkplay Secondary MCU bus (/dev/ttyS0) */
+        serial1 = &uartlite;  /* Debug Console (/dev/ttyS1) */
+    };
+
+    /*
+     * Top-panel buttons (VOL+/-, Play/Pause, Source, Presets 1-4, BT)
+     * are NOT wired to MT7688 GPIO pins. They are handled entirely by the
+     * STM8 secondary MCU, which sends MCU+KEY+* events over ttyS0.
+     * mcud reads and dispatches them — no gpio-keys node needed here.
+     */
+
+    chosen {
+        bootargs = "console=ttyS1,57600 quiet loglevel=3";
+    };
+
+    sound {
+        compatible = "simple-audio-card";
+        simple-audio-card,name = "AudioPro-C3-I2S";
+        simple-audio-card,format = "i2s";
+
+        simple-audio-card,bitclock-master = <&sound0_cpu>;
+        simple-audio-card,frame-master = <&sound0_cpu>;
+        simple-audio-card,mclk-fs = <256>;
+
+        sound0_cpu: simple-audio-card,cpu {
+            sound-dai = <&i2s>;
+        };
+
+        simple-audio-card,codec {
+            sound-dai = <&codec_dummy>;
+        };
+    };
+
+    codec_dummy: dummy-codec {
+        compatible = "linux,snd-soc-dummy";
+        #sound-dai-cells = <0>;
+        status = "okay";
+    };
+};
+
+&spi0 {
+    status = "okay";
+    flash@0 {
+        compatible = "jedec,spi-nor";
+        reg = <0>;
+        spi-max-frequency = <40000000>;
+
+        partitions {
+            compatible = "fixed-partitions";
+            #address-cells = <1>;
+            #size-cells = <1>;
+
+            partition@0 {
+                label = "u-boot";
+                reg = <0x0 0x30000>;
+                read-only;
+            };
+
+            partition@30000 {
+                label = "u-boot-env";
+                reg = <0x30000 0x10000>;
+            };
+
+            factory: partition@40000 {
+                label = "factory";
+                reg = <0x40000 0x10000>;
+                read-only;
+            };
+
+            partition@50000 {
+                label = "bkKernel";
+                reg = <0x50000 0x200000>;
+                read-only;
+            };
+
+            /*
+             * firmware partition is capped at 0xB30000 (11.18 MB) to prevent
+             * OpenWrt's rootfs_data (overlay) from formatting over user (mtd8)
+             * and user2 (mtd9) vendor certificates and presets.
+             */
+            firmware: partition@250000 {
+                label = "firmware";
+                reg = <0x250000 0xB30000>;
+                compatible = "denx,uimage";
+            };
+
+            partition@d80000 {
+                label = "user";
+                reg = <0xd80000 0x80000>;   /* 512 KB — vendor presets, read-only */
+                read-only;
+            };
+
+            partition@e00000 {
+                label = "user2";
+                reg = <0xe00000 0x200000>;  /* 2 MB — vendor certs/config, read-only */
+                read-only;
+            };
+        };
+    };
+};
+
+&factory {
+    compatible = "nvmem-cells";
+    #address-cells = <1>;
+    #size-cells = <1>;
+
+    macaddr_factory_wifi_4: macaddr@4 {
+        reg = <0x4 0x6>;
+    };
+    macaddr_factory_eth_28: macaddr@28 {
+        reg = <0x28 0x6>;
+    };
+};
+
+&ethernet {
+    nvmem-cells = <&macaddr_factory_eth_28>;
+    nvmem-cell-names = "mac-address";
+};
+
+&wmac {
+    status = "okay";
+    mediatek,mtd-eeprom = <&factory 0x0>;
+    nvmem-cells = <&macaddr_factory_wifi_4>;
+    nvmem-cell-names = "mac-address";
+};
+
+&i2s {
+    #sound-dai-cells = <0>;
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&i2s_pins>;
+};
+
+&uartlite {
+    status = "okay";
+};
+
+&uart1 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&uart1_pins>;
+};

@@ -1,0 +1,6 @@
+#!/bin/sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+for i in /etc/rc.d/$1*; do
+	[ -x "$i" ] && "$i" $2
+done

@@ -1,0 +1,28 @@
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path '10300000.wmac'
+	option channel 'auto'
+	option band '2g'
+	option htmode 'HT20'
+	option disabled '0'
+
+# AP Mode: Setup access point for initial configuration
+config wifi-iface 'ap_iface'
+	option device 'radio0'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'AudioPro-C3-Setup'
+	option encryption 'psk2'
+	option key 'setup12345'
+	option isolate '1'
+	option disabled '0'
+
+# STA Mode: Подключение к домашней Wi-Fi сети
+config wifi-iface 'sta_iface'
+	option device 'radio0'
+	option network 'wwan'
+	option mode 'sta'
+	option ssid 'IoT'
+	option encryption 'psk2'
+	option key 'KSXtb1ITwejq'
+	option disabled '0'
