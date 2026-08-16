@@ -17,6 +17,12 @@ case "$MODE" in
         killall -9 mpg123 madplay 2>/dev/null || true
         
         if [ -n "$URL" ]; then
+            # Validate URL protocol scheme
+            case "$URL" in
+                http://*|https://*|rtsp://*) ;;
+                *) logger -t audiopro_preset "Blocked invalid URL scheme: $URL"; exit 1 ;;
+            esac
+
             # Invoke Audio Arbiter
             /usr/bin/audio_arbiter.sh webradio
             
@@ -37,11 +43,11 @@ case "$MODE" in
 }
 JSON_EOF
             
-            # Launch background audio stream
+            # Launch background audio stream with argument injection protection
             if command -v mpg123 >/dev/null 2>&1; then
-                mpg123 -q -a music_in "$URL" >/dev/null 2>&1 &
+                mpg123 -q -a music_in -- "$URL" >/dev/null 2>&1 &
             elif command -v wget >/dev/null 2>&1; then
-                wget -q -O - "$URL" | aplay -D music_in -q - >/dev/null 2>&1 &
+                wget -q -O - -- "$URL" | aplay -D music_in -q - >/dev/null 2>&1 &
             fi
         fi
         ;;

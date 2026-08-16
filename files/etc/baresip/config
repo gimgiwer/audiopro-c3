@@ -4,8 +4,8 @@
 poll_method		epoll
 sip_listen		0.0.0.0:5060
 
-# Audio Output (Speaker) -> goes to our tts_in channel for ducking!
-audio_player		alsa,tts_in
+# Audio Output (Speaker) -> dedicated voip_in channel with ducking support
+audio_player		alsa,voip_in
 
 # Audio Input (Microphone) -> Dummy, since this is a playback-only speaker
 audio_source		null,null

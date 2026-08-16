@@ -14,7 +14,7 @@ if [ -e /dev/zram0 ]; then
     swapon -p 100 /dev/zram0 2>/dev/null
 fi
 
-# Firewall rules for HTTP (80), HTTPS (443) & MQTT (1883)
+# Firewall rules for HTTP (80) & HTTPS (443)
 uci add firewall rule 2>/dev/null
 uci set firewall.@rule[-1].name='Allow-HTTP' 2>/dev/null
 uci set firewall.@rule[-1].src='*' 2>/dev/null
@@ -27,13 +27,6 @@ uci set firewall.@rule[-1].name='Allow-HTTPS' 2>/dev/null
 uci set firewall.@rule[-1].src='*' 2>/dev/null
 uci set firewall.@rule[-1].proto='tcp' 2>/dev/null
 uci set firewall.@rule[-1].dest_port='443' 2>/dev/null
-uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
-
-uci add firewall rule 2>/dev/null
-uci set firewall.@rule[-1].name='Allow-MQTT' 2>/dev/null
-uci set firewall.@rule[-1].src='*' 2>/dev/null
-uci set firewall.@rule[-1].proto='tcp' 2>/dev/null
-uci set firewall.@rule[-1].dest_port='1883' 2>/dev/null
 uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
 
 uci commit firewall 2>/dev/null

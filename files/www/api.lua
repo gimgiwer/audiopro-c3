@@ -3,23 +3,6 @@
     Zero-fork execution running natively inside uhttpd-mod-lua
 --]]
 
--- Global Initialization (Runs once when uhttpd loads the module)
-local function seed_prng()
-    local f = io.open("/dev/urandom", "r")
-    if f then
-        local bytes = f:read(4)
-        f:close()
-        if bytes then
-            local seed = 0
-            for i = 1, 4 do seed = seed * 256 + string.byte(bytes, i) end
-            math.randomseed(seed)
-            return
-        end
-    end
-    math.randomseed(os.time())
-end
-seed_prng()
-
 local function read_file(path)
     local f = io.open(path, "r")
     if not f then return nil end
@@ -36,6 +19,48 @@ local function write_file(path, content)
     f:close()
     os.rename(tmp_path, path)
     return true
+end
+
+-- Cryptographically secure session token generation (32 bytes from /dev/urandom -> 64 hex chars)
+local function generate_token()
+    local f = io.open("/dev/urandom", "rb")
+    if f then
+        local bytes = f:read(32)
+        f:close()
+        if bytes and #bytes == 32 then
+            local hex = {}
+            for i = 1, #bytes do
+                table.insert(hex, string.format("%02x", string.byte(bytes, i)))
+            end
+            return table.concat(hex)
+        end
+    end
+    return string.format("%x%x%x%x", os.time(), math.random(100000, 999999), math.random(100000, 999999), math.random(100000, 999999))
+end
+
+-- Lazy session garbage collector for expired sessions and old rate-limit entries
+local function gc_sessions()
+    local sess_dir = "/tmp/ap_sessions"
+    local p = io.popen("ls -1 " .. sess_dir .. " 2>/dev/null", "r")
+    if p then
+        local now_ts = os.time()
+        for fname in p:lines() do
+            local tok = string.match(fname, "^(%x+)$")
+            if tok then
+                local sf = sess_dir .. "/" .. tok
+                local c = read_file(sf)
+                if c then
+                    local exp = tonumber(string.match(c, "expires=(%d+)") or "0")
+                    if exp > 0 and now_ts > exp then
+                        os.remove(sf)
+                    end
+                else
+                    os.remove(sf)
+                end
+            end
+        end
+        p:close()
+    end
 end
 
 local function send_mcu(cmd)
@@ -122,7 +147,14 @@ end
 local SEC_HEADERS = "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nContent-Security-Policy: default-src 'self' 'unsafe-inline' data: blob:;\r\n"
 
 local function verify_system_password(username, password)
-    if not username or username == "" or not password then return false end
+    if not username or username == "" or not password or password == "" then return false end
+
+    -- Check via LuCI sys if available
+    local has_luci, luci_sys = pcall(require, "luci.sys")
+    if has_luci and luci_sys and luci_sys.user and luci_sys.user.checkpasswd then
+        return luci_sys.user.checkpasswd(username, password)
+    end
+
     local shadow = read_file("/etc/shadow")
     if shadow then
         for line in string.gmatch(shadow, "[^\r\n]+") do
@@ -145,8 +177,6 @@ local function verify_system_password(username, password)
             end
         end
     end
-    -- Initial setup fallback if no password is set in /etc/shadow
-    if username == "root" and password == "admin" then return true end
     return false
 end
 
@@ -173,34 +203,79 @@ function handle_request(env)
         end
     end
 
-    -- Firmware Binary Upload Endpoint
+    -- Authentication Configuration
+    local auth_enabled = uci_get("mcud.main.auth_enabled", "0") == "1"
+    local session_ttl = tonumber(uci_get("mcud.main.session_ttl", "604800")) or 604800
+
+    -- Validate session token
+    local token = cookies.ap_sid or ""
+    if token == "" and env.HTTP_AUTHORIZATION then
+        token = string.match(env.HTTP_AUTHORIZATION, "^[Bb]earer%s+(%x+)") or ""
+    end
+    if token == "" and params.token then
+        token = string.match(params.token, "^(%x+)") or ""
+    end
+    token = string.match(token, "^(%x+)") or ""
+
+    local is_authenticated = false
+    local auth_user = ""
+    if token ~= "" then
+        local sess = read_file("/tmp/ap_sessions/" .. token)
+        if sess then
+            local exp = tonumber(string.match(sess, "expires=(%d+)") or "0")
+            local s_fp = string.match(sess, "fingerprint=([^\n\r]+)") or ""
+            local s_u = string.match(sess, "username=([^\n\r]+)") or "root"
+            if now < exp and s_fp == fp then
+                is_authenticated = true
+                auth_user = s_u
+            else
+                os.remove("/tmp/ap_sessions/" .. token)
+            end
+        end
+    end
+
+    -- Firmware Binary Upload Endpoint (Strict max 11.5 MB partition boundary + Auth guard)
     if action == "upload" and method == "POST" then
+        if auth_enabled and not is_authenticated then
+            uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
+            uhttpd.send('{"status":"error","code":403,"message":"Forbidden: Authentication required"}')
+            return
+        end
+
+        local MAX_FW_SIZE = 12058624 -- 11.5 MB SPI NOR firmware partition limit
         local out_f = io.open("/tmp/firmware.bin", "wb")
         local total = 0
+        local overflow = false
         if out_f and uhttpd and uhttpd.recv then
             while true do
                 local chunk = uhttpd.recv(8192)
                 if not chunk or #chunk == 0 then break end
-                out_f:write(chunk)
                 total = total + #chunk
-                if total > 33554432 then break end
+                if total > MAX_FW_SIZE then
+                    overflow = true
+                    break
+                end
+                out_f:write(chunk)
             end
             out_f:close()
         end
-        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n\r\n")
-        if total > 10240 and total <= 33554432 then
-            local md5_pipe = io.popen("md5sum /tmp/firmware.bin 2>/dev/null", "r")
-            local f_md5 = "valid"
-            if md5_pipe then
-                local l = md5_pipe:read("*l") or ""
-                md5_pipe:close()
-                f_md5 = string.match(l, "^(%x+)") or "valid"
-            end
-            uhttpd.send(string.format('{"status":"ok","message":"Firmware uploaded","size":%d,"md5":"%s"}', total, f_md5))
-        else
+
+        if overflow or total < 10240 then
             os.remove("/tmp/firmware.bin")
-            uhttpd.send('{"status":"error","message":"Invalid firmware binary size"}')
+            uhttpd.send("Status: 413 Payload Too Large\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
+            uhttpd.send('{"status":"error","message":"Invalid firmware size (Max 11.5 MB allowed)"}')
+            return
         end
+
+        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
+        local md5_pipe = io.popen("md5sum /tmp/firmware.bin 2>/dev/null", "r")
+        local f_md5 = "valid"
+        if md5_pipe then
+            local l = md5_pipe:read("*l") or ""
+            md5_pipe:close()
+            f_md5 = string.match(l, "^(%x+)") or "valid"
+        end
+        uhttpd.send(string.format('{"status":"ok","message":"Firmware uploaded","size":%d,"md5":"%s"}', total, f_md5))
         return
     end
 
@@ -219,7 +294,7 @@ function handle_request(env)
         end
     end
 
-    -- Binary Artwork
+    -- Binary Artwork (Public)
     if action == "get_artwork" then
         local artwork = read_file("/tmp/audiopro_artwork.jpg")
         if artwork and #artwork > 0 then
@@ -232,7 +307,7 @@ function handle_request(env)
         end
     end
 
-    -- Certificate Download
+    -- Certificate Download (Public)
     if action == "download_cert" then
         local cert = read_file("/etc/uhttpd.crt")
         if cert and #cert > 0 then
@@ -246,10 +321,8 @@ function handle_request(env)
     end
 
     -- Authentication Endpoints
-    local auth_enabled = uci_get("mcud.main.auth_enabled", "0") == "1"
-    local session_ttl = tonumber(uci_get("mcud.main.session_ttl", "604800")) or 604800
-
     if action == "login" then
+        gc_sessions()
         local u = params.username or "root"
         local p = params.password or ""
         local ip_safe = string.gsub(client_ip, "[^%w%.%:]", "")
@@ -268,10 +341,10 @@ function handle_request(env)
 
         if verify_system_password(u, p) then
             os.remove(fail_file)
-            local token = get_md5(tostring(now) .. "_" .. fp .. "_" .. tostring(math.random(100000, 999999)))
+            local tok = generate_token()
             local exp = now + session_ttl
-            write_file("/tmp/ap_sessions/" .. token, string.format("username=%s\nexpires=%d\nfingerprint=%s\ncreated=%d\n", u, exp, fp, now))
-            uhttpd.send(string.format("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Strict\r\n%s\r\n", token, session_ttl, SEC_HEADERS))
+            write_file("/tmp/ap_sessions/" .. tok, string.format("username=%s\nexpires=%d\nfingerprint=%s\ncreated=%d\n", u, exp, fp, now))
+            uhttpd.send(string.format("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Strict\r\n%s\r\n", tok, session_ttl, SEC_HEADERS))
             uhttpd.send(string.format('{"status":"ok","message":"Authenticated","username":"%s","expires":%d}', json_escape(u), exp))
             return
         else
@@ -282,36 +355,19 @@ function handle_request(env)
             return
         end
     elseif action == "logout" then
-        local token = cookies.ap_sid or ""
         if token ~= "" then os.remove("/tmp/ap_sessions/" .. token) end
         uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict\r\n" .. SEC_HEADERS .. "\r\n")
         uhttpd.send('{"status":"ok","message":"Logged out"}')
         return
     elseif action == "check_auth" or action == "check" then
+        gc_sessions()
         uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
         if not auth_enabled then
             uhttpd.send(string.format('{"auth_required":false,"logged_in":true,"username":"root","fingerprint":"%s"}', fp))
             return
         end
-        local token = cookies.ap_sid or ""
-        local is_logged_in = false
-        local user = ""
-        if token ~= "" then
-            local sess = read_file("/tmp/ap_sessions/" .. token)
-            if sess then
-                local exp = tonumber(string.match(sess, "expires=(%d+)") or "0")
-                local s_fp = string.match(sess, "fingerprint=([^\n\r]+)") or ""
-                local s_u = string.match(sess, "username=([^\n\r]+)") or "root"
-                if now < exp and s_fp == fp then
-                    is_logged_in = true
-                    user = s_u
-                else
-                    os.remove("/tmp/ap_sessions/" .. token)
-                end
-            end
-        end
-        if is_logged_in then
-            uhttpd.send(string.format('{"auth_required":true,"logged_in":true,"username":"%s","fingerprint":"%s"}', json_escape(user), fp))
+        if is_authenticated then
+            uhttpd.send(string.format('{"auth_required":true,"logged_in":true,"username":"%s","fingerprint":"%s"}', json_escape(auth_user), fp))
         else
             uhttpd.send(string.format('{"auth_required":true,"logged_in":false,"fingerprint":"%s"}', fp))
         end
@@ -319,33 +375,10 @@ function handle_request(env)
     end
 
     -- Verify Auth Token for Protected Actions
-    if auth_enabled then
-        local token = cookies.ap_sid or ""
-        if token == "" and env.HTTP_AUTHORIZATION then
-            token = string.match(env.HTTP_AUTHORIZATION, "^[Bb]earer%s+(%x+)") or ""
-        end
-        if token == "" and params.token then
-            token = string.match(params.token, "^(%x+)") or ""
-        end
-        
-        token = string.match(token, "^(%x+)") or ""
-        local is_valid = false
-        if token ~= "" then
-            local sess = read_file("/tmp/ap_sessions/" .. token)
-            if sess then
-                local exp = tonumber(string.match(sess, "expires=(%d+)") or "0")
-                local s_fp = string.match(sess, "fingerprint=([^\n\r]+)") or ""
-                if now < exp and s_fp == fp then
-                    is_valid = true
-                end
-            end
-        end
-        
-        if not is_valid then
-            uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
-            uhttpd.send('{"status":"error","code":403,"message":"Forbidden: Authentication required"}')
-            return
-        end
+    if auth_enabled and not is_authenticated then
+        uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
+        uhttpd.send('{"status":"error","code":403,"message":"Forbidden: Authentication required"}')
+        return
     end
 
     -- Default JSON Headers
@@ -585,12 +618,14 @@ function handle_request(env)
             tostring(auth_enabled), session_ttl, s_days, tostring(https_en), tostring(https_redir), tostring(has_cert)))
 
     elseif action == "save_security" then
-        local auth_en = (params.auth_enabled == "1" or params.auth_enabled == "true") and 1 or 0
+        local auth_en = (params.auth_enabled == "1" or params.auth_enabled == "true") and "1" or "0"
         local days = tonumber(params.session_days or "7") or 7
         if days < 1 then days = 1 end
         if days > 365 then days = 365 end
         local ttl = days * 86400
-        write_file("/etc/audiopro_auth", string.format("AUTH_ENABLED=%d\nSESSION_TTL=%d\n", auth_en, ttl))
+
+        os.execute(string.format("uci set mcud.main.auth_enabled='%s' 2>/dev/null; uci set mcud.main.session_ttl='%d' 2>/dev/null; uci commit mcud 2>/dev/null",
+            auth_en, ttl))
 
         local https_en = (params.https_enabled == "1" or params.https_enabled == "true")
         local https_redir = (params.https_redirect == "1" or params.https_redirect == "true")
@@ -605,7 +640,8 @@ function handle_request(env)
             os.execute("uci -q del uhttpd.main.listen_https 2>/dev/null; uci set uhttpd.main.redirect_https='0' 2>/dev/null")
         end
         os.execute("uci commit uhttpd 2>/dev/null; (sleep 1 && /etc/init.d/uhttpd restart) >/dev/null 2>&1 &")
-        uhttpd.send(string.format('{"status":"ok","message":"Security settings saved","auth_enabled":%d,"session_ttl":%d,"session_days":%d}', auth_en, ttl, days))
+        uhttpd.send(string.format('{"status":"ok","message":"Security settings saved","auth_enabled":%s,"session_ttl":%d,"session_days":%d}',
+            (auth_en == "1" and "true" or "false"), ttl, days))
 
     elseif action == "save_ap" then
         local ssid = params.ap_ssid or ""
