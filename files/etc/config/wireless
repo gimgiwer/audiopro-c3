@@ -6,8 +6,9 @@ config wifi-device 'radio0'
 	option htmode 'HT20'
 	option disabled '0'
 
-# AP Mode: Setup access point for initial configuration (192.168.8.1 with DHCP server)
+# AP Mode: Setup access point for initial configuration (10.10.10.254 with DHCP server)
 config wifi-iface 'ap_iface'
+
 	option device 'radio0'
 	option network 'ap'
 	option mode 'ap'
