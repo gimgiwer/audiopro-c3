@@ -55,15 +55,26 @@ mqtt_pub() {
     fi
 }
 
+create_pid_file() {
+    local tmp="/tmp/alarm.pid.$$"
+    echo "$$" > "$tmp"
+    mv -f "$tmp" "$PID_FILE" 2>/dev/null || true
+}
+
 do_stop() {
     if [ -f "$PID_FILE" ]; then
         local pids=$(cat "$PID_FILE" 2>/dev/null)
-        for p in $pids; do
-            kill -9 "$p" 2>/dev/null || true
-        done
         rm -f "$PID_FILE"
+        for p in $pids; do
+            [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
+        done
     fi
-    killall -9 mpg123_alarm aplay_alarm 2>/dev/null || true
+    local extra_pids=$(pgrep -f "mpg123.*alarm_in|aplay.*alarm_in" 2>/dev/null)
+    if [ -n "$extra_pids" ]; then
+        for ep in $extra_pids; do
+            kill -9 "$ep" 2>/dev/null || true
+        done
+    fi
     duck_restore
     /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
     printf '{"status":"idle","ringing":false}\n' > "$STATE_FILE"
@@ -92,7 +103,7 @@ do_start() {
     fi
 
     local target_vol=$(uci -q get mcud.alarm.target_volume || echo "60")
-    local alarm_mode=$(uci -q get mcud.alarm.alarm_mode || echo "sharp")
+    local alarm_mode=$(uci -q get mcud.alarm.alarm_mode || echo "gentle")
     local sound_type=$(uci -q get mcud.alarm.sound_type || echo "chime")
     local sound_file=$(uci -q get mcud.alarm.sound_file || echo "/usr/share/sounds/alarm_wake_up.wav")
     local stream_url=$(uci -q get mcud.alarm.stream_url || echo "http://icecast.vrtcdn.be/klara-high.mp3")
@@ -104,7 +115,7 @@ do_start() {
     duck_down_hard
     set_hw_volume "$target_vol"
 
-    echo "$$" > "$PID_FILE"
+    create_pid_file
     printf '{"status":"active","ringing":true,"mode":"%s","volume":%d}\n' "$alarm_mode" "$target_vol" > "$STATE_FILE"
     mqtt_pub "alarm/status" "active"
 
