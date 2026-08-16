@@ -139,7 +139,7 @@ static void play_sound(const char *path) {
 
 static void watchdog_ping(void) {
     if (g_wdt_fd < 0) {
-        g_wdt_fd = open("/dev/watchdog", O_WRONLY | O_NONBLOCK);
+        g_wdt_fd = open("/dev/watchdog", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
     }
     if (g_wdt_fd >= 0) {
         safe_write(g_wdt_fd, "1", 1);
@@ -158,7 +158,7 @@ static int is_audio_active(void) {
     };
 
     for (int i = 0; status_paths[i]; i++) {
-        int fd = open(status_paths[i], O_RDONLY | O_NONBLOCK);
+        int fd = open(status_paths[i], O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd >= 0) {
             char buf[128];
             ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -409,11 +409,11 @@ static int mqtt_setup(void) {
 
 static int fifo_init(void) {
     unlink(CMD_FIFO_PATH);
-    if (mkfifo(CMD_FIFO_PATH, 0666) < 0 && errno != EEXIST) {
+    if (mkfifo(CMD_FIFO_PATH, 0660) < 0 && errno != EEXIST) {
         LOG_ERROR("Failed to create command FIFO %s: %s", CMD_FIFO_PATH, strerror(errno));
         return -1;
     }
-    g_fifo_fd = open(CMD_FIFO_PATH, O_RDWR | O_NONBLOCK);
+    g_fifo_fd = open(CMD_FIFO_PATH, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (g_fifo_fd < 0) {
         LOG_ERROR("Failed to open command FIFO %s: %s", CMD_FIFO_PATH, strerror(errno));
         return -1;
@@ -422,7 +422,7 @@ static int fifo_init(void) {
 }
 
 static int uart_init(void) {
-    int fd = open(SERIAL_PORT, O_RDWR | O_NOCTTY);
+    int fd = open(SERIAL_PORT, O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (fd < 0) {
         LOG_ERROR("Failed to open %s: %s", SERIAL_PORT, strerror(errno));
         return -1;
@@ -719,6 +719,9 @@ int main(int argc, char *argv[]) {
                         }
                     } else if (fifo_pos < sizeof(fifo_line) - 1) {
                         fifo_line[fifo_pos++] = c;
+                    } else {
+                        LOG_WARN("FIFO line overflow, dropping line");
+                        fifo_pos = 0;
                     }
                 }
             }
@@ -727,14 +730,39 @@ int main(int argc, char *argv[]) {
         if (ret > 0 && (fds[0].revents & POLLIN)) {
             char rx[READ_BUF_SIZE];
             ssize_t n = read(g_uart_fd, rx, sizeof(rx));
-            for (ssize_t i = 0; i < n; i++) {
-                char c = rx[i];
-                if (c == '&' || c == '\n') {
-                    line_buf[line_pos] = '\0';
-                    if (line_pos > 0) process_mcu_command(line_buf);
-                    line_pos = 0;
-                } else if (c != '\r' && line_pos < MAX_LINE_LEN - 1) {
-                    line_buf[line_pos++] = c;
+            if (n < 0) {
+                if (errno != EAGAIN && errno != EINTR && errno != EWOULDBLOCK) {
+                    LOG_ERROR("UART read error (%s), reopening...", strerror(errno));
+                    close(g_uart_fd);
+                    g_uart_fd = -1;
+                    fds[0].fd = -1;
+                    sleep(1);
+                    g_uart_fd = uart_init();
+                    fds[0].fd = g_uart_fd;
+                }
+            } else if (n == 0) {
+                LOG_WARN("UART EOF detected, reopening...");
+                close(g_uart_fd);
+                g_uart_fd = -1;
+                fds[0].fd = -1;
+                sleep(1);
+                g_uart_fd = uart_init();
+                fds[0].fd = g_uart_fd;
+            } else {
+                for (ssize_t i = 0; i < n; i++) {
+                    char c = rx[i];
+                    if (c == '&' || c == '\n') {
+                        line_buf[line_pos] = '\0';
+                        if (line_pos > 0) process_mcu_command(line_buf);
+                        line_pos = 0;
+                    } else if (c != '\r') {
+                        if (line_pos < MAX_LINE_LEN - 1) {
+                            line_buf[line_pos++] = c;
+                        } else {
+                            LOG_WARN("UART line overflow (>%d bytes), dropping noise", MAX_LINE_LEN);
+                            line_pos = 0;
+                        }
+                    }
                 }
             }
         }

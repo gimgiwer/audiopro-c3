@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -14,6 +15,7 @@
 #define CHUNK_FRAMES 1024
 #define RATE         44100
 #define CHANNELS     2
+#define RECONNECT_INTERVAL_SEC 3
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -23,8 +25,9 @@ static void sig_handler(int sig) {
 }
 
 int main(int argc, char *argv[]) {
-    const char *ha_ip = (argc > 1) ? argv[1] : "192.168.1.100";
+    const char *ha_ip = (argc > 1 && argv[1][0] != '\0') ? argv[1] : "127.0.0.1";
     int ha_port = (argc > 2) ? atoi(argv[2]) : 5000;
+    if (ha_port <= 0 || ha_port > 65535) ha_port = 5000;
 
     signal(SIGTERM, sig_handler);
     signal(SIGINT, sig_handler);
@@ -48,13 +51,16 @@ int main(int argc, char *argv[]) {
     }
     snd_pcm_set_params(pcm_out, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, CHANNELS, RATE, 1, 50000);
 
-    int sock = -1;
     struct sockaddr_in srv;
     memset(&srv, 0, sizeof(srv));
     srv.sin_family = AF_INET;
     srv.sin_port = htons(ha_port);
-    inet_pton(AF_INET, ha_ip, &srv.sin_addr);
+    if (inet_pton(AF_INET, ha_ip, &srv.sin_addr) <= 0) {
+        srv.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
 
+    int sock = -1;
+    time_t last_connect_attempt = 0;
     short buf[CHUNK_FRAMES * CHANNELS];
     short mono_buf[CHUNK_FRAMES];
 
@@ -74,12 +80,18 @@ int main(int argc, char *argv[]) {
             snd_pcm_recover(pcm_out, written, 0);
         }
 
-        // 2. Non-blocking TCP tap to HA
-        if (sock < 0) {
-            sock = socket(AF_INET, SOCK_STREAM, 0);
+        // 2. Non-blocking TCP tap to HA with reconnect backoff
+        time_t now = time(NULL);
+        if (sock < 0 && (now - last_connect_attempt) >= RECONNECT_INTERVAL_SEC) {
+            last_connect_attempt = now;
+            sock = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
             if (sock >= 0) {
                 fcntl(sock, F_SETFL, O_NONBLOCK);
-                connect(sock, (struct sockaddr *)&srv, sizeof(srv));
+                int conn_res = connect(sock, (struct sockaddr *)&srv, sizeof(srv));
+                if (conn_res < 0 && errno != EINPROGRESS) {
+                    close(sock);
+                    sock = -1;
+                }
             }
         }
 
@@ -89,9 +101,11 @@ int main(int argc, char *argv[]) {
                 mono_buf[i] = (short)(((int)buf[i * 2] + (int)buf[i * 2 + 1]) / 2);
             }
             ssize_t s = send(sock, mono_buf, frames * sizeof(short), MSG_NOSIGNAL);
-            if (s < 0 && (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS)) {
-                close(sock);
-                sock = -1;
+            if (s < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS) {
+                    close(sock);
+                    sock = -1;
+                }
             }
         }
     }

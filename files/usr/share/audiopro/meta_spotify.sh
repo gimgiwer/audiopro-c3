@@ -13,14 +13,14 @@ case "$EVENT" in
         ARTIST="${ARTISTS:-Unknown Artist}"
         ALBUM_NAME="${ALBUM:-}"
         
-        e_title=$(echo "$TITLE" | sed "s/\"/\\\\\"/g")
-        e_artist=$(echo "$ARTIST" | sed "s/\"/\\\\\"/g")
-        e_album=$(echo "$ALBUM_NAME" | sed "s/\"/\\\\\"/g")
+        e_title=$(printf '%s' "$TITLE" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n' '  ')
+        e_artist=$(printf '%s' "$ARTIST" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n' '  ')
+        e_album=$(printf '%s' "$ALBUM_NAME" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n' '  ')
         
         if [ -n "$COVERS" ]; then
-            IMG_URL=$(echo "$COVERS" | tr -d "\"[]\r\n " | tr "," "\n" | grep "^http" | head -n1)
+            IMG_URL=$(printf '%s' "$COVERS" | tr -d "\"[]\r\n " | tr "," "\n" | grep "^https\?://" | head -n1)
             if [ -n "$IMG_URL" ]; then
-                wget -q -O "$ARTWORK_JPG" "$IMG_URL" 2>/dev/null || true
+                wget -q -O "$ARTWORK_JPG" -- "$IMG_URL" 2>/dev/null || true
             fi
         fi
         
@@ -30,7 +30,8 @@ case "$EVENT" in
         # Invoke Audio Arbiter
         /usr/bin/audio_arbiter.sh spotify &
         
-        cat << JSON_EOF > "$META_JSON"
+        tmp_file="${META_JSON}.tmp.$$"
+        cat << JSON_EOF > "$tmp_file"
 {
   "active": true,
   "source": "spotify",
@@ -42,11 +43,12 @@ case "$EVENT" in
   "updated": $(date +%s)
 }
 JSON_EOF
+        mv -f "$tmp_file" "$META_JSON" 2>/dev/null || true
         ;;
         
     paused|stopped)
         if [ -f "$META_JSON" ]; then
-            sed -i "s/\"playing\": true/\"playing\": false/" "$META_JSON" 2>/dev/null || true
+            sed -i 's/"playing": true/"playing": false/' "$META_JSON" 2>/dev/null || true
         fi
         ;;
         

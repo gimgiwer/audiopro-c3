@@ -79,6 +79,25 @@ static int    g_last_bat = 100;
 
 static int uart_init(void);
 
+static inline void safe_write(int fd, const void *buf, size_t count) {
+    if (fd >= 0 && buf && count > 0) {
+        ssize_t ret = write(fd, buf, count);
+        (void)ret;
+    }
+}
+
+static void atomic_write_file(const char *path, const char *content) {
+    if (!path || !content) return;
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d", path, (int)getpid());
+    int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        safe_write(fd, content, strlen(content));
+        close(fd);
+        rename(tmp_path, path);
+    }
+}
+
 static int uart_send(const char *cmd) {
     if (g_uart_fd < 0) {
         g_uart_fd = uart_init();
@@ -120,10 +139,10 @@ static void play_sound(const char *path) {
 
 static void watchdog_ping(void) {
     if (g_wdt_fd < 0) {
-        g_wdt_fd = open("/dev/watchdog", O_WRONLY | O_NONBLOCK);
+        g_wdt_fd = open("/dev/watchdog", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
     }
     if (g_wdt_fd >= 0) {
-        write(g_wdt_fd, "1", 1);
+        safe_write(g_wdt_fd, "1", 1);
     }
 }
 
@@ -139,7 +158,7 @@ static int is_audio_active(void) {
     };
 
     for (int i = 0; status_paths[i]; i++) {
-        int fd = open(status_paths[i], O_RDONLY | O_NONBLOCK);
+        int fd = open(status_paths[i], O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd >= 0) {
             char buf[128];
             ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -159,7 +178,7 @@ static void graceful_shutdown(void) {
     LOG_INFO("Initiating graceful shutdown of audio services and system...");
 
     /* Stop streaming processes first */
-    system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
+    (void)!system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
     usleep(300000);
 
     /* Mute amplifier */
@@ -175,7 +194,7 @@ static void graceful_shutdown(void) {
     }
 
     sync();
-    system("/sbin/poweroff");
+    (void)!system("/sbin/poweroff");
 }
 
 /* Ensure ALSA software volume controls are pegged to 100% (0 dB bit-perfect pass-through) */
@@ -232,6 +251,11 @@ static void set_hardware_volume(int vol) {
     snprintf(cmd, sizeof(cmd), "AXX+VOL+%03d\n", g_current_vol);
     uart_send(cmd);
     mqtt_publish_volume(g_current_vol);
+
+    char vol_str[16];
+    snprintf(vol_str, sizeof(vol_str), "%d\n", g_current_vol);
+    atomic_write_file("/tmp/current_volume", vol_str);
+
     LOG_INFO("Master Hardware Volume set to %d%%", g_current_vol);
 }
 
@@ -264,7 +288,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             uart_send(CMD_MUTE);
         } else if (strcasecmp(payload, "TOGGLE") == 0) {
             int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-            if (fd >= 0) { write(fd, "toggle\n", 7); close(fd); }
+            if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
         }
     } else if (strcmp(msg->topic, vol_topic) == 0) {
         g_last_activity_time = time(NULL);
@@ -385,11 +409,11 @@ static int mqtt_setup(void) {
 
 static int fifo_init(void) {
     unlink(CMD_FIFO_PATH);
-    if (mkfifo(CMD_FIFO_PATH, 0666) < 0 && errno != EEXIST) {
+    if (mkfifo(CMD_FIFO_PATH, 0660) < 0 && errno != EEXIST) {
         LOG_ERROR("Failed to create command FIFO %s: %s", CMD_FIFO_PATH, strerror(errno));
         return -1;
     }
-    g_fifo_fd = open(CMD_FIFO_PATH, O_RDWR | O_NONBLOCK);
+    g_fifo_fd = open(CMD_FIFO_PATH, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (g_fifo_fd < 0) {
         LOG_ERROR("Failed to open command FIFO %s: %s", CMD_FIFO_PATH, strerror(errno));
         return -1;
@@ -398,7 +422,7 @@ static int fifo_init(void) {
 }
 
 static int uart_init(void) {
-    int fd = open(SERIAL_PORT, O_RDWR | O_NOCTTY);
+    int fd = open(SERIAL_PORT, O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (fd < 0) {
         LOG_ERROR("Failed to open %s: %s", SERIAL_PORT, strerror(errno));
         return -1;
@@ -426,12 +450,9 @@ static void set_audio_source(int source) {
     const char *src_name = names[g_current_source];
 
     mqtt_send_sensor("source", src_name);
-    int fd = open("/tmp/audio_source", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
-    if (fd >= 0) {
-        write(fd, src_name, strlen(src_name));
-        write(fd, "\n", 1);
-        close(fd);
-    }
+    char src_buf[32];
+    snprintf(src_buf, sizeof(src_buf), "%s\n", src_name);
+    atomic_write_file("/tmp/audio_source", src_buf);
 
     if (g_current_source == 0) {
         uart_send("AXX+INP+000\n");
@@ -466,7 +487,7 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+KEY+PLPA")) {
         mqtt_send_button("play_pause");
         int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-        if (fd >= 0) { write(fd, "toggle\n", 7); close(fd); }
+        if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);
@@ -477,10 +498,10 @@ static void process_mcu_command(const char *cmd) {
             play_sound(SOUND_PRESET);
             snprintf(buf, sizeof(buf), "preset:%d\n", preset);
             int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-            if (fd >= 0) { write(fd, buf, strlen(buf)); close(fd); }
+            if (fd >= 0) { safe_write(fd, buf, strlen(buf)); close(fd); }
             char hcmd[64];
             snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", preset);
-            system(hcmd);
+            (void)!system(hcmd);
         }
     } else if (strstr(cmd, "MCU+KEY+SRC")) {
         mqtt_send_button("source");
@@ -506,12 +527,9 @@ static void process_mcu_command(const char *cmd) {
             mqtt_send_sensor("battery_alert", "normal");
         }
         g_last_bat = bat;
-        int fd = open("/tmp/battery_status", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
-        if (fd >= 0) {
-            write(fd, cmd, strlen(cmd));
-            write(fd, "\n", 1);
-            close(fd);
-        }
+        char bcmd[140];
+        snprintf(bcmd, sizeof(bcmd), "%s\n", cmd);
+        atomic_write_file("/tmp/battery_status", bcmd);
     } else if (strstr(cmd, "MCU+POW+OFF")) {
         LOG_INFO("MCU reported Power Off event. Initiating graceful shutdown...");
         g_running = 0;
@@ -701,6 +719,9 @@ int main(int argc, char *argv[]) {
                         }
                     } else if (fifo_pos < sizeof(fifo_line) - 1) {
                         fifo_line[fifo_pos++] = c;
+                    } else {
+                        LOG_WARN("FIFO line overflow, dropping line");
+                        fifo_pos = 0;
                     }
                 }
             }
@@ -709,14 +730,39 @@ int main(int argc, char *argv[]) {
         if (ret > 0 && (fds[0].revents & POLLIN)) {
             char rx[READ_BUF_SIZE];
             ssize_t n = read(g_uart_fd, rx, sizeof(rx));
-            for (ssize_t i = 0; i < n; i++) {
-                char c = rx[i];
-                if (c == '&' || c == '\n') {
-                    line_buf[line_pos] = '\0';
-                    if (line_pos > 0) process_mcu_command(line_buf);
-                    line_pos = 0;
-                } else if (c != '\r' && line_pos < MAX_LINE_LEN - 1) {
-                    line_buf[line_pos++] = c;
+            if (n < 0) {
+                if (errno != EAGAIN && errno != EINTR && errno != EWOULDBLOCK) {
+                    LOG_ERROR("UART read error (%s), reopening...", strerror(errno));
+                    close(g_uart_fd);
+                    g_uart_fd = -1;
+                    fds[0].fd = -1;
+                    sleep(1);
+                    g_uart_fd = uart_init();
+                    fds[0].fd = g_uart_fd;
+                }
+            } else if (n == 0) {
+                LOG_WARN("UART EOF detected, reopening...");
+                close(g_uart_fd);
+                g_uart_fd = -1;
+                fds[0].fd = -1;
+                sleep(1);
+                g_uart_fd = uart_init();
+                fds[0].fd = g_uart_fd;
+            } else {
+                for (ssize_t i = 0; i < n; i++) {
+                    char c = rx[i];
+                    if (c == '&' || c == '\n') {
+                        line_buf[line_pos] = '\0';
+                        if (line_pos > 0) process_mcu_command(line_buf);
+                        line_pos = 0;
+                    } else if (c != '\r') {
+                        if (line_pos < MAX_LINE_LEN - 1) {
+                            line_buf[line_pos++] = c;
+                        } else {
+                            LOG_WARN("UART line overflow (>%d bytes), dropping noise", MAX_LINE_LEN);
+                            line_pos = 0;
+                        }
+                    }
                 }
             }
         }

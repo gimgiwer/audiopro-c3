@@ -3,6 +3,9 @@
     Zero-fork execution running natively inside uhttpd-mod-lua
 --]]
 
+local has_uci, uci_lib = pcall(require, "uci")
+local uci_ctx = has_uci and uci_lib.cursor() or nil
+
 local function read_file(path)
     local f = io.open(path, "r")
     if not f then return nil end
@@ -21,7 +24,7 @@ local function write_file(path, content)
     return true
 end
 
--- Cryptographically secure session token generation (32 bytes from /dev/urandom -> 64 hex chars)
+-- Cryptographically secure session token generation
 local function generate_token()
     local f = io.open("/dev/urandom", "rb")
     if f then
@@ -35,27 +38,32 @@ local function generate_token()
             return table.concat(hex)
         end
     end
-    return string.format("%x%x%x%x", os.time(), math.random(100000, 999999), math.random(100000, 999999), math.random(100000, 999999))
+    return nil
+end
+
+local function constant_time_compare(a, b)
+    if not a or not b or #a ~= #b then return false end
+    local diff = 0
+    for i = 1, #a do
+        diff = diff + math.abs(string.byte(a, i) - string.byte(b, i))
+    end
+    return diff == 0
 end
 
 -- Lazy session garbage collector for expired sessions and old rate-limit entries
 local function gc_sessions()
     local sess_dir = "/tmp/ap_sessions"
-    local p = io.popen("ls -1 " .. sess_dir .. " 2>/dev/null", "r")
+    local p = io.popen("ls " .. sess_dir .. " 2>/dev/null", "r")
     if p then
-        local now_ts = os.time()
+        local now = os.time()
         for fname in p:lines() do
-            local tok = string.match(fname, "^(%x+)$")
-            if tok then
-                local sf = sess_dir .. "/" .. tok
-                local c = read_file(sf)
-                if c then
-                    local exp = tonumber(string.match(c, "expires=(%d+)") or "0")
-                    if exp > 0 and now_ts > exp then
-                        os.remove(sf)
+            if string.match(fname, "^%x+$") then
+                local content = read_file(sess_dir .. "/" .. fname)
+                if content then
+                    local exp = tonumber(string.match(content, "expires=(%d+)") or "0")
+                    if exp and exp > 0 and now >= exp then
+                        os.remove(sess_dir .. "/" .. fname)
                     end
-                else
-                    os.remove(sf)
                 end
             end
         end
@@ -63,88 +71,87 @@ local function gc_sessions()
     end
 end
 
+-- URL Decoder
+local function urldecode(s)
+    if not s then return "" end
+    s = string.gsub(s, "+", " ")
+    s = string.gsub(s, "%%(%x%x)", function(h)
+        return string.char(tonumber(h, 16))
+    end)
+    return s
+end
+
+-- JSON String Escaper
+local function json_escape(s)
+    if not s then return "" end
+    s = tostring(s)
+    s = string.gsub(s, "\\", "\\\\")
+    s = string.gsub(s, '"', '\\"')
+    s = string.gsub(s, "\b", "\\b")
+    s = string.gsub(s, "\f", "\\f")
+    s = string.gsub(s, "\n", "\\n")
+    s = string.gsub(s, "\r", "\\r")
+    s = string.gsub(s, "\t", "\\t")
+    return s
+end
+
+-- Fast Non-blocking UART Command Sender
 local function send_mcu(cmd)
     local f = io.open("/tmp/mcu_cmd_fifo", "w")
     if f then
         f:write(cmd)
-        f:close()
-        return true
-    end
-    f = io.open("/dev/ttyS0", "w")
-    if f then
-        f:write(cmd)
+        f:flush()
         f:close()
         return true
     end
     return false
 end
 
-local function urldecode(str)
-    if not str then return "" end
-    str = string.gsub(str, "+", " ")
-    str = string.gsub(str, "%%(%x%x)", function(h)
-        return string.char(tonumber(h, 16))
-    end)
-    return str
-end
-
-local function parse_params(query_string)
+-- Query Parser
+local function parse_params(query)
     local params = {}
-    if not query_string or query_string == "" then return params end
-    for pair in string.gmatch(query_string, "[^&]+") do
-        local k, v = string.match(pair, "^([^=]+)=(.*)$")
+    if not query or query == "" then return params end
+    for pair in string.gmatch(query, "[^&]+") do
+        local k, v = string.match(pair, "([^=]+)=(.*)")
         if k then
-            params[urldecode(k)] = urldecode(v or "")
+            params[urldecode(k)] = urldecode(v)
         else
-            params[urldecode(pair)] = ""
+            params[urldecode(pair)] = "1"
         end
     end
     return params
 end
 
-local function parse_cookies(cookie_str)
+-- Cookie Parser
+local function parse_cookies(cookie_header)
     local cookies = {}
-    if not cookie_str or cookie_str == "" then return cookies end
-    for pair in string.gmatch(cookie_str, "[^;]+") do
-        local k, v = string.match(pair, "^%s*([^=]+)=(.*)$")
-        if k then
-            cookies[k] = v:match("^%s*(.-)%s*$")
+    if not cookie_header or cookie_header == "" then return cookies end
+    for pair in string.gmatch(cookie_header, "[^;]+") do
+        local k, v = string.match(pair, "^%s*([^=]+)%s*=%s*(.*)%s*$")
+        if k and v then
+            cookies[k] = v
         end
     end
     return cookies
 end
 
-local function json_escape(str)
-    if not str then return "" end
-    str = string.gsub(str, "\\", "\\\\")
-    str = string.gsub(str, '"', '\\"')
-    str = string.gsub(str, "\n", "\\n")
-    str = string.gsub(str, "\r", "\\r")
-    str = string.gsub(str, "\t", "\\t")
-    return str
-end
-
-local function get_md5(str)
-    local f = io.popen("echo -n '" .. string.gsub(str, "'", "'\\''") .. "' | md5sum", "r")
-    if f then
-        local res = f:read("*l") or ""
-        f:close()
-        return string.match(res, "^(%x+)") or ""
-    end
-    return ""
-end
-
-local function uci_get(key, default_val)
-    local f = io.popen("uci -q get " .. key .. " 2>/dev/null", "r")
-    if f then
-        local res = f:read("*l")
-        f:close()
-        if res and res ~= "" then return res end
+-- In-process native UCI accessor
+local function uci_get_val(config, section, option, default_val)
+    if uci_ctx then
+        local v = uci_ctx:get(config, section, option)
+        if v ~= nil then return tostring(v) end
+    else
+        local f = io.popen(string.format("uci -q get %s.%s.%s 2>/dev/null", config, section, option), "r")
+        if f then
+            local res = f:read("*l")
+            f:close()
+            if res and res ~= "" then return res end
+        end
     end
     return default_val or ""
 end
 
-local SEC_HEADERS = "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nContent-Security-Policy: default-src 'self' 'unsafe-inline' data: blob:;\r\n"
+local SEC_HEADERS = "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nContent-Security-Policy: default-src 'self' 'unsafe-inline' data: blob:; img-src 'self' data: blob: http: https:;\r\n"
 
 local function verify_system_password(username, password)
     if not username or username == "" or not password or password == "" then return false end
@@ -163,12 +170,14 @@ local function verify_system_password(username, password)
                 if stored and stored ~= "" and stored ~= "*" and stored ~= "!" then
                     local algo, salt = string.match(stored, "^%$([156])%$([^$]+)")
                     if salt and algo then
-                        local cmd = string.format("openssl passwd -%s -salt '%s' '%s' 2>/dev/null", algo, string.gsub(salt, "'", "'\\''"), string.gsub(password, "'", "'\\''"))
-                        local f = io.popen(cmd, "r")
+                        local cmd = string.format("openssl passwd -%s -salt '%s' -stdin 2>/dev/null", algo, string.gsub(salt, "'", "'\\''"))
+                        local f = io.popen(cmd, "r+")
                         if f then
+                            f:write(password .. "\n")
+                            f:flush()
                             local computed = f:read("*l")
                             f:close()
-                            if computed == stored then return true end
+                            if computed and constant_time_compare(computed, stored) then return true end
                         end
                     end
                     return false
@@ -191,7 +200,7 @@ function handle_request(env)
     local now = os.time()
     local client_ip = env.REMOTE_ADDR or "127.0.0.1"
     local client_ua = env.HTTP_USER_AGENT or "unknown"
-    local fp = get_md5(client_ip .. "|" .. client_ua)
+    local fp = string.format("%x", os.time())
 
     if action == "" then
         for k, v in pairs(params) do
@@ -204,8 +213,8 @@ function handle_request(env)
     end
 
     -- Authentication Configuration
-    local auth_enabled = uci_get("mcud.main.auth_enabled", "0") == "1"
-    local session_ttl = tonumber(uci_get("mcud.main.session_ttl", "604800")) or 604800
+    local auth_enabled = uci_get_val("mcud", "main", "auth_enabled", "0") == "1"
+    local session_ttl = tonumber(uci_get_val("mcud", "main", "session_ttl", "604800")) or 604800
 
     -- Validate session token
     local token = cookies.ap_sid or ""
@@ -223,9 +232,8 @@ function handle_request(env)
         local sess = read_file("/tmp/ap_sessions/" .. token)
         if sess then
             local exp = tonumber(string.match(sess, "expires=(%d+)") or "0")
-            local s_fp = string.match(sess, "fingerprint=([^\n\r]+)") or ""
             local s_u = string.match(sess, "username=([^\n\r]+)") or "root"
-            if now < exp and s_fp == fp then
+            if now < exp then
                 is_authenticated = true
                 auth_user = s_u
             else
@@ -234,7 +242,7 @@ function handle_request(env)
         end
     end
 
-    -- Firmware Binary Upload Endpoint (Strict max 11.5 MB partition boundary + Auth guard)
+    -- Firmware Binary Upload Endpoint (Strict max 11.18 MB = 11730944 partition boundary + Auth guard)
     if action == "upload" and method == "POST" then
         if auth_enabled and not is_authenticated then
             uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
@@ -242,7 +250,7 @@ function handle_request(env)
             return
         end
 
-        local MAX_FW_SIZE = 12058624 -- 11.5 MB SPI NOR firmware partition limit
+        local MAX_FW_SIZE = 11730944 -- 11.18 MB (0xB30000) exact SPI NOR firmware partition boundary
         local out_f = io.open("/tmp/firmware.bin", "wb")
         local total = 0
         local overflow = false
@@ -263,28 +271,24 @@ function handle_request(env)
         if overflow or total < 10240 then
             os.remove("/tmp/firmware.bin")
             uhttpd.send("Status: 413 Payload Too Large\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
-            uhttpd.send('{"status":"error","message":"Invalid firmware size (Max 11.5 MB allowed)"}')
+            uhttpd.send('{"status":"error","message":"Invalid firmware size (Max 11.18 MB allowed)"}')
             return
         end
 
         uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
-        local md5_pipe = io.popen("md5sum /tmp/firmware.bin 2>/dev/null", "r")
-        local f_md5 = "valid"
-        if md5_pipe then
-            local l = md5_pipe:read("*l") or ""
-            md5_pipe:close()
-            f_md5 = string.match(l, "^(%x+)") or "valid"
-        end
-        uhttpd.send(string.format('{"status":"ok","message":"Firmware uploaded","size":%d,"md5":"%s"}', total, f_md5))
+        uhttpd.send(string.format('{"status":"ok","message":"Firmware uploaded","size":%d}', total))
         return
     end
 
-    -- Read POST body for non-upload API requests
+    -- Read POST body for non-upload API requests (Limit to 64 KB)
     if method == "POST" and action ~= "upload" and uhttpd and uhttpd.recv then
         local body = ""
+        local total_post = 0
         while true do
             local chunk = uhttpd.recv(4096)
             if not chunk or chunk == "" then break end
+            total_post = total_post + #chunk
+            if total_post > 65536 then break end
             body = body .. chunk
         end
         if body ~= "" then
@@ -335,15 +339,20 @@ function handle_request(env)
 
         if fail_cnt >= 5 and (now - fail_tm) < 60 then
             uhttpd.send("Status: 429 Too Many Requests\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
-            uhttpd.send('{"status":"error","code":429,"message":"Too many failed attempts. Please wait 30 seconds."}')
+            uhttpd.send('{"status":"error","code":429,"message":"Too many failed attempts. Please wait 60 seconds."}')
             return
         end
 
         if verify_system_password(u, p) then
             os.remove(fail_file)
             local tok = generate_token()
+            if not tok then
+                uhttpd.send("Status: 500 Internal Server Error\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
+                uhttpd.send('{"status":"error","message":"CSPRNG entropy error"}')
+                return
+            end
             local exp = now + session_ttl
-            write_file("/tmp/ap_sessions/" .. tok, string.format("username=%s\nexpires=%d\nfingerprint=%s\ncreated=%d\n", u, exp, fp, now))
+            write_file("/tmp/ap_sessions/" .. tok, string.format("username=%s\nexpires=%d\ncreated=%d\n", u, exp, now))
             uhttpd.send(string.format("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Strict\r\n%s\r\n", tok, session_ttl, SEC_HEADERS))
             uhttpd.send(string.format('{"status":"ok","message":"Authenticated","username":"%s","expires":%d}', json_escape(u), exp))
             return
@@ -363,13 +372,13 @@ function handle_request(env)
         gc_sessions()
         uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
         if not auth_enabled then
-            uhttpd.send(string.format('{"auth_required":false,"logged_in":true,"username":"root","fingerprint":"%s"}', fp))
+            uhttpd.send('{"auth_required":false,"logged_in":true,"username":"root"}')
             return
         end
         if is_authenticated then
-            uhttpd.send(string.format('{"auth_required":true,"logged_in":true,"username":"%s","fingerprint":"%s"}', json_escape(auth_user), fp))
+            uhttpd.send(string.format('{"auth_required":true,"logged_in":true,"username":"%s"}', json_escape(auth_user)))
         else
-            uhttpd.send(string.format('{"auth_required":true,"logged_in":false,"fingerprint":"%s"}', fp))
+            uhttpd.send('{"auth_required":true,"logged_in":false}')
         end
         return
     end
@@ -418,14 +427,16 @@ function handle_request(env)
             if avail then mem_free = string.format("%.1f", tonumber(avail)/1024) end
         end
 
-        local airplay_act = (os.execute("pidof shairport-sync >/dev/null 2>&1") == 0)
-        local spotify_act = (os.execute("pidof librespot >/dev/null 2>&1") == 0)
+        local airplay_act = (read_file("/tmp/shairport-sync-meta") ~= nil)
+        local spotify_act = (read_file("/tmp/audiopro_meta.json") ~= nil)
 
         local now_playing = read_file("/tmp/audiopro_meta.json") or '{"active":false}'
         if now_playing == "" then now_playing = '{"active":false}' end
 
-        local resp = string.format('{"status":"ok","battery":%d,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"AudioPro-C3","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"now_playing":%s}',
-            bat, json_escape(src), vol, tostring(mut), client_ip, uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), now_playing)
+        local hostname = uci_get_val("system", "@system[0]", "hostname", "AudioPro-C3")
+
+        local resp = string.format('{"status":"ok","battery":%d,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"now_playing":%s}',
+            bat, json_escape(src), vol, tostring(mut), client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), now_playing)
         uhttpd.send(resp)
 
     elseif action == "volume" then
@@ -462,12 +473,12 @@ function handle_request(env)
 
     elseif action == "player_play" or action == "play" then
         send_mcu("AXX+PLM+001\nAXX+MUT+000\n")
-        os.execute("pidof librespot >/dev/null 2>&1 && kill -CONT $(pidof librespot) 2>/dev/null")
+        write_file("/tmp/player_cmd", "play\n")
         uhttpd.send('{"status":"ok","playing":true}')
 
     elseif action == "player_pause" or action == "pause" then
         send_mcu("AXX+PLM+000\n")
-        os.execute("pidof librespot >/dev/null 2>&1 && kill -STOP $(pidof librespot) 2>/dev/null")
+        write_file("/tmp/player_cmd", "pause\n")
         uhttpd.send('{"status":"ok","playing":false}')
 
     elseif action == "player_toggle" then
@@ -511,17 +522,17 @@ function handle_request(env)
 
     elseif action == "tts" or action == "tts_duck" then
         local tts_url = params.url or ""
-        if tts_url ~= "" then
+        if tts_url ~= "" and string.match(tts_url, "^https?://") then
             os.execute(string.format("/usr/bin/ha_ducking.sh tts '%s' >/dev/null 2>&1 &", string.gsub(tts_url, "'", "'\\''")))
             uhttpd.send('{"status":"ok","message":"TTS announcement queued"}')
         else
-            uhttpd.send('{"status":"error","message":"URL required"}')
+            uhttpd.send('{"status":"error","message":"Valid HTTP/HTTPS URL required"}')
         end
 
     elseif action == "play_stream" then
         local stream_url = params.url or ""
         local stream_name = params.name or "Live Stream"
-        if stream_url ~= "" then
+        if stream_url ~= "" and string.match(stream_url, "^https?://") then
             os.execute("killall -9 mpg123 madplay 2>/dev/null")
             local meta = string.format('{"active":true,"source":"webradio","title":"%s","artist":"Web Radio","album":"Direct Stream","playing":true,"artwork":false,"updated":%d}',
                 json_escape(stream_name), os.time())
@@ -529,7 +540,7 @@ function handle_request(env)
             os.execute(string.format("mpg123 -q -a music_in -- '%s' >/dev/null 2>&1 &", string.gsub(stream_url, "'", "'\\''")))
             uhttpd.send(string.format('{"status":"ok","message":"Streaming started","title":"%s"}', json_escape(stream_name)))
         else
-            uhttpd.send('{"status":"error","message":"URL required"}')
+            uhttpd.send('{"status":"error","message":"Valid stream URL required"}')
         end
 
     elseif action == "stop_stream" then
@@ -558,8 +569,16 @@ function handle_request(env)
         local ssid = params.ssid or ""
         local key = params.key or ""
         if ssid ~= "" then
-            os.execute(string.format("uci set wireless.sta_iface.ssid='%s' 2>/dev/null; uci set wireless.sta_iface.key='%s' 2>/dev/null; uci set wireless.sta_iface.disabled='0' 2>/dev/null; uci commit wireless 2>/dev/null; (sleep 2 && wifi reload) >/dev/null 2>&1 &",
-                string.gsub(ssid, "'", "'\\''"), string.gsub(key, "'", "'\\''")))
+            if uci_ctx then
+                uci_ctx:set("wireless", "sta_iface", "ssid", ssid)
+                uci_ctx:set("wireless", "sta_iface", "key", key)
+                uci_ctx:set("wireless", "sta_iface", "disabled", "0")
+                uci_ctx:commit("wireless")
+            else
+                os.execute(string.format("uci set wireless.sta_iface.ssid='%s' 2>/dev/null; uci set wireless.sta_iface.key='%s' 2>/dev/null; uci set wireless.sta_iface.disabled='0' 2>/dev/null; uci commit wireless 2>/dev/null",
+                    string.gsub(ssid, "'", "'\\''"), string.gsub(key, "'", "'\\''")))
+            end
+            os.execute("(sleep 2 && wifi reload) >/dev/null 2>&1 &")
             uhttpd.send('{"status":"ok","message":"Connecting to home Wi-Fi..."}')
         else
             uhttpd.send('{"status":"error","message":"SSID required"}')
@@ -580,27 +599,27 @@ function handle_request(env)
         end
 
     elseif action == "get_config" then
-        local ap_ssid = uci_get("wireless.ap_iface.ssid", "AudioPro-C3-Setup")
-        local ap_key = uci_get("wireless.ap_iface.key", "")
-        local ap_chan = uci_get("wireless.radio0.channel", "auto")
-        local ap_dis = (uci_get("wireless.ap_iface.disabled", "0") == "1")
+        local ap_ssid = uci_get_val("wireless", "ap_iface", "ssid", "AudioPro-C3-Setup")
+        local ap_key = uci_get_val("wireless", "ap_iface", "key", "")
+        local ap_chan = uci_get_val("wireless", "radio0", "channel", "auto")
+        local ap_dis = (uci_get_val("wireless", "ap_iface", "disabled", "0") == "1")
 
-        local sta_ssid = uci_get("wireless.sta_iface.ssid", "")
-        local sta_key = uci_get("wireless.sta_iface.key", "")
-        local sta_dis = (uci_get("wireless.sta_iface.disabled", "1") == "1")
+        local sta_ssid = uci_get_val("wireless", "sta_iface", "ssid", "")
+        local sta_key = uci_get_val("wireless", "sta_iface", "key", "")
+        local sta_dis = (uci_get_val("wireless", "sta_iface", "disabled", "1") == "1")
 
-        local def_vol = tonumber(uci_get("mcud.main.default_volume", "25")) or 25
-        local auto_sleep = tonumber(uci_get("mcud.main.auto_sleep_min", "0")) or 0
-        local slp_aux = (uci_get("mcud.main.sleep_in_aux", "0") == "1")
-        local slp_bt = (uci_get("mcud.main.sleep_in_bt", "0") == "1")
+        local def_vol = tonumber(uci_get_val("mcud", "main", "default_volume", "25")) or 25
+        local auto_sleep = tonumber(uci_get_val("mcud", "main", "auto_sleep_min", "0")) or 0
+        local slp_aux = (uci_get_val("mcud", "main", "sleep_in_aux", "0") == "1")
+        local slp_bt = (uci_get_val("mcud", "main", "sleep_in_bt", "0") == "1")
 
-        local mqtt_en = (uci_get("mcud.main.mqtt_enabled", "1") == "1")
-        local mqtt_host = uci_get("mcud.main.mqtt_host", "127.0.0.1")
-        local mqtt_port = tonumber(uci_get("mcud.main.mqtt_port", "1883")) or 1883
-        local mqtt_pre = uci_get("mcud.main.mqtt_topic_prefix", "audiopro_c3")
-        local mqtt_user = uci_get("mcud.main.mqtt_user", "")
+        local mqtt_en = (uci_get_val("mcud", "main", "mqtt_enabled", "1") == "1")
+        local mqtt_host = uci_get_val("mcud", "main", "mqtt_host", "127.0.0.1")
+        local mqtt_port = tonumber(uci_get_val("mcud", "main", "mqtt_port", "1883")) or 1883
+        local mqtt_pre = uci_get_val("mcud", "main", "mqtt_topic_prefix", "audiopro_c3")
+        local mqtt_user = uci_get_val("mcud", "main", "mqtt_user", "")
 
-        local hostname = uci_get("system.@system[0].hostname", "AudioPro-C3")
+        local hostname = uci_get_val("system", "@system[0]", "hostname", "AudioPro-C3")
 
         local resp = string.format('{"status":"ok","ap_ssid":"%s","ap_key":"%s","ap_channel":"%s","ap_disabled":%s,"sta_ssid":"%s","sta_key":"%s","sta_disabled":%s,"default_volume":%d,"auto_sleep_min":%d,"sleep_in_aux":%s,"sleep_in_bt":%s,"mqtt_enabled":%s,"mqtt_host":"%s","mqtt_port":%d,"mqtt_prefix":"%s","mqtt_user":"%s","hostname":"%s"}',
             json_escape(ap_ssid), json_escape(ap_key), json_escape(ap_chan), tostring(ap_dis),
@@ -611,8 +630,8 @@ function handle_request(env)
 
     elseif action == "get_security" then
         local s_days = math.floor(session_ttl / 86400)
-        local https_en = (uci_get("uhttpd.main.listen_https", "") ~= "")
-        local https_redir = (uci_get("uhttpd.main.redirect_https", "0") == "1")
+        local https_en = (uci_get_val("uhttpd", "main", "listen_https", "") ~= "")
+        local https_redir = (uci_get_val("uhttpd", "main", "redirect_https", "0") == "1")
         local has_cert = (read_file("/etc/uhttpd.crt") ~= nil)
         uhttpd.send(string.format('{"status":"ok","auth_enabled":%s,"session_ttl":%d,"session_days":%d,"https_enabled":%s,"https_redirect":%s,"has_cert":%s}',
             tostring(auth_enabled), session_ttl, s_days, tostring(https_en), tostring(https_redir), tostring(has_cert)))
@@ -624,8 +643,13 @@ function handle_request(env)
         if days > 365 then days = 365 end
         local ttl = days * 86400
 
-        os.execute(string.format("uci set mcud.main.auth_enabled='%s' 2>/dev/null; uci set mcud.main.session_ttl='%d' 2>/dev/null; uci commit mcud 2>/dev/null",
-            auth_en, ttl))
+        if uci_ctx then
+            uci_ctx:set("mcud", "main", "auth_enabled", auth_en)
+            uci_ctx:set("mcud", "main", "session_ttl", tostring(ttl))
+            uci_ctx:commit("mcud")
+        else
+            os.execute(string.format("uci set mcud.main.auth_enabled='%s' 2>/dev/null; uci set mcud.main.session_ttl='%d' 2>/dev/null; uci commit mcud 2>/dev/null", auth_en, ttl))
+        end
 
         local https_en = (params.https_enabled == "1" or params.https_enabled == "true")
         local https_redir = (params.https_redirect == "1" or params.https_redirect == "true")
@@ -649,20 +673,44 @@ function handle_request(env)
         local chan = params.ap_channel or "auto"
         local dis = (params.ap_disabled == "1" or params.ap_disabled == "true") and "1" or "0"
 
-        if ssid ~= "" then os.execute(string.format("uci set wireless.ap_iface.ssid='%s' 2>/dev/null", string.gsub(ssid, "'", "'\\''"))) end
-        if key ~= "" then
-            if #key >= 8 then
-                os.execute(string.format("uci set wireless.ap_iface.encryption='psk2' 2>/dev/null; uci set wireless.ap_iface.key='%s' 2>/dev/null", string.gsub(key, "'", "'\\''")))
+        if ssid ~= "" then
+            if uci_ctx then
+                uci_ctx:set("wireless", "ap_iface", "ssid", ssid)
+                if key ~= "" then
+                    if #key >= 8 then
+                        uci_ctx:set("wireless", "ap_iface", "encryption", "psk2")
+                        uci_ctx:set("wireless", "ap_iface", "key", key)
+                    else
+                        uhttpd.send('{"status":"error","message":"AP password must be at least 8 characters"}')
+                        return
+                    end
+                else
+                    uci_ctx:set("wireless", "ap_iface", "encryption", "none")
+                    uci_ctx:delete("wireless", "ap_iface", "key")
+                end
+                if chan ~= "" then uci_ctx:set("wireless", "radio0", "channel", chan) end
+                uci_ctx:set("wireless", "ap_iface", "disabled", dis)
+                uci_ctx:commit("wireless")
             else
-                uhttpd.send('{"status":"error","message":"AP password must be at least 8 characters"}')
-                return
+                if ssid ~= "" then os.execute(string.format("uci set wireless.ap_iface.ssid='%s' 2>/dev/null", string.gsub(ssid, "'", "'\\''"))) end
+                if key ~= "" then
+                    if #key >= 8 then
+                        os.execute(string.format("uci set wireless.ap_iface.encryption='psk2' 2>/dev/null; uci set wireless.ap_iface.key='%s' 2>/dev/null", string.gsub(key, "'", "'\\''")))
+                    else
+                        uhttpd.send('{"status":"error","message":"AP password must be at least 8 characters"}')
+                        return
+                    end
+                else
+                    os.execute("uci set wireless.ap_iface.encryption='none' 2>/dev/null; uci -q del wireless.ap_iface.key 2>/dev/null")
+                end
+                if chan ~= "" then os.execute(string.format("uci set wireless.radio0.channel='%s' 2>/dev/null", string.gsub(chan, "'", "'\\''"))) end
+                os.execute(string.format("uci set wireless.ap_iface.disabled='%s' 2>/dev/null; uci commit wireless 2>/dev/null", dis))
             end
+            os.execute("(sleep 1 && wifi reload) >/dev/null 2>&1 &")
+            uhttpd.send('{"status":"ok","message":"AP settings applied"}')
         else
-            os.execute("uci set wireless.ap_iface.encryption='none' 2>/dev/null; uci -q del wireless.ap_iface.key 2>/dev/null")
+            uhttpd.send('{"status":"error","message":"SSID cannot be empty"}')
         end
-        if chan ~= "" then os.execute(string.format("uci set wireless.radio0.channel='%s' 2>/dev/null", string.gsub(chan, "'", "'\\''"))) end
-        os.execute(string.format("uci set wireless.ap_iface.disabled='%s' 2>/dev/null; uci commit wireless 2>/dev/null; (sleep 1 && wifi reload) >/dev/null 2>&1 &", dis))
-        uhttpd.send('{"status":"ok","message":"AP settings applied"}')
 
     elseif action == "save_audio" then
         local dvol = tonumber(params.default_volume or "25") or 25
@@ -670,52 +718,78 @@ function handle_request(env)
         local slp_aux = (params.sleep_in_aux == "1" or params.sleep_in_aux == "true") and "1" or "0"
         local slp_bt = (params.sleep_in_bt == "1" or params.sleep_in_bt == "true") and "1" or "0"
 
-        os.execute(string.format("uci set mcud.main.default_volume='%d'; uci set mcud.main.auto_sleep_min='%d'; uci set mcud.main.sleep_in_aux='%s'; uci set mcud.main.sleep_in_bt='%s'; uci commit mcud; /etc/init.d/mcud restart >/dev/null 2>&1 &",
-            dvol, aslp, slp_aux, slp_bt))
+        if uci_ctx then
+            uci_ctx:set("mcud", "main", "default_volume", tostring(dvol))
+            uci_ctx:set("mcud", "main", "auto_sleep_min", tostring(aslp))
+            uci_ctx:set("mcud", "main", "sleep_in_aux", slp_aux)
+            uci_ctx:set("mcud", "main", "sleep_in_bt", slp_bt)
+            uci_ctx:commit("mcud")
+        else
+            os.execute(string.format("uci set mcud.main.default_volume='%d'; uci set mcud.main.auto_sleep_min='%d'; uci set mcud.main.sleep_in_aux='%s'; uci set mcud.main.sleep_in_bt='%s'; uci commit mcud 2>/dev/null", dvol, aslp, slp_aux, slp_bt))
+        end
+        os.execute("/etc/init.d/mcud restart >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Audio & Power settings saved"}')
 
     elseif action == "save_device" then
         local host = string.lower(string.gsub(params.hostname or "", "[^%w%-]", ""))
         if host ~= "" then
-            os.execute(string.format("uci set system.@system[0].hostname='%s'; uci commit system; echo '%s' > /proc/sys/kernel/hostname 2>/dev/null; sed -i 's/name = .*/name = \"%s\";/' /etc/shairport-sync.conf 2>/dev/null; uci set shairport-sync.shairport_sync.name='%s' 2>/dev/null; uci commit shairport-sync 2>/dev/null",
-                host, host, host, host))
-            uhttpd.send(string.format('{"status":"ok","message":"Device name updated to %s"}', host))
+            if uci_ctx then
+                uci_ctx:set("system", "@system[0]", "hostname", host)
+                uci_ctx:commit("system")
+                uci_ctx:set("shairport-sync", "shairport_sync", "name", host)
+                uci_ctx:commit("shairport-sync")
+            else
+                os.execute(string.format("uci set system.@system[0].hostname='%s'; uci commit system 2>/dev/null; uci set shairport-sync.shairport_sync.name='%s' 2>/dev/null; uci commit shairport-sync 2>/dev/null", host, host))
+            end
+            os.execute(string.format("echo '%s' > /proc/sys/kernel/hostname 2>/dev/null; sed -i 's/name = .*/name = \"%s\";/' /etc/shairport-sync.conf 2>/dev/null", host, host))
+            uhttpd.send(string.format('{"status":"ok","message":"Device name updated to %s"}', json_escape(host)))
         else
             uhttpd.send('{"status":"error","message":"Hostname cannot be empty"}')
         end
 
     elseif action == "save_mqtt" then
         local en = (params.mqtt_enabled == "1" or params.mqtt_enabled == "true") and "1" or "0"
-        local host = params.mqtt_host or "127.0.0.1"
+        local host = string.gsub(params.mqtt_host or "127.0.0.1", "[^%w%.%-%_]", "")
         local port = tonumber(params.mqtt_port or "1883") or 1883
-        local pre = params.mqtt_prefix or "audiopro_c3"
+        local pre = string.gsub(params.mqtt_prefix or "audiopro_c3", "[^%w%_%-]", "")
         local user = params.mqtt_user or ""
-        local pass = params.mqtt_pass or ""
+        local pass = params.mqtt_password or params.mqtt_pass or ""
 
-        os.execute(string.format("uci set mcud.main.mqtt_enabled='%s'; uci set mcud.main.mqtt_host='%s'; uci set mcud.main.mqtt_port='%d'; uci set mcud.main.mqtt_topic_prefix='%s'; uci set mcud.main.mqtt_user='%s'; uci set mcud.main.mqtt_password='%s'; uci commit mcud; /etc/init.d/mcud restart >/dev/null 2>&1 &",
-            en, string.gsub(host, "'", "'\\''"), port, string.gsub(pre, "'", "'\\''"), string.gsub(user, "'", "'\\''"), string.gsub(pass, "'", "'\\''")))
+        if uci_ctx then
+            uci_ctx:set("mcud", "main", "mqtt_enabled", en)
+            uci_ctx:set("mcud", "main", "mqtt_host", host)
+            uci_ctx:set("mcud", "main", "mqtt_port", tostring(port))
+            uci_ctx:set("mcud", "main", "mqtt_topic_prefix", pre)
+            uci_ctx:set("mcud", "main", "mqtt_user", user)
+            uci_ctx:set("mcud", "main", "mqtt_password", pass)
+            uci_ctx:commit("mcud")
+        else
+            os.execute(string.format("uci set mcud.main.mqtt_enabled='%s'; uci set mcud.main.mqtt_host='%s'; uci set mcud.main.mqtt_port='%d'; uci set mcud.main.mqtt_topic_prefix='%s'; uci set mcud.main.mqtt_user='%s'; uci set mcud.main.mqtt_password='%s'; uci commit mcud 2>/dev/null",
+                en, string.gsub(host, "'", "'\\''"), port, string.gsub(pre, "'", "'\\''"), string.gsub(user, "'", "'\\''"), string.gsub(pass, "'", "'\\''")))
+        end
+        os.execute("/etc/init.d/mcud restart >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"MQTT settings saved"}')
 
     elseif action == "get_presets" then
-        local p1_m = uci_get("audiopro_presets.1.mode", "ha")
-        local p1_n = uci_get("audiopro_presets.1.name", "Preset 1")
-        local p1_u = uci_get("audiopro_presets.1.url", "")
-        local p1_c = uci_get("audiopro_presets.1.command", "")
+        local p1_m = uci_get_val("audiopro_presets", "1", "mode", "ha")
+        local p1_n = uci_get_val("audiopro_presets", "1", "name", "Preset 1")
+        local p1_u = uci_get_val("audiopro_presets", "1", "url", "")
+        local p1_c = uci_get_val("audiopro_presets", "1", "command", "")
 
-        local p2_m = uci_get("audiopro_presets.2.mode", "ha")
-        local p2_n = uci_get("audiopro_presets.2.name", "Preset 2")
-        local p2_u = uci_get("audiopro_presets.2.url", "")
-        local p2_c = uci_get("audiopro_presets.2.command", "")
+        local p2_m = uci_get_val("audiopro_presets", "2", "mode", "ha")
+        local p2_n = uci_get_val("audiopro_presets", "2", "name", "Preset 2")
+        local p2_u = uci_get_val("audiopro_presets", "2", "url", "")
+        local p2_c = uci_get_val("audiopro_presets", "2", "command", "")
 
-        local p3_m = uci_get("audiopro_presets.3.mode", "ha")
-        local p3_n = uci_get("audiopro_presets.3.name", "Preset 3")
-        local p3_u = uci_get("audiopro_presets.3.url", "")
-        local p3_c = uci_get("audiopro_presets.3.command", "")
+        local p3_m = uci_get_val("audiopro_presets", "3", "mode", "ha")
+        local p3_n = uci_get_val("audiopro_presets", "3", "name", "Preset 3")
+        local p3_u = uci_get_val("audiopro_presets", "3", "url", "")
+        local p3_c = uci_get_val("audiopro_presets", "3", "command", "")
 
-        local p4_m = uci_get("audiopro_presets.4.mode", "ha")
-        local p4_n = uci_get("audiopro_presets.4.name", "Preset 4")
-        local p4_u = uci_get("audiopro_presets.4.url", "")
-        local p4_c = uci_get("audiopro_presets.4.command", "")
+        local p4_m = uci_get_val("audiopro_presets", "4", "mode", "ha")
+        local p4_n = uci_get_val("audiopro_presets", "4", "name", "Preset 4")
+        local p4_u = uci_get_val("audiopro_presets", "4", "url", "")
+        local p4_c = uci_get_val("audiopro_presets", "4", "command", "")
 
         local resp = string.format('{"status":"ok","presets":[{"id":1,"name":"%s","mode":"%s","url":"%s","command":"%s"},{"id":2,"name":"%s","mode":"%s","url":"%s","command":"%s"},{"id":3,"name":"%s","mode":"%s","url":"%s","command":"%s"},{"id":4,"name":"%s","mode":"%s","url":"%s","command":"%s"}]}',
             json_escape(p1_n), json_escape(p1_m), json_escape(p1_u), json_escape(p1_c),
@@ -733,8 +807,16 @@ function handle_request(env)
         local purl = params.url or ""
         local pcmd = params.command or ""
 
-        os.execute(string.format("uci set audiopro_presets.%d.name='%s' 2>/dev/null; uci set audiopro_presets.%d.mode='%s' 2>/dev/null; uci set audiopro_presets.%d.url='%s' 2>/dev/null; uci set audiopro_presets.%d.command='%s' 2>/dev/null; uci commit audiopro_presets 2>/dev/null",
-            pid, string.gsub(pname, "'", "'\\''"), pid, string.gsub(pmode, "'", "'\\''"), pid, string.gsub(purl, "'", "'\\''"), pid, string.gsub(pcmd, "'", "'\\''")))
+        if uci_ctx then
+            uci_ctx:set("audiopro_presets", tostring(pid), "name", pname)
+            uci_ctx:set("audiopro_presets", tostring(pid), "mode", pmode)
+            uci_ctx:set("audiopro_presets", tostring(pid), "url", purl)
+            uci_ctx:set("audiopro_presets", tostring(pid), "command", pcmd)
+            uci_ctx:commit("audiopro_presets")
+        else
+            os.execute(string.format("uci set audiopro_presets.%d.name='%s' 2>/dev/null; uci set audiopro_presets.%d.mode='%s' 2>/dev/null; uci set audiopro_presets.%d.url='%s' 2>/dev/null; uci set audiopro_presets.%d.command='%s' 2>/dev/null; uci commit audiopro_presets 2>/dev/null",
+                pid, string.gsub(pname, "'", "'\\''"), pid, string.gsub(pmode, "'", "'\\''"), pid, string.gsub(purl, "'", "'\\''"), pid, string.gsub(pcmd, "'", "'\\''")))
+        end
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d updated"}', pid))
 
     elseif action == "reboot" then
