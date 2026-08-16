@@ -246,9 +246,8 @@ function handle_request(env)
     end
 
     -- Authentication Endpoints
-    local auth_conf = read_file("/etc/audiopro_auth") or ""
-    local auth_enabled = string.match(auth_conf, "AUTH_ENABLED=(%d+)") == "1"
-    local session_ttl = tonumber(string.match(auth_conf, "SESSION_TTL=(%d+)") or "604800") or 604800
+    local auth_enabled = uci_get("mcud.main.auth_enabled", "0") == "1"
+    local session_ttl = tonumber(uci_get("mcud.main.session_ttl", "604800")) or 604800
 
     if action == "login" then
         local u = params.username or "root"

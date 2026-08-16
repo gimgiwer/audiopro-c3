@@ -54,9 +54,8 @@ JSON_EOF
     command)
         if [ -n "$CMD" ]; then
             # SECURITY CHECK: Block execution if auth is disabled or commands are explicitly forbidden
-            AUTH_FILE="/etc/audiopro_auth"
-            ALLOW_CMD=$(grep "^ALLOW_CUSTOM_COMMANDS=" "$AUTH_FILE" 2>/dev/null | cut -d'=' -f2)
-            AUTH_EN=$(grep "^AUTH_ENABLED=" "$AUTH_FILE" 2>/dev/null | cut -d'=' -f2)
+            ALLOW_CMD=$(uci -q get mcud.main.allow_custom_commands || echo "0")
+            AUTH_EN=$(uci -q get mcud.main.auth_enabled || echo "0")
             
             if [ "$AUTH_EN" = "0" ]; then
                 echo "SECURITY ALERT: Preset command blocked! Cannot run scripts in passwordless (AUTH_ENABLED=0) mode." > /dev/console
