@@ -1849,16 +1849,17 @@
             </svg>
             <span>5-Band Graphic Equalizer</span>
           </div>
-          <span id="eqActivePresetBadge" class="status-pill" style="font-size:0.75rem; font-weight:700">Flat</span>
+          <span id="eqActivePresetBadge" class="status-pill" style="font-size:0.75rem; font-weight:700">Default</span>
         </div>
 
         <!-- Quick EQ Presets -->
         <div class="eq-preset-row" style="display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 16px 0;">
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Flat')">Flat</button>
+          <button type="button" class="btn-step-fine" style="font-weight:700;" onclick="setEqPreset('Default')">Default</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Audio Pro Signature')">Audio Pro C3</button>
           <button type="button" class="btn-step-fine" onclick="setEqPreset('Bass Boost')">Bass Boost</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Vocal')">Vocal Clarity</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Vocal')">Vocal</button>
           <button type="button" class="btn-step-fine" onclick="setEqPreset('Rock')">Rock</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Night')">Night / Loudness</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Night')">Night</button>
         </div>
 
         <!-- 5 Sliders: 60Hz, 250Hz, 1kHz, 4kHz, 12kHz -->
@@ -3453,7 +3454,8 @@
 
     // --- Equalizer & Presets 1..4 Actions Management ---
     const EQ_PRESETS = {
-      'Flat': { b60: 0, b250: 0, b1k: 0, b4k: 0, b12k: 0 },
+      'Default': { b60: 0, b250: 0, b1k: 0, b4k: 0, b12k: 0 },
+      'Audio Pro Signature': { b60: 2, b250: 1, b1k: 0, b4k: 1, b12k: 2 },
       'Bass Boost': { b60: 6, b250: 4, b1k: 0, b4k: 0, b12k: -1 },
       'Vocal': { b60: -2, b250: 1, b1k: 4, b4k: 2, b12k: 0 },
       'Rock': { b60: 5, b250: 2, b1k: -1, b4k: 3, b12k: 5 },
