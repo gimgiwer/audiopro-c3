@@ -22,13 +22,25 @@ mqtt_pub() {
     fi
 }
 
+create_pid_file() {
+    local tmp="/tmp/timer.pid.$$"
+    echo "$$" > "$tmp"
+    mv -f "$tmp" "$PID_FILE" 2>/dev/null || true
+}
+
 do_stop_ringing() {
     if [ -f "$RING_PID_FILE" ]; then
         local pids=$(cat "$RING_PID_FILE" 2>/dev/null)
-        for p in $pids; do
-            kill -9 "$p" 2>/dev/null || true
-        done
         rm -f "$RING_PID_FILE"
+        for p in $pids; do
+            [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
+        done
+    fi
+    local extra_pids=$(pgrep -f "aplay.*timer_in" 2>/dev/null)
+    if [ -n "$extra_pids" ]; then
+        for ep in $extra_pids; do
+            kill -9 "$ep" 2>/dev/null || true
+        done
     fi
     # Restore Alarm volume if Alarm was playing
     amixer -q -c 0 sset Alarm 100% 2>/dev/null || true
@@ -43,10 +55,10 @@ do_stop_ringing() {
 do_cancel() {
     if [ -f "$PID_FILE" ]; then
         local pids=$(cat "$PID_FILE" 2>/dev/null)
-        for p in $pids; do
-            kill -9 "$p" 2>/dev/null || true
-        done
         rm -f "$PID_FILE"
+        for p in $pids; do
+            [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
+        done
     fi
     do_stop_ringing
 }
@@ -56,7 +68,9 @@ do_ring() {
     local volume="$2"
     local ring_duration=60 # Ring up to 60 seconds
 
-    echo "$$" > "$RING_PID_FILE"
+    local tmp_ring="/tmp/timer_ring.pid.$$"
+    echo "$$" > "$tmp_ring"
+    mv -f "$tmp_ring" "$RING_PID_FILE" 2>/dev/null || true
     printf '{"active":false,"ringing":true,"remaining":0,"total":0,"name":"%s"}\n' "$TIMER_NAME" > "$STATE_FILE"
     mqtt_pub "timer/status" '{"active":false,"ringing":true,"remaining":0}'
 
@@ -94,7 +108,7 @@ do_start() {
     [ "$total_sec" -le 0 ] && exit 0
     do_cancel
 
-    echo "$$" > "$PID_FILE"
+    create_pid_file
     local start_ts=$(date +%s)
     local target_ts=$((start_ts + total_sec))
 
