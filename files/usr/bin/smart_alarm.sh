@@ -158,6 +158,39 @@ do_start() {
             fi
         fi
 
+        if [ "$sound_type" = "spotify" ]; then
+            local spot_uri=$(uci -q get mcud.alarm.spotify_uri || echo "spotify:track:4cOdK2wGLETKBW3PvgPWqT")
+            mqtt_pub "alarm/trigger_spotify" "{\"uri\":\"$spot_uri\",\"device\":\"Audio Pro C3\"}"
+            amixer -q -c 0 sset Spotify 100% 2>/dev/null || true
+            /usr/bin/player_control.sh resume spotify >/dev/null 2>&1 || true
+            
+            # Short intro gong while Spotify connects
+            aplay -q -D alarm_in /usr/share/sounds/bell.wav 2>/dev/null || true
+
+            local waited=0
+            local is_playing=0
+            while [ "$waited" -lt 6 ] && [ -f "$PID_FILE" ]; do
+                sleep 1
+                waited=$((waited + 1))
+                if [ -f /tmp/audiopro_meta.json ] && grep -q '"source": "spotify"' /tmp/audiopro_meta.json 2>/dev/null; then
+                    is_playing=1
+                    break
+                fi
+            done
+
+            # Reliable fallback chime if Spotify is offline or network fails
+            if [ "$is_playing" -eq 0 ] && [ -f "$PID_FILE" ]; then
+                while [ $(date +%s) -lt "$end_time" ] && [ -f "$PID_FILE" ]; do
+                    if [ -f "$sound_file" ]; then
+                        aplay -q -D alarm_in "$sound_file" 2>/dev/null || aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
+                    else
+                        aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
+                    fi
+                    sleep 0.5
+                done
+            fi
+        fi
+
         do_stop
     ) &
 }

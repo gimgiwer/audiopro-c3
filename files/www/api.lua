@@ -843,14 +843,15 @@ function handle_request(env)
         local a_stype = uci_get_val("mcud", "alarm", "sound_type", "chime")
         local a_sfile = uci_get_val("mcud", "alarm", "sound_file", "/usr/share/sounds/alarm_sharp.wav")
         local a_url = uci_get_val("mcud", "alarm", "stream_url", "http://icecast.vrtcdn.be/klara-high.mp3")
+        local a_suri = uci_get_val("mcud", "alarm", "spotify_uri", "spotify:track:4cOdK2wGLETKBW3PvgPWqT")
         local a_fade = tonumber(uci_get_val("mcud", "alarm", "fade_sec", "0")) or 0
         local a_dur = tonumber(uci_get_val("mcud", "alarm", "duration_min", "30")) or 30
         local a_snooze = tonumber(uci_get_val("mcud", "alarm", "snooze_min", "9")) or 9
         local is_active = (read_file("/tmp/alarm.pid") ~= nil)
 
-        local resp = string.format('{"status":"ok","alarm":{"enabled":%s,"time":"%s","days":"%s","target_volume":%d,"alarm_mode":"%s","sound_type":"%s","sound_file":"%s","stream_url":"%s","fade_sec":%d,"duration_min":%d,"snooze_min":%d,"active":%s}}',
+        local resp = string.format('{"status":"ok","alarm":{"enabled":%s,"time":"%s","days":"%s","target_volume":%d,"alarm_mode":"%s","sound_type":"%s","sound_file":"%s","stream_url":"%s","spotify_uri":"%s","fade_sec":%d,"duration_min":%d,"snooze_min":%d,"active":%s}}',
             (a_en == "1" and "true" or "false"), json_escape(a_time), json_escape(a_days), a_vol,
-            json_escape(a_mode), json_escape(a_stype), json_escape(a_sfile), json_escape(a_url),
+            json_escape(a_mode), json_escape(a_stype), json_escape(a_sfile), json_escape(a_url), json_escape(a_suri),
             a_fade, a_dur, a_snooze, (is_active and "true" or "false"))
         uhttpd.send(resp)
 
@@ -863,6 +864,7 @@ function handle_request(env)
         local a_stype = params.sound_type or "chime"
         local a_sfile = params.sound_file or "/usr/share/sounds/alarm_sharp.wav"
         local a_url = params.stream_url or "http://icecast.vrtcdn.be/klara-high.mp3"
+        local a_suri = params.spotify_uri or "spotify:track:4cOdK2wGLETKBW3PvgPWqT"
         local a_fade = tonumber(params.fade_sec or "0") or 0
         local a_dur = tonumber(params.duration_min or "30") or 30
         local a_snooze = tonumber(params.snooze_min or "9") or 9
@@ -876,15 +878,16 @@ function handle_request(env)
             uci_ctx:set("mcud", "alarm", "sound_type", a_stype)
             uci_ctx:set("mcud", "alarm", "sound_file", a_sfile)
             uci_ctx:set("mcud", "alarm", "stream_url", a_url)
+            uci_ctx:set("mcud", "alarm", "spotify_uri", a_suri)
             uci_ctx:set("mcud", "alarm", "fade_sec", tostring(a_fade))
             uci_ctx:set("mcud", "alarm", "duration_min", tostring(a_dur))
             uci_ctx:set("mcud", "alarm", "snooze_min", tostring(a_snooze))
             uci_ctx:commit("mcud")
         else
-            os.execute(string.format("uci set mcud.alarm.enabled='%s'; uci set mcud.alarm.time='%s'; uci set mcud.alarm.days='%s'; uci set mcud.alarm.target_volume='%d'; uci set mcud.alarm.alarm_mode='%s'; uci set mcud.alarm.sound_type='%s'; uci set mcud.alarm.sound_file='%s'; uci set mcud.alarm.stream_url='%s'; uci set mcud.alarm.fade_sec='%d'; uci set mcud.alarm.duration_min='%d'; uci set mcud.alarm.snooze_min='%d'; uci commit mcud 2>/dev/null",
+            os.execute(string.format("uci set mcud.alarm.enabled='%s'; uci set mcud.alarm.time='%s'; uci set mcud.alarm.days='%s'; uci set mcud.alarm.target_volume='%d'; uci set mcud.alarm.alarm_mode='%s'; uci set mcud.alarm.sound_type='%s'; uci set mcud.alarm.sound_file='%s'; uci set mcud.alarm.stream_url='%s'; uci set mcud.alarm.spotify_uri='%s'; uci set mcud.alarm.fade_sec='%d'; uci set mcud.alarm.duration_min='%d'; uci set mcud.alarm.snooze_min='%d'; uci commit mcud 2>/dev/null",
                 a_en, string.gsub(a_time, "'", "'\\''"), string.gsub(a_days, "'", "'\\''"), a_vol,
                 string.gsub(a_mode, "'", "'\\''"), string.gsub(a_stype, "'", "'\\''"), string.gsub(a_sfile, "'", "'\\''"),
-                string.gsub(a_url, "'", "'\\''"), a_fade, a_dur, a_snooze))
+                string.gsub(a_url, "'", "'\\''"), string.gsub(a_suri, "'", "'\\''"), a_fade, a_dur, a_snooze))
         end
         os.execute("/usr/bin/smart_alarm.sh sync_cron >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Smart alarm configuration saved"}')
