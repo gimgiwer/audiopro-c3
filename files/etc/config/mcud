@@ -1,4 +1,9 @@
 config mcud 'main'
+	# Security Settings
+	option auth_enabled '0'
+	option allow_custom_commands '0'
+	option session_ttl '604800'
+
 	option enabled '1'
 	option default_volume '25'
 	# Auto-sleep timeout in minutes when running on battery:

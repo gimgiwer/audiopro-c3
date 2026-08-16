@@ -1,4 +1,0 @@
-AUTH_ENABLED=0
-SESSION_TTL=604800
-# SECURITY: Allow RCE (eval) from presets. Set to 0 to block custom shell commands.
-ALLOW_CUSTOM_COMMANDS=0
