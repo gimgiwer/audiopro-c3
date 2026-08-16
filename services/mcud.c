@@ -86,17 +86,38 @@ static inline void safe_write(int fd, const void *buf, size_t count) {
     }
 }
 
+static int is_process_alive(const char *pidfile) {
+    if (!pidfile) return 0;
+    FILE *f = fopen(pidfile, "r");
+    if (!f) return 0;
+    pid_t pid = 0;
+    if (fscanf(f, "%d", &pid) != 1 || pid <= 1) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+    return (kill(pid, 0) == 0);
+}
+
 static void atomic_write_file(const char *path, const char *content) {
     if (!path || !content) return;
     char tmp_path[256];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d", path, (int)getpid());
     int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd >= 0) {
-        safe_write(fd, content, strlen(content));
-        close(fd);
-        rename(tmp_path, path);
+        size_t len = strlen(content);
+        ssize_t written = write(fd, content, len);
+        if (written == (ssize_t)len) {
+            fsync(fd);
+            close(fd);
+            rename(tmp_path, path);
+        } else {
+            close(fd);
+            unlink(tmp_path);
+        }
     }
 }
+
 
 static int uart_send(const char *cmd) {
     if (g_uart_fd < 0) {
@@ -508,10 +529,10 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+KEY+PLPA")) {
         mqtt_send_button("play_pause");
         /* Priority alert dismissal: Ringing Timer -> Active Alarm -> Normal Play/Pause toggle */
-        if (access("/tmp/timer_ring.pid", F_OK) == 0) {
+        if (is_process_alive("/tmp/timer_ring.pid")) {
             char *t_argv[] = {"/usr/bin/smart_timer.sh", "stop", NULL};
             spawn_async_cmd("/usr/bin/smart_timer.sh", t_argv);
-        } else if (access("/tmp/alarm.pid", F_OK) == 0) {
+        } else if (is_process_alive("/tmp/alarm.pid")) {
             char *a_argv[] = {"/usr/bin/smart_alarm.sh", "stop", NULL};
             spawn_async_cmd("/usr/bin/smart_alarm.sh", a_argv);
         } else {
@@ -521,6 +542,7 @@ static void process_mcu_command(const char *cmd) {
             if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
         }
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
+
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);
         if (preset >= 1 && preset <= 4) {

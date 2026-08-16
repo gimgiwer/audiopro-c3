@@ -102,9 +102,13 @@ end
 -- Strips all control characters (\r, \n, \0, ASCII 1-31, 127) and escapes single quotes
 local function sanitize_shell(s)
     if not s then return "" end
-    s = string.gsub(tostring(s), "[\r\n\0\x01-\x1f\x7f]", "")
-    return string.gsub(s, "'", "'\\''")
+    local ok, res = pcall(function()
+        local clean = string.gsub(tostring(s), "[\r\n\0\x01-\x1f\x7f]", "")
+        return string.gsub(clean, "'", "'\\''")
+    end)
+    return ok and res or ""
 end
+
 
 -- Fast Non-blocking UART Command Sender
 local function send_mcu(cmd)

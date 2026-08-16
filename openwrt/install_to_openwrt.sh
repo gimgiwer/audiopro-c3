@@ -51,11 +51,12 @@ define Device/audiopro_c3
                      shairport-sync-mbedtls librespot mpg123 squeezelite \
                      gmrender-resurrect snapclient baresip \
                      mosquitto-client-ssl zram-swap mcud \
-                     uhttpd uhttpd-mod-lua liblua libuci-lua iwinfo
+                     uhttpd uhttpd-mod-lua liblua libuci-lua iwinfo coreutils-base64
   SUPPORTED_DEVICES += audiopro,c3 linkplay,a28
 endef
 TARGET_DEVICES += audiopro_c3
 EOF
 fi
+
 
 echo "[*] Done! Audio Pro C3 BSP is fully installed into $OPENWRT_DIR"
