@@ -467,11 +467,118 @@ SEC_EOF
             echo "{\"status\":\"ok\",\"playing\":true}"
         fi
         ;;
+    get_presets)
+        P1_M=$(uci -q get audiopro_presets.1.mode 2>/dev/null || echo "ha")
+        P1_N=$(uci -q get audiopro_presets.1.name 2>/dev/null || echo "Preset 1")
+        P1_U=$(uci -q get audiopro_presets.1.url 2>/dev/null || echo "")
+        P1_C=$(uci -q get audiopro_presets.1.command 2>/dev/null || echo "")
+
+        P2_M=$(uci -q get audiopro_presets.2.mode 2>/dev/null || echo "ha")
+        P2_N=$(uci -q get audiopro_presets.2.name 2>/dev/null || echo "Preset 2")
+        P2_U=$(uci -q get audiopro_presets.2.url 2>/dev/null || echo "")
+        P2_C=$(uci -q get audiopro_presets.2.command 2>/dev/null || echo "")
+
+        P3_M=$(uci -q get audiopro_presets.3.mode 2>/dev/null || echo "ha")
+        P3_N=$(uci -q get audiopro_presets.3.name 2>/dev/null || echo "Preset 3")
+        P3_U=$(uci -q get audiopro_presets.3.url 2>/dev/null || echo "")
+        P3_C=$(uci -q get audiopro_presets.3.command 2>/dev/null || echo "")
+
+        P4_M=$(uci -q get audiopro_presets.4.mode 2>/dev/null || echo "ha")
+        P4_N=$(uci -q get audiopro_presets.4.name 2>/dev/null || echo "Preset 4")
+        P4_U=$(uci -q get audiopro_presets.4.url 2>/dev/null || echo "")
+        P4_C=$(uci -q get audiopro_presets.4.command 2>/dev/null || echo "")
+
+        echo "{\"status\":\"ok\",\"presets\":[{\"id\":1,\"name\":\"$P1_N\",\"mode\":\"$P1_M\",\"url\":\"$P1_U\",\"command\":\"$P1_C\"},{\"id\":2,\"name\":\"$P2_N\",\"mode\":\"$P2_M\",\"url\":\"$P2_U\",\"command\":\"$P2_C\"},{\"id\":3,\"name\":\"$P3_N\",\"mode\":\"$P3_M\",\"url\":\"$P3_U\",\"command\":\"$P3_C\"},{\"id\":4,\"name\":\"$P4_N\",\"mode\":\"$P4_M\",\"url\":\"$P4_U\",\"command\":\"$P4_C\"}]}"
+        ;;
+    save_presets)
+        PID_RAW=$(get_param id)
+        PID=$(printf "%d" "$PID_RAW" 2>/dev/null || echo 1)
+        [ "$PID" -lt 1 ] && PID=1
+        [ "$PID" -gt 4 ] && PID=4
+        
+        P_NAME_RAW=$(get_param name)
+        P_MODE_RAW=$(get_param mode)
+        P_URL_RAW=$(get_param url)
+        P_CMD_RAW=$(get_param command)
+        
+        P_NAME=$(urldecode "$P_NAME_RAW" | tr -cd "[:alnum:] _.,@#%+=/()[]!?-")
+        P_MODE=$(urldecode "$P_MODE_RAW" | tr -cd "a-zA-Z0-9_")
+        P_URL=$(urldecode "$P_URL_RAW")
+        P_CMD=$(urldecode "$P_CMD_RAW")
+        
+        [ -z "$P_NAME" ] && P_NAME="Preset $PID"
+        [ -z "$P_MODE" ] && P_MODE="ha"
+        
+        uci set audiopro_presets."$PID".name="$P_NAME" 2>/dev/null
+        uci set audiopro_presets."$PID".mode="$P_MODE" 2>/dev/null
+        uci set audiopro_presets."$PID".url="$P_URL" 2>/dev/null
+        uci set audiopro_presets."$PID".command="$P_CMD" 2>/dev/null
+        uci commit audiopro_presets 2>/dev/null
+        echo "{\"status\":\"ok\",\"message\":\"Preset $PID updated\"}"
+        ;;
+    get_eq)
+        EQ_FILE="/tmp/audiopro_eq.json"
+        if [ -f "$EQ_FILE" ]; then
+            cat "$EQ_FILE"
+        else
+            echo "{\"status\":\"ok\",\"b60\":0,\"b250\":0,\"b1k\":0,\"b4k\":0,\"b12k\":0,\"preset\":\"Flat\"}"
+        fi
+        ;;
+    save_eq)
+        B60=$(printf "%d" "$(get_param b60)" 2>/dev/null || echo 0)
+        B250=$(printf "%d" "$(get_param b250)" 2>/dev/null || echo 0)
+        B1K=$(printf "%d" "$(get_param b1k)" 2>/dev/null || echo 0)
+        B4K=$(printf "%d" "$(get_param b4k)" 2>/dev/null || echo 0)
+        B12K=$(printf "%d" "$(get_param b12k)" 2>/dev/null || echo 0)
+        EQ_PRE_RAW=$(get_param preset)
+        EQ_PRE=$(urldecode "$EQ_PRE_RAW" | tr -cd "[:alnum:] _-")
+        [ -z "$EQ_PRE" ] && EQ_PRE="Custom"
+        
+        cat << EQ_EOF > /tmp/audiopro_eq.json
+{"status":"ok","b60":$B60,"b250":$B250,"b1k":$B1K,"b4k":$B4K,"b12k":$B12K,"preset":"$EQ_PRE"}
+EQ_EOF
+        echo "{\"status\":\"ok\",\"message\":\"Equalizer updated\",\"preset\":\"$EQ_PRE\"}"
+        ;;
+    tts|tts_duck)
+        TTS_URL_RAW=$(get_param url)
+        TTS_URL=$(urldecode "$TTS_URL_RAW")
+        if [ -n "$TTS_URL" ]; then
+            (/usr/bin/ha_ducking.sh tts "$TTS_URL") >/dev/null 2>&1 &
+            echo "{\"status\":\"ok\",\"message\":\"TTS announcement queued\"}"
+        else
+            echo "{\"status\":\"error\",\"message\":\"URL parameter required\"}"
+        fi
+        ;;
+    play_stream)
+        STREAM_URL_RAW=$(get_param url)
+        STREAM_NAME_RAW=$(get_param name)
+        STREAM_URL=$(urldecode "$STREAM_URL_RAW")
+        STREAM_NAME=$(urldecode "$STREAM_NAME_RAW" | tr -cd "[:alnum:] _.,@#%+=/()[]!?-")
+        [ -z "$STREAM_NAME" ] && STREAM_NAME="Live Stream"
+        
+        if [ -n "$STREAM_URL" ]; then
+            killall -9 mpg123 madplay 2>/dev/null || true
+            cat << JSON_EOF > /tmp/audiopro_meta.json
+{"active":true,"source":"webradio","title":"$STREAM_NAME","artist":"Web Radio","album":"Direct Stream","playing":true,"artwork":false,"updated":$(date +%s)}
+JSON_EOF
+            if command -v mpg123 >/dev/null 2>&1; then
+                mpg123 -q -a music_in "$STREAM_URL" >/dev/null 2>&1 &
+            fi
+            echo "{\"status\":\"ok\",\"message\":\"Streaming started\",\"title\":\"$STREAM_NAME\"}"
+        else
+            echo "{\"status\":\"error\",\"message\":\"URL required\"}"
+        fi
+        ;;
+    stop_stream)
+        killall -9 mpg123 madplay 2>/dev/null || true
+        [ -f /tmp/audiopro_meta.json ] && sed -i 's/"playing": true/"playing": false/' /tmp/audiopro_meta.json 2>/dev/null || true
+        echo "{\"status\":\"ok\",\"message\":\"Streaming stopped\"}"
+        ;;
     reboot)
         (sleep 2 && reboot) >/dev/null 2>&1 &
         echo "{\"status\":\"ok\",\"message\":\"Rebooting...\"}"
         ;;
     *)
-        echo "{\"error\":\"unknown command\",\"usage\":\"?volume=50 | ?mute=1 | ?unmute=1 | ?input=wifi|bt|aux | ?status | ?action=get_config | ?action=save_ap | ?action=save_audio | ?action=save_mqtt | ?action=save_device | ?action=wifi_scan | ?action=wifi_connect | ?action=flash_firmware | ?action=check_firmware | ?action=get_security | ?action=save_security | ?action=player_play | ?action=player_pause | ?action=player_toggle | ?action=get_artwork\"}"
+        echo "{\"error\":\"unknown command\",\"usage\":\"?volume=50 | ?mute=1 | ?unmute=1 | ?input=wifi|bt|aux | ?status | ?action=get_config | ?action=get_presets | ?action=save_presets | ?action=get_eq | ?action=save_eq | ?action=save_ap | ?action=save_audio | ?action=save_mqtt | ?action=save_device | ?action=wifi_scan | ?action=wifi_connect | ?action=flash_firmware | ?action=check_firmware | ?action=get_security | ?action=save_security | ?action=player_play | ?action=player_pause | ?action=player_toggle | ?action=tts&url=... | ?action=play_stream&url=... | ?action=stop_stream\"}"
         ;;
 esac

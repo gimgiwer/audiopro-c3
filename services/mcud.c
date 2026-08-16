@@ -30,6 +30,7 @@
 #define SOUND_PRESET         "/usr/share/sounds/preset_saved.wav"
 #define SOUND_BT_CONN        "/usr/share/sounds/bt_connected.wav"
 #define SOUND_WIFI_CONN      "/usr/share/sounds/wifi_connected.wav"
+#define SOUND_LOW_BAT        "/usr/share/sounds/low_battery.wav"
 
 #define CMD_MCU_READY        "AXX+MCU+RDY\n"
 #define CMD_BOOT_DONE        "AXX+BOT+DON\n"
@@ -69,6 +70,7 @@ static int64_t  g_last_button_ms = 0;
 
 static time_t g_last_vol_pub_sec = 0;
 static int    g_pending_vol_pub = -1;
+static int    g_last_bat = 100;
 
 #define LOG_ERROR(fmt, ...) do { if (g_log_level >= LOG_LEVEL_ERROR) fprintf(stderr, "[mcud ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
 #define LOG_WARN(fmt, ...)  do { if (g_log_level >= LOG_LEVEL_WARN)  fprintf(stderr, "[mcud WARN] " fmt "\n", ##__VA_ARGS__); } while(0)
@@ -476,6 +478,9 @@ static void process_mcu_command(const char *cmd) {
             snprintf(buf, sizeof(buf), "preset:%d\n", preset);
             int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
             if (fd >= 0) { write(fd, buf, strlen(buf)); close(fd); }
+            char hcmd[64];
+            snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", preset);
+            system(hcmd);
         }
     } else if (strstr(cmd, "MCU+KEY+SRC")) {
         mqtt_send_button("source");
@@ -493,6 +498,14 @@ static void process_mcu_command(const char *cmd) {
         char val[16];
         snprintf(val, sizeof(val), "%d", bat);
         mqtt_send_sensor("battery", val);
+        if (bat <= 15 && g_last_bat > 15) {
+            LOG_WARN("Low battery threshold reached (%d%%)! Playing alert...", bat);
+            play_sound(SOUND_LOW_BAT);
+            mqtt_send_sensor("battery_alert", "low");
+        } else if (bat > 20 && g_last_bat <= 15) {
+            mqtt_send_sensor("battery_alert", "normal");
+        }
+        g_last_bat = bat;
         int fd = open("/tmp/battery_status", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
         if (fd >= 0) {
             write(fd, cmd, strlen(cmd));

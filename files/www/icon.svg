@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#18181b"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)"/>
+  <rect x="32" y="32" width="448" height="448" rx="100" fill="none" stroke="#27272a" stroke-width="8"/>
+  <!-- Speaker Cone -->
+  <circle cx="256" cy="276" r="140" fill="#121215" stroke="#3f3f46" stroke-width="12"/>
+  <circle cx="256" cy="276" r="85" fill="#1c1917" stroke="url(#accent)" stroke-width="8"/>
+  <circle cx="256" cy="276" r="40" fill="url(#accent)"/>
+  <!-- Top Tweeter -->
+  <circle cx="256" cy="96" r="32" fill="#18181b" stroke="#71717a" stroke-width="6"/>
+  <circle cx="256" cy="96" r="12" fill="#d4d4d8"/>
+</svg>
