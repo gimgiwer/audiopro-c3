@@ -36,6 +36,9 @@ stop_snapcast() {
 stop_dlna() {
     /etc/init.d/gmrender restart >/dev/null 2>&1
 }
+stop_alarm() {
+    /usr/bin/smart_alarm.sh stop >/dev/null 2>&1
+}
 
 kill_source() {
     case "$1" in
@@ -45,15 +48,17 @@ kill_source() {
         squeeze) stop_squeeze ;;
         snapcast) stop_snapcast ;;
         dlna) stop_dlna ;;
+        alarm) stop_alarm ;;
     esac
 }
 
 get_priority() {
     case "$1" in
-        dlna) echo "$PRIO_DLNA" ;;
+        alarm) echo "0" ;;
         snapcast) echo "$PRIO_SNAPCAST" ;;
-        spotify) echo "$PRIO_SPOTIFY" ;;
         airplay) echo "$PRIO_AIRPLAY" ;;
+        spotify) echo "$PRIO_SPOTIFY" ;;
+        dlna) echo "$PRIO_DLNA" ;;
         webradio) echo "$PRIO_WEBRADIO" ;;
         squeeze) echo "$PRIO_SQUEEZE" ;;
         *) echo "99" ;;
