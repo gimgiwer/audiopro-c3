@@ -2068,6 +2068,70 @@
         </div>
       </section>
 
+      <!-- Smart Countdown Timer Card -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('smartTimerSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+            </svg>
+            <span>Smart Countdown Timer</span>
+          </div>
+          <svg id="smartTimerSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="smartTimerSection" class="accordion-body">
+          <div class="helper-box">
+            Start countdown timer directly on the speaker with active MQTT broadcast and loud chime on completion.
+          </div>
+
+          <!-- Active Timer Banner -->
+          <div id="timerActiveBanner" style="display:none; background:rgba(0, 229, 255, 0.08); border:1px solid var(--accent); border-radius:var(--radius-md); padding:12px; margin-bottom:14px; text-align:center;">
+            <div id="timerActiveName" style="font-size:0.8rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em;">Timer Running</div>
+            <div id="timerActiveCountdown" style="font-size:2rem; font-weight:800; color:var(--accent); font-family:monospace; margin:4px 0;">00:00</div>
+            <button type="button" class="btn-primary" style="height:32px; background:var(--status-red); border-color:var(--status-red); margin-top:6px;" onclick="cancelTimer()">Cancel Timer</button>
+          </div>
+
+          <!-- Quick Timers -->
+          <div style="margin-bottom:14px;">
+            <label style="font-size:0.75rem; color:var(--text-secondary);">Quick Presets</label>
+            <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(60, '1 Min')">1m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(180, 'Tea / 3 Min')">3m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(300, 'Eggs / 5 Min')">5m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(600, '10 Min')">10m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(900, '15 Min')">15m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(1800, '30 Min')">30m</button>
+            </div>
+          </div>
+
+          <!-- Custom Timer Form -->
+          <form onsubmit="startCustomTimer(event)">
+            <div class="form-group" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:14px;">
+              <div>
+                <label style="font-size:0.75rem; color:var(--text-secondary);">Minutes</label>
+                <input type="number" id="timerMinutesInput" class="input-field" style="margin-top:4px;" min="0" max="999" value="5" required>
+              </div>
+              <div>
+                <label style="font-size:0.75rem; color:var(--text-secondary);">Seconds</label>
+                <input type="number" id="timerSecondsInput" class="input-field" style="margin-top:4px;" min="0" max="59" value="0">
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:14px;">
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Label / Name</label>
+              <input type="text" id="timerNameInput" class="input-field" style="margin-top:4px;" placeholder="e.g. Kitchen, Workout" value="Kitchen Timer">
+            </div>
+
+            <button type="submit" class="btn-primary" style="height:38px;">
+              <span>Start Timer</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
     </main>
 
     <!-- TAB 3: ADVANCED SETTINGS (GRANULAR CONTROLS) -->
@@ -3959,6 +4023,94 @@
         .catch(err => console.warn('Stop alarm error:', err));
     }
 
+    // --- Smart Countdown Timer Management ---
+    function formatTimerSeconds(sec) {
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    function quickStartTimer(seconds, name) {
+      haptic(20);
+      showToast(`Starting ${name} timer...`);
+      apiFetch(`/api?action=start_timer&seconds=${seconds}&name=${encodeURIComponent(name)}&volume=75`)
+        .then(res => res.json())
+        .then(d => {
+          showToast(d.message || 'Timer started');
+          pollTimerStatus();
+        })
+        .catch(() => showToast('Failed to start timer'));
+    }
+
+    function startCustomTimer(e) {
+      if (e) e.preventDefault();
+      haptic(20);
+      const min = parseInt(document.getElementById('timerMinutesInput') ? document.getElementById('timerMinutesInput').value : '5', 10) || 0;
+      const sec = parseInt(document.getElementById('timerSecondsInput') ? document.getElementById('timerSecondsInput').value : '0', 10) || 0;
+      const totalSec = (min * 60) + sec;
+      const name = document.getElementById('timerNameInput') ? document.getElementById('timerNameInput').value.trim() : 'Kitchen Timer';
+
+      if (totalSec <= 0) {
+        showToast('Please set a duration > 0');
+        return;
+      }
+
+      showToast(`Starting ${totalSec}s timer...`);
+      apiFetch(`/api?action=start_timer&seconds=${totalSec}&name=${encodeURIComponent(name)}&volume=75`)
+        .then(res => res.json())
+        .then(d => {
+          showToast(d.message || 'Timer started');
+          pollTimerStatus();
+        })
+        .catch(() => showToast('Failed to start timer'));
+    }
+
+    function cancelTimer() {
+      haptic(25);
+      showToast('Cancelling timer...');
+      apiFetch('/api?action=cancel_timer')
+        .then(res => res.json())
+        .then(() => {
+          const banner = document.getElementById('timerActiveBanner');
+          if (banner) banner.style.display = 'none';
+        })
+        .catch(err => console.warn('Cancel timer error:', err));
+    }
+
+    function pollTimerStatus() {
+      apiFetch('/api?action=get_timer')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok' && data.timer) {
+            const t = data.timer;
+            const banner = document.getElementById('timerActiveBanner');
+            const nameEl = document.getElementById('timerActiveName');
+            const countEl = document.getElementById('timerActiveCountdown');
+
+            if (t.active && t.remaining > 0) {
+              if (banner) {
+                banner.style.display = 'block';
+                banner.style.background = 'rgba(0, 229, 255, 0.08)';
+                banner.style.borderColor = 'var(--accent)';
+              }
+              if (nameEl) nameEl.textContent = `${t.name || 'Timer'} (${Math.ceil(t.total / 60)} min)`;
+              if (countEl) countEl.textContent = formatTimerSeconds(t.remaining);
+            } else if (t.ringing) {
+              if (banner) {
+                banner.style.display = 'block';
+                banner.style.background = 'rgba(239, 68, 68, 0.15)';
+                banner.style.borderColor = 'var(--status-red)';
+              }
+              if (nameEl) nameEl.textContent = `${t.name || 'Timer'} Finished! Ringing...`;
+              if (countEl) countEl.textContent = '00:00';
+            } else {
+              if (banner) banner.style.display = 'none';
+            }
+          }
+        })
+        .catch(err => console.warn('Get timer error:', err));
+    }
+
     // --- Firmware Upload & Flashing Logic ---
     function formatBytes(bytes) {
       if (bytes === 0) return '0 B';
@@ -4257,7 +4409,9 @@
       loadPresets();
       loadAlarmSettings();
       pollStatus();
+      pollTimerStatus();
       setInterval(pollStatus, 3000);
+      setInterval(pollTimerStatus, 1000);
     });
   </script>
 </body>
