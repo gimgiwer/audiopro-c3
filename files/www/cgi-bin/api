@@ -79,6 +79,19 @@ fi
 
 if [ "$AUTH_ENABLED" = "1" ]; then
     TOKEN=$(get_cookie ap_sid | tr -cd "a-f0-9")
+    if [ -z "$TOKEN" ]; then
+        # Check Authorization: Bearer <token> header
+        AUTH_HDR="${HTTP_AUTHORIZATION:-$HTTP_AUTH}"
+        if echo "$AUTH_HDR" | grep -iq "^Bearer "; then
+            TOKEN=$(echo "$AUTH_HDR" | awk '{print $2}' | tr -cd "a-f0-9")
+        fi
+    fi
+    if [ -z "$TOKEN" ]; then
+        # Check query parameter ?token=... or ?api_key=...
+        TOKEN=$(get_param token | tr -cd "a-f0-9")
+        [ -z "$TOKEN" ] && TOKEN=$(get_param api_key | tr -cd "a-f0-9")
+    fi
+
     SESS_FILE="/tmp/ap_sessions/$TOKEN"
     NOW=$(date +%s)
     UA="${HTTP_USER_AGENT:-unknown}"
