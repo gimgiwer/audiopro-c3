@@ -20,12 +20,15 @@ case "$MODE" in
             # Invoke Audio Arbiter
             /usr/bin/audio_arbiter.sh webradio
             
+            # Escape quotes to prevent JSON injection
+            E_NAME=$(echo "$NAME" | sed 's/"/\\"/g')
+            
             # Update Now Playing metadata
             cat << JSON_EOF > /tmp/audiopro_meta.json
 {
   "active": true,
   "source": "webradio",
-  "title": "$NAME",
+  "title": "$E_NAME",
   "artist": "Web Radio",
   "album": "Preset $PRESET",
   "playing": true,
@@ -50,7 +53,18 @@ JSON_EOF
         
     command)
         if [ -n "$CMD" ]; then
-            eval "$CMD" >/dev/null 2>&1 &
+            # SECURITY CHECK: Block execution if auth is disabled or commands are explicitly forbidden
+            AUTH_FILE="/etc/audiopro_auth"
+            ALLOW_CMD=$(grep "^ALLOW_CUSTOM_COMMANDS=" "$AUTH_FILE" 2>/dev/null | cut -d'=' -f2)
+            AUTH_EN=$(grep "^AUTH_ENABLED=" "$AUTH_FILE" 2>/dev/null | cut -d'=' -f2)
+            
+            if [ "$AUTH_EN" = "0" ]; then
+                echo "SECURITY ALERT: Preset command blocked! Cannot run scripts in passwordless (AUTH_ENABLED=0) mode." > /dev/console
+            elif [ "${ALLOW_CMD:-0}" != "1" ]; then
+                echo "SECURITY ALERT: Preset command blocked! ALLOW_CUSTOM_COMMANDS is 0." > /dev/console
+            else
+                eval "$CMD" >/dev/null 2>&1 &
+            fi
         fi
         ;;
         
