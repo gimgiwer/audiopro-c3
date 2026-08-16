@@ -74,41 +74,44 @@ verify_password() {
         if [ -n "$line" ]; then
             local stored
             stored=$(echo "$line" | cut -d: -f2)
-            if [ -z "$stored" ] || [ "$stored" = "*" ] || [ "$stored" = "!" ]; then
+            
+            # If a password hash is configured in shadow, it is authoritative
+            if [ -n "$stored" ] && [ "$stored" != "*" ] && [ "$stored" != "!" ]; then
+                local algo salt
+                algo=$(echo "$stored" | cut -d'$' -f2)
+                salt=$(echo "$stored" | cut -d'$' -f3)
+                
+                # Use openssl passwd if available
+                if command -v openssl >/dev/null 2>&1; then
+                    local computed=""
+                    if [ "$algo" = "1" ]; then
+                        computed=$(openssl passwd -1 -salt "$salt" "$p" 2>/dev/null)
+                    elif [ "$algo" = "5" ]; then
+                        computed=$(openssl passwd -5 -salt "$salt" "$p" 2>/dev/null)
+                    elif [ "$algo" = "6" ]; then
+                        computed=$(openssl passwd -6 -salt "$salt" "$p" 2>/dev/null)
+                    fi
+                    if [ -n "$computed" ] && [ "$computed" = "$stored" ]; then
+                        return 0
+                    fi
+                fi
+                
+                # Check via cryptpw / busybox
+                if command -v cryptpw >/dev/null 2>&1; then
+                    local computed
+                    computed=$(cryptpw -m "sha512" -S "$salt" "$p" 2>/dev/null)
+                    if [ "$computed" = "$stored" ]; then
+                        return 0
+                    fi
+                fi
+                
+                # Password hash was configured in shadow but verification failed -> reject
                 return 1
-            fi
-            
-            local algo salt
-            algo=$(echo "$stored" | cut -d'$' -f2)
-            salt=$(echo "$stored" | cut -d'$' -f3)
-            
-            # Use openssl passwd if available
-            if command -v openssl >/dev/null 2>&1; then
-                local computed=""
-                if [ "$algo" = "1" ]; then
-                    computed=$(openssl passwd -1 -salt "$salt" "$p" 2>/dev/null)
-                elif [ "$algo" = "5" ]; then
-                    computed=$(openssl passwd -5 -salt "$salt" "$p" 2>/dev/null)
-                elif [ "$algo" = "6" ]; then
-                    computed=$(openssl passwd -6 -salt "$salt" "$p" 2>/dev/null)
-                fi
-                if [ -n "$computed" ] && [ "$computed" = "$stored" ]; then
-                    return 0
-                fi
-            fi
-            
-            # Check via cryptpw / busybox
-            if command -v cryptpw >/dev/null 2>&1; then
-                local computed
-                computed=$(cryptpw -m "sha512" -S "$salt" "$p" 2>/dev/null)
-                if [ "$computed" = "$stored" ]; then
-                    return 0
-                fi
             fi
         fi
     fi
     
-    # If root account has no password set in shadow or dev mode fallback
+    # Initial setup fallback only when no password is set in /etc/shadow
     if [ "$u" = "root" ] && [ "$p" = "admin" ]; then
         return 0
     fi
