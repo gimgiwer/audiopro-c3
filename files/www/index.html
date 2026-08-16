@@ -6,6 +6,9 @@
   <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <title>Audio Pro Addon C3</title>
   <style>
     /* Dark Theme (Pure OLED Black with Minimal Sapphire Accents) */
@@ -1837,6 +1840,92 @@
         </div>
       </section>
 
+      <!-- 5-Band Equalizer & Acoustic Presets -->
+      <section class="card">
+        <div class="section-header">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M3 6h18M3 12h18M3 18h18M7 3v6M17 9v6M11 15v6"/>
+            </svg>
+            <span>5-Band Graphic Equalizer</span>
+          </div>
+          <span id="eqActivePresetBadge" class="status-pill" style="font-size:0.75rem; font-weight:700">Flat</span>
+        </div>
+
+        <!-- Quick EQ Presets -->
+        <div class="eq-preset-row" style="display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 16px 0;">
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Flat')">Flat</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Bass Boost')">Bass Boost</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Vocal')">Vocal Clarity</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Rock')">Rock</button>
+          <button type="button" class="btn-step-fine" onclick="setEqPreset('Night')">Night / Loudness</button>
+        </div>
+
+        <!-- 5 Sliders: 60Hz, 250Hz, 1kHz, 4kHz, 12kHz -->
+        <div class="eq-sliders-grid" style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; text-align:center; padding:8px 0;">
+          <div class="eq-col">
+            <span class="eq-val" id="eqVal60" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
+              <input type="range" id="eqBand60" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+            </div>
+            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">60 Hz</span>
+          </div>
+          <div class="eq-col">
+            <span class="eq-val" id="eqVal250" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
+              <input type="range" id="eqBand250" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+            </div>
+            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">250 Hz</span>
+          </div>
+          <div class="eq-col">
+            <span class="eq-val" id="eqVal1k" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
+              <input type="range" id="eqBand1k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+            </div>
+            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">1 kHz</span>
+          </div>
+          <div class="eq-col">
+            <span class="eq-val" id="eqVal4k" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
+              <input type="range" id="eqBand4k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+            </div>
+            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">4 kHz</span>
+          </div>
+          <div class="eq-col">
+            <span class="eq-val" id="eqVal12k" style="font-size:0.75rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
+            <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
+              <input type="range" id="eqBand12k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:8px; height:110px;" oninput="onEqSliderChange()">
+            </div>
+            <span style="font-size:0.75rem; font-weight:700; color:var(--accent)">12 kHz</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Hardware Buttons 1..4 Actions Configurator -->
+      <section class="card">
+        <div class="accordion-header" onclick="toggleAccordion('presetActionsSection')">
+          <div class="section-title">
+            <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+              <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/>
+            </svg>
+            <span>Preset Buttons (1..4) Actions</span>
+          </div>
+          <svg id="presetActionsSectionChevron" class="toggle-chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+
+        <div id="presetActionsSection" class="accordion-body">
+          <div class="helper-box">
+            Bind physical top-panel buttons 1..4 to Home Assistant automations, autonomous Web Radio stations, Spotify, or shell scripts.
+          </div>
+
+          <div id="presetItemsContainer" style="display:flex; flex-direction:column; gap:12px;">
+            <!-- Rendered dynamically by JS -->
+          </div>
+        </div>
+      </section>
+
     </main>
 
     <!-- TAB 3: ADVANCED SETTINGS (GRANULAR CONTROLS) -->
@@ -3362,6 +3451,174 @@
         .catch(() => showToast('Failed to save MQTT'));
     }
 
+    // --- Equalizer & Presets 1..4 Actions Management ---
+    const EQ_PRESETS = {
+      'Flat': { b60: 0, b250: 0, b1k: 0, b4k: 0, b12k: 0 },
+      'Bass Boost': { b60: 6, b250: 4, b1k: 0, b4k: 0, b12k: -1 },
+      'Vocal': { b60: -2, b250: 1, b1k: 4, b4k: 2, b12k: 0 },
+      'Rock': { b60: 5, b250: 2, b1k: -1, b4k: 3, b12k: 5 },
+      'Night': { b60: 4, b250: 2, b1k: -2, b4k: 1, b12k: 3 }
+    };
+
+    let eqDebounceTimer = null;
+
+    function loadEq() {
+      apiFetch('/cgi-bin/api?action=get_eq')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') {
+            const b60 = document.getElementById('eqBand60');
+            const b250 = document.getElementById('eqBand250');
+            const b1k = document.getElementById('eqBand1k');
+            const b4k = document.getElementById('eqBand4k');
+            const b12k = document.getElementById('eqBand12k');
+            if (b60) b60.value = data.b60 || 0;
+            if (b250) b250.value = data.b250 || 0;
+            if (b1k) b1k.value = data.b1k || 0;
+            if (b4k) b4k.value = data.b4k || 0;
+            if (b12k) b12k.value = data.b12k || 0;
+            updateEqLabels();
+            const badge = document.getElementById('eqActivePresetBadge');
+            if (badge) badge.textContent = data.preset || 'Flat';
+          }
+        })
+        .catch(err => console.warn('Get EQ error:', err));
+    }
+
+    function updateEqLabels() {
+      const b60 = document.getElementById('eqBand60');
+      const b250 = document.getElementById('eqBand250');
+      const b1k = document.getElementById('eqBand1k');
+      const b4k = document.getElementById('eqBand4k');
+      const b12k = document.getElementById('eqBand12k');
+      if (!b60) return;
+
+      const v60 = b60.value, v250 = b250.value, v1k = b1k.value, v4k = b4k.value, v12k = b12k.value;
+      const l60 = document.getElementById('eqVal60'), l250 = document.getElementById('eqVal250'), l1k = document.getElementById('eqVal1k'), l4k = document.getElementById('eqVal4k'), l12k = document.getElementById('eqVal12k');
+      if (l60) l60.textContent = `${v60 > 0 ? '+' : ''}${v60} dB`;
+      if (l250) l250.textContent = `${v250 > 0 ? '+' : ''}${v250} dB`;
+      if (l1k) l1k.textContent = `${v1k > 0 ? '+' : ''}${v1k} dB`;
+      if (l4k) l4k.textContent = `${v4k > 0 ? '+' : ''}${v4k} dB`;
+      if (l12k) l12k.textContent = `${v12k > 0 ? '+' : ''}${v12k} dB`;
+    }
+
+    function onEqSliderChange() {
+      updateEqLabels();
+      const badge = document.getElementById('eqActivePresetBadge');
+      if (badge) badge.textContent = 'Custom';
+      clearTimeout(eqDebounceTimer);
+      eqDebounceTimer = setTimeout(() => saveEq('Custom'), 300);
+    }
+
+    function setEqPreset(name) {
+      if (!EQ_PRESETS[name]) return;
+      const p = EQ_PRESETS[name];
+      const b60 = document.getElementById('eqBand60'), b250 = document.getElementById('eqBand250'), b1k = document.getElementById('eqBand1k'), b4k = document.getElementById('eqBand4k'), b12k = document.getElementById('eqBand12k');
+      if (b60) b60.value = p.b60;
+      if (b250) b250.value = p.b250;
+      if (b1k) b1k.value = p.b1k;
+      if (b4k) b4k.value = p.b4k;
+      if (b12k) b12k.value = p.b12k;
+      updateEqLabels();
+      const badge = document.getElementById('eqActivePresetBadge');
+      if (badge) badge.textContent = name;
+      saveEq(name);
+    }
+
+    function saveEq(presetName) {
+      const b60 = document.getElementById('eqBand60') ? document.getElementById('eqBand60').value : 0;
+      const b250 = document.getElementById('eqBand250') ? document.getElementById('eqBand250').value : 0;
+      const b1k = document.getElementById('eqBand1k') ? document.getElementById('eqBand1k').value : 0;
+      const b4k = document.getElementById('eqBand4k') ? document.getElementById('eqBand4k').value : 0;
+      const b12k = document.getElementById('eqBand12k') ? document.getElementById('eqBand12k').value : 0;
+      const pre = presetName || (document.getElementById('eqActivePresetBadge') ? document.getElementById('eqActivePresetBadge').textContent : 'Flat');
+
+      const params = `action=save_eq&b60=${b60}&b250=${b250}&b1k=${b1k}&b4k=${b4k}&b12k=${b12k}&preset=${encodeURIComponent(pre)}`;
+      apiFetch(`/cgi-bin/api?${params}`)
+        .then(res => res.json())
+        .catch(err => console.warn('Save EQ error:', err));
+    }
+
+    function loadPresets() {
+      apiFetch('/cgi-bin/api?action=get_presets')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok' && data.presets) {
+            renderPresetsList(data.presets);
+          }
+        })
+        .catch(err => console.warn('Get presets error:', err));
+    }
+
+    function renderPresetsList(presets) {
+      const container = document.getElementById('presetItemsContainer');
+      if (!container) return;
+      container.innerHTML = '';
+
+      presets.forEach(p => {
+        const item = document.createElement('div');
+        item.className = 'preset-action-item';
+        item.style.cssText = 'background:var(--bg-input); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:12px; display:flex; flex-direction:column; gap:8px;';
+
+        item.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="font-size:0.9rem; color:var(--text-primary);">Preset ${p.id}</strong>
+            <button type="button" class="btn-step-fine" onclick="savePresetItem(${p.id})">Save</button>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            <div>
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Action Mode</label>
+              <select id="pMode_${p.id}" class="input-field" style="margin-top:4px;" onchange="onPresetModeChange(${p.id})">
+                <option value="ha" ${p.mode === 'ha' ? 'selected' : ''}>Home Assistant (MQTT)</option>
+                <option value="radio" ${p.mode === 'radio' ? 'selected' : ''}>Web Radio Stream</option>
+                <option value="spotify" ${p.mode === 'spotify' ? 'selected' : ''}>Spotify Trigger</option>
+                <option value="command" ${p.mode === 'command' ? 'selected' : ''}>Shell Command</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Station / Name</label>
+              <input type="text" id="pName_${p.id}" class="input-field" style="margin-top:4px;" value="${p.name || 'Preset ' + p.id}">
+            </div>
+          </div>
+          <div id="pTargetWrap_${p.id}" style="${p.mode === 'ha' ? 'display:none;' : ''}">
+            <label style="font-size:0.75rem; color:var(--text-secondary);">Stream URL / Command</label>
+            <input type="text" id="pTarget_${p.id}" class="input-field" style="margin-top:4px;" placeholder="http://... or /usr/bin/..." value="${p.url || p.command || ''}">
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function onPresetModeChange(id) {
+      const select = document.getElementById(`pMode_${id}`);
+      const wrap = document.getElementById(`pTargetWrap_${id}`);
+      if (select && wrap) {
+        wrap.style.display = (select.value === 'ha') ? 'none' : 'block';
+      }
+    }
+
+    function savePresetItem(id) {
+      haptic(20);
+      const nameEl = document.getElementById(`pName_${id}`);
+      const modeEl = document.getElementById(`pMode_${id}`);
+      const targetEl = document.getElementById(`pTarget_${id}`);
+      const name = nameEl ? nameEl.value.trim() : `Preset ${id}`;
+      const mode = modeEl ? modeEl.value : 'ha';
+      const target = targetEl ? targetEl.value.trim() : '';
+
+      let params = `action=save_presets&id=${id}&name=${encodeURIComponent(name)}&mode=${mode}`;
+      if (mode === 'radio') {
+        params += `&url=${encodeURIComponent(target)}`;
+      } else if (mode === 'command') {
+        params += `&command=${encodeURIComponent(target)}`;
+      }
+
+      apiFetch(`/cgi-bin/api?${params}`)
+        .then(res => res.json())
+        .then(d => showToast(d.message || `Preset ${id} saved`))
+        .catch(() => showToast(`Failed to save Preset ${id}`));
+    }
+
     // --- Firmware Upload & Flashing Logic ---
     function formatBytes(bytes) {
       if (bytes === 0) return '0 B';
@@ -3656,6 +3913,8 @@
       renderBattery(state.battery);
       renderSource(state.source);
       checkAuth();
+      loadEq();
+      loadPresets();
       pollStatus();
       setInterval(pollStatus, 3000);
     });

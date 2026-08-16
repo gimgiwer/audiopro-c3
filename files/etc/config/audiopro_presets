@@ -1,0 +1,23 @@
+config preset '1'
+	option name 'Preset 1'
+	option mode 'ha'
+	option url ''
+	option command ''
+
+config preset '2'
+	option name 'Preset 2'
+	option mode 'ha'
+	option url ''
+	option command ''
+
+config preset '3'
+	option name 'Preset 3'
+	option mode 'ha'
+	option url ''
+	option command ''
+
+config preset '4'
+	option name 'Preset 4'
+	option mode 'ha'
+	option url ''
+	option command ''
