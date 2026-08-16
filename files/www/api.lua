@@ -18,10 +18,13 @@ local function write_file(path, content)
     local tmp_path = path .. ".tmp." .. tostring(os.time()) .. tostring(math.random(100, 999))
     local f = io.open(tmp_path, "w")
     if not f then return false end
-    f:write(content)
+    local ok = f:write(content)
     f:close()
-    os.rename(tmp_path, path)
-    return true
+    if not ok then
+        os.remove(tmp_path)
+        return false
+    end
+    return os.rename(tmp_path, path)
 end
 
 -- Cryptographically secure session token generation
