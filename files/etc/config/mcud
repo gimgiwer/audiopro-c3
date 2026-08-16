@@ -25,7 +25,9 @@ config mcud 'main'
 	option arbiter_policy 'priority'
 	
 	# Priorities (Lower number = higher priority)
-	option prio_webradio '1'
-	option prio_spotify '2'
-	option prio_airplay '3'
-	option prio_squeeze '4'
+	option prio_snapcast '1'
+	option prio_airplay '2'
+	option prio_spotify '3'
+	option prio_dlna '4'
+	option prio_webradio '5'
+	option prio_squeeze '6'
