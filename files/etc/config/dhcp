@@ -13,13 +13,14 @@ config dnsmasq
 	option localservice '1'
 	option ednspacket_max '1232'
 
-# Dedicated DHCP server for Wi-Fi AP hotspot (hands out 192.168.8.100 - 192.168.8.150)
+# Dedicated DHCP server for Wi-Fi AP hotspot (hands out 10.10.10.100 - 10.10.10.200)
 config dhcp 'ap'
 	option interface 'ap'
 	option start '100'
-	option limit '50'
+	option limit '100'
 	option leasetime '1h'
 	option dhcpv4 'server'
+
 
 # Ethernet LAN: No DHCP server (speaker is a client on the home network)
 config dhcp 'lan'

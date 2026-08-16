@@ -11,10 +11,10 @@ uci -q delete network.lan.ipaddr
 uci -q delete network.lan.netmask
 uci -q delete network.lan.ip6assign
 
-# Configure dedicated Wi-Fi AP Hotspot interface (192.168.8.1 with DHCP server)
+# Configure dedicated Wi-Fi AP Hotspot interface (10.10.10.254/24 with DHCP server)
 uci set network.ap=interface
 uci set network.ap.proto='static'
-uci set network.ap.ipaddr='192.168.8.1'
+uci set network.ap.ipaddr='10.10.10.254'
 uci set network.ap.netmask='255.255.255.0'
 uci commit network 2>/dev/null
 
@@ -22,15 +22,16 @@ uci commit network 2>/dev/null
 uci set wireless.ap_iface.network='ap'
 uci commit wireless 2>/dev/null
 
-# Dedicated DHCP server on 'ap' interface; disabled on Ethernet 'lan'
+# Dedicated DHCP server on 'ap' interface (10.10.10.100 - 10.10.10.200); disabled on Ethernet 'lan'
 uci set dhcp.ap=dhcp
 uci set dhcp.ap.interface='ap'
 uci set dhcp.ap.start='100'
-uci set dhcp.ap.limit='50'
+uci set dhcp.ap.limit='100'
 uci set dhcp.ap.leasetime='1h'
 uci set dhcp.ap.dhcpv4='server'
 uci set dhcp.lan.ignore='1'
 uci commit dhcp 2>/dev/null
+
 
 # Add 'ap' to firewall lan zone
 uci -q del_list firewall.@zone[0].network='ap'
