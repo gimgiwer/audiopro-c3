@@ -30,8 +30,12 @@ do_stop_ringing() {
         done
         rm -f "$RING_PID_FILE"
     fi
+    # Restore Alarm volume if Alarm was playing
     amixer -q -c 0 sset Alarm 100% 2>/dev/null || true
-    /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
+    # Only resume background players if alarm is not actively ringing
+    if [ ! -f /tmp/alarm.pid ]; then
+        /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
+    fi
     printf '{"active":false,"ringing":false,"remaining":0,"total":0,"name":""}\n' > "$STATE_FILE"
     mqtt_pub "timer/status" '{"active":false,"ringing":false,"remaining":0}'
 }
@@ -61,14 +65,19 @@ do_ring() {
     if [ -p /tmp/mcu_cmd_fifo ]; then
         printf "AXX+VOL+%03d\n" "$volume" > /tmp/mcu_cmd_fifo 2>/dev/null || true
     fi
-    amixer -q -c 0 sset Alarm 100% 2>/dev/null || true
+
+    # Priority Ducking: If alarm is currently active, duck it to 25% so timer is crystal clear
+    if [ -f /tmp/alarm.pid ]; then
+        amixer -q -c 0 sset Alarm 25% 2>/dev/null || true
+    fi
+    amixer -q -c 0 sset Timer 100% 2>/dev/null || true
 
     local end_ring=$(($(date +%s) + ring_duration))
     while [ $(date +%s) -lt "$end_ring" ] && [ -f "$RING_PID_FILE" ]; do
         if [ -f "$sound_file" ]; then
-            aplay -q -D alarm_in "$sound_file" 2>/dev/null || aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
+            aplay -q -D timer_in "$sound_file" 2>/dev/null || aplay -q -D timer_in /usr/share/sounds/timer_sharp.wav 2>/dev/null || true
         else
-            aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
+            aplay -q -D timer_in /usr/share/sounds/timer_sharp.wav 2>/dev/null || true
         fi
         sleep 0.4
     done

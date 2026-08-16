@@ -210,7 +210,7 @@ static void alsa_reset_softvol_to_max(void) {
         return;
     }
 
-    const char *names[] = {"Spotify", "AirPlay", "Music", "Notification", "Squeeze", "TTS", "VoIP", NULL};
+    const char *names[] = {"Spotify", "AirPlay", "Music", "Notification", "Squeeze", "TTS", "VoIP", "Alarm", "Timer", NULL};
     snd_mixer_selem_id_t *sid;
     snd_mixer_selem_id_alloca(&sid);
 
@@ -486,8 +486,16 @@ static void process_mcu_command(const char *cmd) {
         adjust_hardware_volume(-VOL_STEP_PERCENT);
     } else if (strstr(cmd, "MCU+KEY+PLPA")) {
         mqtt_send_button("play_pause");
-        int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-        if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
+        /* Priority alert dismissal: Ringing Timer -> Active Alarm -> Normal Play/Pause toggle */
+        if (access("/tmp/timer_ring.pid", F_OK) == 0) {
+            (void)!system("/usr/bin/smart_timer.sh stop >/dev/null 2>&1 &");
+        } else if (access("/tmp/alarm.pid", F_OK) == 0) {
+            (void)!system("/usr/bin/smart_alarm.sh stop >/dev/null 2>&1 &");
+        } else {
+            (void)!system("/usr/bin/player_control.sh toggle all >/dev/null 2>&1 &");
+            int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
+            if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
+        }
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);
