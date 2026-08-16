@@ -1553,12 +1553,6 @@
           </svg>
         </button>
 
-        <!-- Connection Status Badge -->
-        <div id="connectionBadge" class="connection-badge" title="Connection Status">
-          <div class="status-dot pulsing"></div>
-          <span id="connectionText">Online</span>
-        </div>
-
         <!-- Battery Indicator -->
         <div class="battery-widget" title="Battery Status">
           <svg class="battery-svg" viewBox="0 0 24 12" xmlns="http://www.w3.org/2000/svg">
@@ -3177,12 +3171,8 @@
 
     // Render connection state
     function renderConnection(isOnline) {
-      if (isOnline) {
-        el.connectionBadge.className = 'connection-badge';
-        el.connectionText.textContent = 'Online';
-      } else {
-        el.connectionBadge.className = 'connection-badge reconnecting';
-        el.connectionText.textContent = 'Reconnecting...';
+      if (!isOnline && state.failedPolls === 3) {
+        showToast('Connecting to speaker...');
       }
     }
 
