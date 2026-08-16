@@ -22,7 +22,7 @@ config mcud 'main'
 	#   mix      = No restrictions, ALSA dmix merges all streams simultaneously
 	#   lifo     = Last In Wins (new stream completely stops previous ones)
 	#   priority = Strict priority hierarchy, higher priority interrupts lower
-	option arbiter_policy 'lifo'
+	option arbiter_policy 'priority'
 	
 	# Priorities (Lower number = higher priority)
 	option prio_webradio '1'

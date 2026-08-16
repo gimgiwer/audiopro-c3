@@ -48,41 +48,57 @@ get_priority() {
     esac
 }
 
-# If policy is mix/unlimited, do nothing
+# Qwen Max Optimized Slot Strategy (Hard Limit: 2 + TTS)
+# Slot 0 (TTS/Alerts) - Managed separately via Ducking
+# Slot 1 (Medium Prio): Spotify, AirPlay
+# Slot 2 (Low Prio): WebRadio, Squeeze
+
+check_immortal() {
+    local source=$1
+    if [ -f "$META_JSON" ]; then
+        # Check if the active stream has immortal flag set to true
+        if grep -q '"source": *"'"$source"'"' "$META_JSON" && grep -q '"immortal": *true' "$META_JSON"; then
+            return 0 # True, immortal
+        fi
+    fi
+    return 1 # False
+}
+
 if [ "$POLICY" = "mix" ]; then
     exit 0
 fi
 
-if [ "$POLICY" = "lifo" ]; then
-    # Last In Wins: kill everything else
-    [ "$NEW_SOURCE" != "spotify" ] && stop_spotify
-    [ "$NEW_SOURCE" != "airplay" ] && stop_airplay
-    [ "$NEW_SOURCE" != "webradio" ] && stop_webradio
-    [ "$NEW_SOURCE" != "squeeze" ] && stop_squeeze
-    exit 0
-fi
-
-if [ "$POLICY" = "priority" ]; then
-    # Get currently active source from JSON
+if [ "$POLICY" = "priority" ] || [ "$POLICY" = "lifo" ]; then
     ACTIVE_SOURCE=""
     if [ -f "$META_JSON" ] && grep -q '"playing": true' "$META_JSON"; then
         ACTIVE_SOURCE=$(grep '"source":' "$META_JSON" | sed -n 's/.*"source": *"\([^"]*\)".*/\1/p')
     fi
     
-    # If no active source or it's the same, let it play
-    if [ -z "$ACTIVE_SOURCE" ] || [ "$ACTIVE_SOURCE" = "$NEW_SOURCE" ]; then
-        exit 0
-    fi
+    [ -z "$ACTIVE_SOURCE" ] && exit 0
+    [ "$ACTIVE_SOURCE" = "$NEW_SOURCE" ] && exit 0
     
     NEW_PRIO=$(get_priority "$NEW_SOURCE")
     ACT_PRIO=$(get_priority "$ACTIVE_SOURCE")
     
-    if [ "$NEW_PRIO" -le "$ACT_PRIO" ]; then
-        # New source is higher or equal priority -> Kill active source
-        kill_source "$ACTIVE_SOURCE"
-    else
-        # New source is lower priority -> Kill new source to prevent it from interrupting
-        kill_source "$NEW_SOURCE"
+    # If active source is Immortal, do NOT kill it if it's equal or higher priority
+    # (Immortal does not protect against STRICTLY HIGHER priority like TTS, but protects against LIFO/peers)
+    if check_immortal "$ACTIVE_SOURCE"; then
+        if [ "$NEW_PRIO" -ge "$ACT_PRIO" ]; then
+            # New is lower or equal prio -> kill new source, protect the immortal one
+            kill_source "$NEW_SOURCE"
+            exit 0
+        fi
     fi
-    exit 0
+    
+    if [ "$POLICY" = "priority" ]; then
+        if [ "$NEW_PRIO" -le "$ACT_PRIO" ]; then
+            kill_source "$ACTIVE_SOURCE"
+        else
+            kill_source "$NEW_SOURCE"
+        fi
+    elif [ "$POLICY" = "lifo" ]; then
+        # Last In Wins (unless immortal handled above)
+        kill_source "$ACTIVE_SOURCE"
+    fi
 fi
+
