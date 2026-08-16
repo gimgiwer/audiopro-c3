@@ -564,7 +564,7 @@ EQ_EOF
 {"active":true,"source":"webradio","title":"$STREAM_NAME","artist":"Web Radio","album":"Direct Stream","playing":true,"artwork":false,"updated":$(date +%s)}
 JSON_EOF
             if command -v mpg123 >/dev/null 2>&1; then
-                mpg123 -q -a music_in "$STREAM_URL" >/dev/null 2>&1 &
+                mpg123 -q -a music_in -- "$STREAM_URL" >/dev/null 2>&1 &
             fi
             echo "{\"status\":\"ok\",\"message\":\"Streaming started\",\"title\":\"$STREAM_NAME\"}"
         else

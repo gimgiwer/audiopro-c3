@@ -118,12 +118,19 @@ static void play_sound(const char *path) {
     }
 }
 
+static inline void safe_write(int fd, const void *buf, size_t count) {
+    if (fd >= 0 && buf && count > 0) {
+        ssize_t ret = write(fd, buf, count);
+        (void)ret;
+    }
+}
+
 static void watchdog_ping(void) {
     if (g_wdt_fd < 0) {
         g_wdt_fd = open("/dev/watchdog", O_WRONLY | O_NONBLOCK);
     }
     if (g_wdt_fd >= 0) {
-        write(g_wdt_fd, "1", 1);
+        safe_write(g_wdt_fd, "1", 1);
     }
 }
 
@@ -159,7 +166,7 @@ static void graceful_shutdown(void) {
     LOG_INFO("Initiating graceful shutdown of audio services and system...");
 
     /* Stop streaming processes first */
-    system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
+    (void)!system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
     usleep(300000);
 
     /* Mute amplifier */
@@ -175,7 +182,7 @@ static void graceful_shutdown(void) {
     }
 
     sync();
-    system("/sbin/poweroff");
+    (void)!system("/sbin/poweroff");
 }
 
 /* Ensure ALSA software volume controls are pegged to 100% (0 dB bit-perfect pass-through) */
@@ -264,7 +271,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             uart_send(CMD_MUTE);
         } else if (strcasecmp(payload, "TOGGLE") == 0) {
             int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-            if (fd >= 0) { write(fd, "toggle\n", 7); close(fd); }
+            if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
         }
     } else if (strcmp(msg->topic, vol_topic) == 0) {
         g_last_activity_time = time(NULL);
@@ -428,8 +435,8 @@ static void set_audio_source(int source) {
     mqtt_send_sensor("source", src_name);
     int fd = open("/tmp/audio_source", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
     if (fd >= 0) {
-        write(fd, src_name, strlen(src_name));
-        write(fd, "\n", 1);
+        safe_write(fd, src_name, strlen(src_name));
+        safe_write(fd, "\n", 1);
         close(fd);
     }
 
@@ -466,7 +473,7 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+KEY+PLPA")) {
         mqtt_send_button("play_pause");
         int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-        if (fd >= 0) { write(fd, "toggle\n", 7); close(fd); }
+        if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);
@@ -477,10 +484,10 @@ static void process_mcu_command(const char *cmd) {
             play_sound(SOUND_PRESET);
             snprintf(buf, sizeof(buf), "preset:%d\n", preset);
             int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-            if (fd >= 0) { write(fd, buf, strlen(buf)); close(fd); }
+            if (fd >= 0) { safe_write(fd, buf, strlen(buf)); close(fd); }
             char hcmd[64];
             snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", preset);
-            system(hcmd);
+            (void)!system(hcmd);
         }
     } else if (strstr(cmd, "MCU+KEY+SRC")) {
         mqtt_send_button("source");
@@ -508,8 +515,8 @@ static void process_mcu_command(const char *cmd) {
         g_last_bat = bat;
         int fd = open("/tmp/battery_status", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
         if (fd >= 0) {
-            write(fd, cmd, strlen(cmd));
-            write(fd, "\n", 1);
+            safe_write(fd, cmd, strlen(cmd));
+            safe_write(fd, "\n", 1);
             close(fd);
         }
     } else if (strstr(cmd, "MCU+POW+OFF")) {
