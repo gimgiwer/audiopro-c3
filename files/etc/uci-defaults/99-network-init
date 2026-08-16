@@ -10,11 +10,33 @@ uci set network.lan.proto='dhcp'
 uci -q delete network.lan.ipaddr
 uci -q delete network.lan.netmask
 uci -q delete network.lan.ip6assign
+
+# Configure dedicated Wi-Fi AP Hotspot interface (192.168.8.1 with DHCP server)
+uci set network.ap=interface
+uci set network.ap.proto='static'
+uci set network.ap.ipaddr='192.168.8.1'
+uci set network.ap.netmask='255.255.255.0'
 uci commit network 2>/dev/null
 
-# Disable dnsmasq DHCP server on LAN to prevent conflict with home router
-uci set dhcp.lan.ignore='1' 2>/dev/null
+# Wi-Fi AP binds to 'ap' network with dedicated DHCP server
+uci set wireless.ap_iface.network='ap'
+uci commit wireless 2>/dev/null
+
+# Dedicated DHCP server on 'ap' interface; disabled on Ethernet 'lan'
+uci set dhcp.ap=dhcp
+uci set dhcp.ap.interface='ap'
+uci set dhcp.ap.start='100'
+uci set dhcp.ap.limit='50'
+uci set dhcp.ap.leasetime='1h'
+uci set dhcp.ap.dhcpv4='server'
+uci set dhcp.lan.ignore='1'
 uci commit dhcp 2>/dev/null
+
+# Add 'ap' to firewall lan zone
+uci -q del_list firewall.@zone[0].network='ap'
+uci add_list firewall.@zone[0].network='ap'
+uci commit firewall 2>/dev/null
+
 
 # Enable 32MB ZRAM Swap with ultra-fast lz4 compression on 64MB RAM SoC
 if [ -e /dev/zram0 ]; then

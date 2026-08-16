@@ -4,9 +4,18 @@ config interface 'loopback'
 	option ipaddr '127.0.0.1'
 	option netmask '255.0.0.0'
 
+# Ethernet: Client mode (automatic DHCP from home router)
 config interface 'lan'
 	option device 'eth0'
 	option proto 'dhcp'
 
+# Wi-Fi AP Hotspot: Standalone setup mode (dedicated 192.168.8.1 subnet with DHCP server)
+config interface 'ap'
+	option proto 'static'
+	option ipaddr '192.168.8.1'
+	option netmask '255.255.255.0'
+
+# Wi-Fi STA: Client mode (connects to home Wi-Fi and gets DHCP from home router)
 config interface 'wwan'
 	option proto 'dhcp'
+

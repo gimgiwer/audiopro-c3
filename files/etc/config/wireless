@@ -6,10 +6,10 @@ config wifi-device 'radio0'
 	option htmode 'HT20'
 	option disabled '0'
 
-# AP Mode: Setup access point for initial configuration
+# AP Mode: Setup access point for initial configuration (192.168.8.1 with DHCP server)
 config wifi-iface 'ap_iface'
 	option device 'radio0'
-	option network 'lan'
+	option network 'ap'
 	option mode 'ap'
 	option ssid 'AudioPro-C3-Setup'
 	option encryption 'psk2'
@@ -25,3 +25,4 @@ config wifi-iface 'sta_iface'
 	option ssid ''
 	option encryption 'none'
 	option disabled '1'
+
