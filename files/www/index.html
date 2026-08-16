@@ -2527,6 +2527,16 @@
   </div>
 
   <script>
+    function escapeHtml(unsafe) {
+      if (!unsafe) return "";
+      return String(unsafe)
+           .replace(/&/g, "&amp;")
+           .replace(/</g, "&lt;")
+           .replace(/>/g, "&gt;")
+           .replace(/"/g, "&quot;")
+           .replace(/'/g, "&#039;");
+    }
+
     // i18n Translations Dictionary
     const i18n = {
       en: {
@@ -3407,7 +3417,7 @@
 
       haptic(25);
       el.wifiSubmitBtn.disabled = true;
-      el.wifiSubmitBtn.innerHTML = `<span>Connecting to ${ssid}...</span>`;
+      el.wifiSubmitBtn.innerHTML = `<span>Connecting to ${escapeHtml(ssid)}...</span>`;
       showToast(`Configuring ${ssid}...`);
 
       const params = `action=wifi_connect&ssid=${encodeURIComponent(ssid)}&key=${encodeURIComponent(pass)}`;
@@ -3646,6 +3656,9 @@
         item.className = 'preset-action-item';
         item.style.cssText = 'background:var(--bg-input); border:1px solid var(--border-subtle); border-radius:var(--radius-md); padding:12px; display:flex; flex-direction:column; gap:8px;';
 
+        const safeName = escapeHtml(p.name || ('Preset ' + p.id));
+        const safeTarget = escapeHtml(p.url || p.command || '');
+
         item.innerHTML = `
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <strong style="font-size:0.9rem; color:var(--text-primary);">Preset ${p.id}</strong>
@@ -3663,12 +3676,12 @@
             </div>
             <div>
               <label style="font-size:0.75rem; color:var(--text-secondary);">Station / Name</label>
-              <input type="text" id="pName_${p.id}" class="input-field" style="margin-top:4px;" value="${p.name || 'Preset ' + p.id}">
+              <input type="text" id="pName_${p.id}" class="input-field" style="margin-top:4px;" value="${safeName}">
             </div>
           </div>
           <div id="pTargetWrap_${p.id}" style="${p.mode === 'ha' ? 'display:none;' : ''}">
             <label style="font-size:0.75rem; color:var(--text-secondary);">Stream URL / Command</label>
-            <input type="text" id="pTarget_${p.id}" class="input-field" style="margin-top:4px;" placeholder="http://... or /usr/bin/..." value="${p.url || p.command || ''}">
+            <input type="text" id="pTarget_${p.id}" class="input-field" style="margin-top:4px;" placeholder="http://... or /usr/bin/..." value="${safeTarget}">
           </div>
         `;
         container.appendChild(item);
