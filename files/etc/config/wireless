@@ -17,12 +17,11 @@ config wifi-iface 'ap_iface'
 	option isolate '1'
 	option disabled '0'
 
-# STA Mode: Подключение к домашней Wi-Fi сети
+# STA Mode: Client connection to home Wi-Fi network (configured via Web UI)
 config wifi-iface 'sta_iface'
 	option device 'radio0'
 	option network 'wwan'
 	option mode 'sta'
-	option ssid 'IoT'
-	option encryption 'psk2'
-	option key 'KSXtb1ITwejq'
-	option disabled '0'
+	option ssid ''
+	option encryption 'none'
+	option disabled '1'

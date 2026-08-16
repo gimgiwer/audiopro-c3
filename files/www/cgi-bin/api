@@ -397,6 +397,15 @@ SEC_EOF
             echo "{\"status\":\"ok\",\"message\":\"Connecting to $SSID_ESC...\"}"
         fi
         ;;
+    reset_wifi)
+        uci -q del wireless.sta_iface.ssid 2>/dev/null
+        uci -q del wireless.sta_iface.key 2>/dev/null
+        uci set wireless.sta_iface.disabled="1" 2>/dev/null
+        uci set wireless.ap_iface.disabled="0" 2>/dev/null
+        uci commit wireless 2>/dev/null
+        (sleep 1 && wifi reload) >/dev/null 2>&1 &
+        echo "{\"status\":\"ok\",\"message\":\"Wi-Fi credentials reset. AP mode enabled.\"}"
+        ;;
     check_firmware)
         if [ -f /tmp/firmware.bin ]; then
             FILE_SIZE=$(wc -c < /tmp/firmware.bin 2>/dev/null || echo 0)

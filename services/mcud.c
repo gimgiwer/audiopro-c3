@@ -667,6 +667,21 @@ int main(int argc, char *argv[]) {
                             fifo_line[fifo_pos] = '\0';
                             LOG_INFO("FIFO command -> UART: %s", fifo_line);
                             g_last_activity_time = time(NULL);
+
+                            /* Keep internal state and MQTT in sync */
+                            if (strncmp(fifo_line, "AXX+VOL+", 8) == 0) {
+                                int vol = atoi(fifo_line + 8);
+                                if (vol >= 0 && vol <= 100) {
+                                    g_current_vol = vol;
+                                    mqtt_publish_volume(g_current_vol);
+                                }
+                            } else if (strncmp(fifo_line, "AXX+INP+", 8) == 0) {
+                                int inp = atoi(fifo_line + 8);
+                                if (inp == 0) g_current_source = 0;
+                                else if (inp == 1) g_current_source = 2;
+                                else if (inp == 2) g_current_source = 1;
+                            }
+
                             uart_send(fifo_line);
                             uart_send("\n");
                             fifo_pos = 0;
