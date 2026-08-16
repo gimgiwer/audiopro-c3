@@ -191,7 +191,7 @@ static void alsa_reset_softvol_to_max(void) {
         return;
     }
 
-    const char *names[] = {"Spotify", "AirPlay", "Music", "Notification", NULL};
+    const char *names[] = {"Spotify", "AirPlay", "Music", "Notification", "Squeeze", "TTS", "VoIP", NULL};
     snd_mixer_selem_id_t *sid;
     snd_mixer_selem_id_alloca(&sid);
 
