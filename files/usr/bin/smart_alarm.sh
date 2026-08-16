@@ -65,6 +65,7 @@ do_stop() {
     fi
     killall -9 mpg123_alarm aplay_alarm 2>/dev/null || true
     duck_restore
+    /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
     printf '{"status":"idle","ringing":false}\n' > "$STATE_FILE"
     mqtt_pub "alarm/status" "idle"
 }
@@ -98,7 +99,8 @@ do_start() {
     local fade_sec=$(uci -q get mcud.alarm.fade_sec || echo "0")
     local duration_min=$(uci -q get mcud.alarm.duration_min || echo "30")
 
-    # Hard-duck all competing audio streams
+    # Stateful transport pause for all active players (Spotify, AirPlay, WebRadio, Squeeze)
+    /usr/bin/player_control.sh pause all >/dev/null 2>&1 || true
     duck_down_hard
     set_hw_volume "$target_vol"
 

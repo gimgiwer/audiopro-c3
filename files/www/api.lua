@@ -473,15 +473,18 @@ function handle_request(env)
 
     elseif action == "player_play" or action == "play" then
         send_mcu("AXX+PLM+001\nAXX+MUT+000\n")
+        os.execute("/usr/bin/player_control.sh play all >/dev/null 2>&1 &")
         write_file("/tmp/player_cmd", "play\n")
         uhttpd.send('{"status":"ok","playing":true}')
 
     elseif action == "player_pause" or action == "pause" then
         send_mcu("AXX+PLM+000\n")
+        os.execute("/usr/bin/player_control.sh pause all >/dev/null 2>&1 &")
         write_file("/tmp/player_cmd", "pause\n")
         uhttpd.send('{"status":"ok","playing":false}')
 
-    elseif action == "player_toggle" then
+    elseif action == "player_toggle" or action == "play_pause" then
+        os.execute("/usr/bin/player_control.sh toggle all >/dev/null 2>&1 &")
         write_file("/tmp/player_cmd", "toggle\n")
         uhttpd.send('{"status":"ok","action":"toggle"}')
 
