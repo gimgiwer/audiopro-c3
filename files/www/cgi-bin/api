@@ -521,7 +521,7 @@ SEC_EOF
         if [ -f "$EQ_FILE" ]; then
             cat "$EQ_FILE"
         else
-            echo "{\"status\":\"ok\",\"b60\":0,\"b250\":0,\"b1k\":0,\"b4k\":0,\"b12k\":0,\"preset\":\"Flat\"}"
+            echo "{\"status\":\"ok\",\"b60\":0,\"b250\":0,\"b1k\":0,\"b4k\":0,\"b12k\":0,\"preset\":\"Default\"}"
         fi
         ;;
     save_eq)
