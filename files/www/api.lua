@@ -12,10 +12,12 @@ local function read_file(path)
 end
 
 local function write_file(path, content)
-    local f = io.open(path, "w")
+    local tmp_path = path .. ".tmp." .. tostring(os.time()) .. tostring(math.random(100, 999))
+    local f = io.open(tmp_path, "w")
     if not f then return false end
     f:write(content)
     f:close()
+    os.rename(tmp_path, path)
     return true
 end
 
@@ -99,6 +101,8 @@ local function uci_get(key, default_val)
     end
     return default_val or ""
 end
+
+local SEC_HEADERS = "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nContent-Security-Policy: default-src 'self' 'unsafe-inline' data: blob:;\r\n"
 
 local function verify_system_password(username, password)
     if not username or username == "" or not password then return false end
@@ -241,7 +245,7 @@ function handle_request(env)
         fail_tm = tonumber(fail_tm or "0") or 0
 
         if fail_cnt >= 5 and (now - fail_tm) < 60 then
-            uhttpd.send("Status: 429 Too Many Requests\r\nContent-Type: application/json\r\n\r\n")
+            uhttpd.send("Status: 429 Too Many Requests\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
             uhttpd.send('{"status":"error","code":429,"message":"Too many failed attempts. Please wait 30 seconds."}')
             return
         end
@@ -251,24 +255,24 @@ function handle_request(env)
             local token = get_md5(tostring(now) .. "_" .. fp .. "_" .. tostring(math.random(100000, 999999)))
             local exp = now + session_ttl
             write_file("/tmp/ap_sessions/" .. token, string.format("username=%s\nexpires=%d\nfingerprint=%s\ncreated=%d\n", u, exp, fp, now))
-            uhttpd.send(string.format("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Strict\r\n\r\n", token, session_ttl))
+            uhttpd.send(string.format("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Strict\r\n%s\r\n", token, session_ttl, SEC_HEADERS))
             uhttpd.send(string.format('{"status":"ok","message":"Authenticated","username":"%s","expires":%d}', json_escape(u), exp))
             return
         else
             if (now - fail_tm) > 60 then fail_cnt = 1 else fail_cnt = fail_cnt + 1 end
             write_file(fail_file, string.format("%d %d\n", fail_cnt, now))
-            uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n\r\n")
+            uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
             uhttpd.send('{"status":"error","code":403,"message":"Invalid credentials"}')
             return
         end
     elseif action == "logout" then
         local token = cookies.ap_sid or ""
         if token ~= "" then os.remove("/tmp/ap_sessions/" .. token) end
-        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict\r\n\r\n")
+        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: ap_sid=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict\r\n" .. SEC_HEADERS .. "\r\n")
         uhttpd.send('{"status":"ok","message":"Logged out"}')
         return
     elseif action == "check_auth" or action == "check" then
-        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n\r\n")
+        uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
         if not auth_enabled then
             uhttpd.send(string.format('{"auth_required":false,"logged_in":true,"username":"root","fingerprint":"%s"}', fp))
             return
@@ -322,14 +326,14 @@ function handle_request(env)
         end
         
         if not is_valid then
-            uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n\r\n")
+            uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
             uhttpd.send('{"status":"error","code":403,"message":"Forbidden: Authentication required"}')
             return
         end
     end
 
     -- Default JSON Headers
-    uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\n\r\n")
+    uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\n" .. SEC_HEADERS .. "\r\n")
 
     -- Dispatch Core Actions
     if action == "status" then
