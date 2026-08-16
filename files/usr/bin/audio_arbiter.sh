@@ -9,10 +9,12 @@ NEW_SOURCE=$1
 # Get settings from UCI
 POLICY=$(uci -q get mcud.main.arbiter_policy || echo "lifo")
 # Priorities: lower number = higher priority. Defaults:
-PRIO_WEBRADIO=$(uci -q get mcud.main.prio_webradio || echo "1")
-PRIO_SPOTIFY=$(uci -q get mcud.main.prio_spotify || echo "2")
-PRIO_AIRPLAY=$(uci -q get mcud.main.prio_airplay || echo "3")
-PRIO_SQUEEZE=$(uci -q get mcud.main.prio_squeeze || echo "4")
+PRIO_WEBRADIO=$(uci -q get mcud.main.prio_webradio || echo "5")
+PRIO_SPOTIFY=$(uci -q get mcud.main.prio_spotify || echo "3")
+PRIO_AIRPLAY=$(uci -q get mcud.main.prio_airplay || echo "2")
+PRIO_SQUEEZE=$(uci -q get mcud.main.prio_squeeze || echo "6")
+PRIO_SNAPCAST=$(uci -q get mcud.main.prio_snapcast || echo "1")
+PRIO_DLNA=$(uci -q get mcud.main.prio_dlna || echo "4")
 
 META_JSON="/tmp/audiopro_meta.json"
 
@@ -28,6 +30,12 @@ stop_webradio() {
 stop_squeeze() {
     /etc/init.d/squeezelite restart >/dev/null 2>&1
 }
+stop_snapcast() {
+    /etc/init.d/snapclient restart >/dev/null 2>&1
+}
+stop_dlna() {
+    /etc/init.d/gmrender restart >/dev/null 2>&1
+}
 
 kill_source() {
     case "$1" in
@@ -35,11 +43,15 @@ kill_source() {
         airplay) stop_airplay ;;
         webradio) stop_webradio ;;
         squeeze) stop_squeeze ;;
+        snapcast) stop_snapcast ;;
+        dlna) stop_dlna ;;
     esac
 }
 
 get_priority() {
     case "$1" in
+        dlna) echo "$PRIO_DLNA" ;;
+        snapcast) echo "$PRIO_SNAPCAST" ;;
         spotify) echo "$PRIO_SPOTIFY" ;;
         airplay) echo "$PRIO_AIRPLAY" ;;
         webradio) echo "$PRIO_WEBRADIO" ;;
