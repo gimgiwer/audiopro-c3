@@ -136,11 +136,34 @@ case "$ACTION" in
         USER=$(urldecode "$USER_RAW" | tr -cd 'a-zA-Z0-9_-')
         PASS=$(urldecode "$PASS_RAW")
         
-        if [ -z "$USER" ]; then
-            USER="root"
+        [ -z "$USER" ] && USER="root"
+        
+        # Rate Limiting: Check failed attempts from client IP to prevent CPU exhaustion on SHA-512
+        IP_SAFE=$(echo "${REMOTE_ADDR:-127.0.0.1}" | tr -cd "a-fA-F0-9.:")
+        FAIL_DIR="/tmp/ap_auth_fails"
+        mkdir -p "$FAIL_DIR" 2>/dev/null
+        FAIL_FILE="$FAIL_DIR/$IP_SAFE"
+        
+        FAIL_COUNT=0
+        FAIL_TIME=0
+        if [ -f "$FAIL_FILE" ]; then
+            FAIL_COUNT=$(awk '{print $1}' "$FAIL_FILE" 2>/dev/null || echo 0)
+            FAIL_TIME=$(awk '{print $2}' "$FAIL_FILE" 2>/dev/null || echo 0)
+        fi
+        
+        # Lockout for 30s if >= 5 failed attempts within 60s
+        if [ "$FAIL_COUNT" -ge 5 ] && [ $((NOW - FAIL_TIME)) -lt 60 ]; then
+            echo "Status: 429 Too Many Requests"
+            echo "Content-Type: application/json"
+            echo ""
+            echo "{\"status\":\"error\",\"code\":429,\"message\":\"Too many failed attempts. Please wait 30 seconds.\"}"
+            exit 0
         fi
         
         if verify_password "$USER" "$PASS"; then
+            # Reset failure count on success
+            rm -f "$FAIL_FILE" 2>/dev/null
+            
             # Generate 32-hex token
             NEW_TOKEN=$(tr -dc 'a-f0-9' < /dev/urandom 2>/dev/null | head -c 32)
             if [ -z "$NEW_TOKEN" ]; then
@@ -162,6 +185,14 @@ SESS_EOF
             echo ""
             echo "{\"status\":\"ok\",\"message\":\"Authenticated\",\"username\":\"$USER\",\"expires\":$EXP}"
         else
+            # Increment failure count
+            if [ $((NOW - FAIL_TIME)) -gt 60 ]; then
+                FAIL_COUNT=1
+            else
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+            fi
+            echo "$FAIL_COUNT $NOW" > "$FAIL_FILE" 2>/dev/null
+            
             echo "Status: 403 Forbidden"
             echo "Content-Type: application/json"
             echo ""

@@ -38,19 +38,19 @@ uci set firewall.@rule[-1].target='ACCEPT' 2>/dev/null
 
 uci commit firewall 2>/dev/null
 
-# Generate 100-year HTTPS SSL certificate if not present
+# Generate 100-year ECDSA (prime256v1) HTTPS SSL certificate if not present
 if [ ! -f /etc/uhttpd.crt ] || [ ! -f /etc/uhttpd.key ]; then
-    if command -v px5g >/dev/null 2>&1; then
-        px5g selfsigned \
-            -days 36500 -newkey rsa:2048 -keyout /etc/uhttpd.key -out /etc/uhttpd.crt \
-            -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" 2>/dev/null || \
-        px5g selfsigned -der \
-            -days 36500 -newkey rsa:2048 -keyout /etc/uhttpd.key -out /etc/uhttpd.crt \
-            -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" 2>/dev/null
-    elif command -v openssl >/dev/null 2>&1; then
-        openssl req -x509 -nodes -days 36500 -newkey rsa:2048 \
-            -keyout /etc/uhttpd.key -out /etc/uhttpd.crt \
-            -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" 2>/dev/null
+    if command -v openssl >/dev/null 2>&1; then
+        # Ultra-fast ECDSA prime256v1 for MIPS 24KEc (10x faster handshake than RSA)
+        openssl ecparam -genkey -name prime256v1 -out /etc/uhttpd.key 2>/dev/null
+        openssl req -new -x509 -key /etc/uhttpd.key -out /etc/uhttpd.crt \
+            -days 36500 -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" -sha256 2>/dev/null
+    fi
+    if [ ! -f /etc/uhttpd.crt ] || [ ! -f /etc/uhttpd.key ]; then
+        if command -v px5g >/dev/null 2>&1; then
+            px5g selfsigned -days 36500 -newkey rsa:2048 -keyout /etc/uhttpd.key -out /etc/uhttpd.crt \
+                -subj "/C=SE/ST=Stockholm/L=Stockholm/O=Audio Pro AB/CN=Audio Pro C3" 2>/dev/null
+        fi
     fi
     chmod 600 /etc/uhttpd.key 2>/dev/null
 fi
