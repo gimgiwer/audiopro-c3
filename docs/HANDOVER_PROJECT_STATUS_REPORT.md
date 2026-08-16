@@ -19,10 +19,9 @@
 
 | Файл | Размер | Назначение | Локальный путь |
 | :--- | :--- | :--- | :--- |
-| **`openwrt.bin`** | **6.93 MB** (7,267,634 B) | **RAM Boot (SDRAM initramfs uImage)**. Загрузка в память без записи во Flash через TFTP (пункт 5 в U-Boot) | [`/srv/tftp/openwrt.bin`](file:///srv/tftp/openwrt.bin) |
-| **`sysupgrade.bin`** | **7.10 MB** (7,439,844 B) | **Flash Sysupgrade Image (SquashFS)**. Для постоянной прошивки раздела `firmware` (пункт 2 в U-Boot или `sysupgrade`) | [`/srv/tftp/sysupgrade.bin`](file:///srv/tftp/sysupgrade.bin) |
-| **Копии в репозитории** | — | Резервные копии бинарников | [`/home/gimgiwer/.gemini/antigravity/scratch/audiopro-c3/bin/`](file:///home/gimgiwer/.gemini/antigravity/scratch/audiopro-c3/bin/) |
-| **Копия TFTP root** | — | Вторая копия для локальных TFTP-серверов | [`/home/gimgiwer/.gemini/antigravity/scratch/tftp_root/openwrt.bin`](file:///home/gimgiwer/.gemini/antigravity/scratch/tftp_root/openwrt.bin) |
+| **`openwrt.bin`** | **10.4 MB** (10,874,542 B) | **RAM Boot (SDRAM initramfs uImage)**. Загрузка в память без записи во Flash через TFTP (пункт 5 в U-Boot) | [`/home/gimgiwer/.gemini/antigravity/scratch/tftp_root/openwrt.bin`](file:///home/gimgiwer/.gemini/antigravity/scratch/tftp_root/openwrt.bin) |
+| **`openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin`** | **10.8 MB** (11,272,192 B) | **Flash Sysupgrade Image (SquashFS)**. Для постоянной прошивки раздела `firmware` (пункт 2 в U-Boot или `sysupgrade -v -n`) | [`/home/gimgiwer/.gemini/antigravity/scratch/tftp_root/openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin`](file:///home/gimgiwer/.gemini/antigravity/scratch/tftp_root/openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin) |
+| **Копии в репозитории** | — | Резервные копии бинарников + sha256sums + manifest | [`/home/gimgiwer/.gemini/antigravity/scratch/audiopro-c3/bin/`](file:///home/gimgiwer/.gemini/antigravity/scratch/audiopro-c3/bin/) |
 
 ### TFTP-сервер на хосте:
 * **IP хоста (TFTP Server):** `192.168.1.202:69` (сервис `tftpd` активен в фоне)

@@ -226,31 +226,19 @@ Source file: [`dts/mt7628an_audiopro_c3.dts`](../dts/mt7628an_audiopro_c3.dts)
 
 ---
 
-## 5. Kernel Patches & OpenWrt Build System Integration
+## 5. Kernel Audio Drivers & OpenWrt Build System Integration
 
-### 5.1. MT7688 I2S FIFO Flush Patch
-File: `target/linux/ramips/patches-5.15/836-mt7688-i2s-audio-crash-workaround.patch`
+### 5.1. MT7688 ASoC Sound Driver (`kmod-sound-mt7620`)
+In OpenWrt 23.05 (Linux 5.15), the MediaTek MT7688 I2S controller is natively supported via the upstream `kmod-sound-mt7620` package and patch `835-asoc-add-mt7620-support.patch`. 
+The driver handles hardware DMA FIFO buffers and registers `AudioPro-C3-I2S` as the primary sound card connected to Texas Instruments TAS5707 DAC/DSP.
 
-```diff
---- a/sound/soc/ralink/ralink-i2s.c
-+++ b/sound/soc/ralink/ralink-i2s.c
-@@ -428,7 +428,14 @@ static int ralink_i2s_trigger(struct snd
- 	case SNDRV_PCM_TRIGGER_STOP:
- 	case SNDRV_PCM_TRIGGER_SUSPEND:
- 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
--		val = 0;
-+		/* Flush hardware TX/RX FIFO buffer before stopping clock */
-+		val = ralink_i2s_read(priv, RALINK_I2S_CON);
-+		val |= I2S_FIFO_CLR;
-+		ralink_i2s_write(priv, RALINK_I2S_CON, val);
-+		udelay(100);
-+		val = 0;
- 		break;
- 	default:
- 		return -EINVAL;
+### 5.2. Compilation Optimization Flags
+All C daemons and native binaries are compiled targeting the MIPS 24KEc core:
+```makefile
+CFLAGS += -march=24kc -mtune=24kc -msoft-float -O2
 ```
 
-### 5.2. OpenWrt Buildroot Integration Script
+### 5.3. OpenWrt Buildroot Integration Script
 To build a custom firmware directly from OpenWrt source tree, run the installer:
 
 ```bash
