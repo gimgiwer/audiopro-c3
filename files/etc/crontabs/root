@@ -1,0 +1,2 @@
+# Запуск умного будильника каждый будний день (ПН-ПТ) в 07:00 утра
+# 0 7 * * 1-5 /usr/bin/smart_alarm.sh 50 "http://icecast.vrtcdn.be/klara-high.mp3"
