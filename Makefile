@@ -3,10 +3,16 @@
 CC := zig cc -target mipsel-linux-musleabi
 CFLAGS := -static -Os -fno-stack-protector
 
-all: bin/i2s_dump bin/i2s_tiny bin/telnetd
+all: bin/i2s_dump bin/i2s_tiny bin/telnetd bin/mcud bin/aec_bridge
 
 bin:
 	mkdir -p bin
+
+bin/mcud: services/mcud.c | bin
+	$(CC) $(CFLAGS) -o $@ $< -lpthread -lmosquitto
+
+bin/aec_bridge: services/aec_bridge.c | bin
+	$(CC) $(CFLAGS) -o $@ $< -lasound -lpthread
 
 bin/i2s_dump: src/i2s_dump.c | bin
 	$(CC) $(CFLAGS) -o $@ $<
