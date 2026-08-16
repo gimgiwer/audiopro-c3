@@ -98,6 +98,14 @@ local function json_escape(s)
     return s
 end
 
+-- Strict Shell Argument Sanitizer (CWE-78 Command Injection Mitigation)
+-- Strips all control characters (\r, \n, \0, ASCII 1-31, 127) and escapes single quotes
+local function sanitize_shell(s)
+    if not s then return "" end
+    s = string.gsub(tostring(s), "[\r\n\0\x01-\x1f\x7f]", "")
+    return string.gsub(s, "'", "'\\''")
+end
+
 -- Fast Non-blocking UART Command Sender
 local function send_mcu(cmd)
     local f = io.open("/tmp/mcu_cmd_fifo", "w")
@@ -529,7 +537,7 @@ function handle_request(env)
     elseif action == "tts" or action == "tts_duck" then
         local tts_url = params.url or ""
         if tts_url ~= "" and string.match(tts_url, "^https?://") then
-            os.execute(string.format("/usr/bin/ha_ducking.sh tts '%s' >/dev/null 2>&1 &", string.gsub(tts_url, "'", "'\\''")))
+            os.execute(string.format("/usr/bin/ha_ducking.sh tts '%s' >/dev/null 2>&1 &", sanitize_shell(tts_url)))
             uhttpd.send('{"status":"ok","message":"TTS announcement queued"}')
         else
             uhttpd.send('{"status":"error","message":"Valid HTTP/HTTPS URL required"}')
@@ -543,7 +551,7 @@ function handle_request(env)
             local meta = string.format('{"active":true,"source":"webradio","title":"%s","artist":"Web Radio","album":"Direct Stream","playing":true,"artwork":false,"updated":%d}',
                 json_escape(stream_name), os.time())
             write_file("/tmp/audiopro_meta.json", meta)
-            os.execute(string.format("mpg123 -q -a music_in -- '%s' >/dev/null 2>&1 &", string.gsub(stream_url, "'", "'\\''")))
+            os.execute(string.format("mpg123 -q -a music_in -- '%s' >/dev/null 2>&1 &", sanitize_shell(stream_url)))
             uhttpd.send(string.format('{"status":"ok","message":"Streaming started","title":"%s"}', json_escape(stream_name)))
         else
             uhttpd.send('{"status":"error","message":"Valid stream URL required"}')
@@ -579,13 +587,15 @@ function handle_request(env)
                 uci_ctx:set("wireless", "sta_iface", "ssid", ssid)
                 uci_ctx:set("wireless", "sta_iface", "key", key)
                 uci_ctx:set("wireless", "sta_iface", "disabled", "0")
+                -- Disable setup AP once connecting to client Wi-Fi network for radio stealth and security
+                uci_ctx:set("wireless", "ap_iface", "disabled", "1")
                 uci_ctx:commit("wireless")
             else
-                os.execute(string.format("uci set wireless.sta_iface.ssid='%s' 2>/dev/null; uci set wireless.sta_iface.key='%s' 2>/dev/null; uci set wireless.sta_iface.disabled='0' 2>/dev/null; uci commit wireless 2>/dev/null",
-                    string.gsub(ssid, "'", "'\\''"), string.gsub(key, "'", "'\\''")))
+                os.execute(string.format("uci set wireless.sta_iface.ssid='%s' 2>/dev/null; uci set wireless.sta_iface.key='%s' 2>/dev/null; uci set wireless.sta_iface.disabled='0' 2>/dev/null; uci set wireless.ap_iface.disabled='1' 2>/dev/null; uci commit wireless 2>/dev/null",
+                    sanitize_shell(ssid), sanitize_shell(key)))
             end
             os.execute("(sleep 2 && wifi reload) >/dev/null 2>&1 &")
-            uhttpd.send('{"status":"ok","message":"Connecting to home Wi-Fi..."}')
+            uhttpd.send('{"status":"ok","message":"Connecting to home Wi-Fi and disabling setup AP..."}')
         else
             uhttpd.send('{"status":"error","message":"SSID required"}')
         end
@@ -698,10 +708,10 @@ function handle_request(env)
                 uci_ctx:set("wireless", "ap_iface", "disabled", dis)
                 uci_ctx:commit("wireless")
             else
-                if ssid ~= "" then os.execute(string.format("uci set wireless.ap_iface.ssid='%s' 2>/dev/null", string.gsub(ssid, "'", "'\\''"))) end
+                if ssid ~= "" then os.execute(string.format("uci set wireless.ap_iface.ssid='%s' 2>/dev/null", sanitize_shell(ssid))) end
                 if key ~= "" then
                     if #key >= 8 then
-                        os.execute(string.format("uci set wireless.ap_iface.encryption='psk2' 2>/dev/null; uci set wireless.ap_iface.key='%s' 2>/dev/null", string.gsub(key, "'", "'\\''")))
+                        os.execute(string.format("uci set wireless.ap_iface.encryption='psk2' 2>/dev/null; uci set wireless.ap_iface.key='%s' 2>/dev/null", sanitize_shell(key)))
                     else
                         uhttpd.send('{"status":"error","message":"AP password must be at least 8 characters"}')
                         return
@@ -709,7 +719,7 @@ function handle_request(env)
                 else
                     os.execute("uci set wireless.ap_iface.encryption='none' 2>/dev/null; uci -q del wireless.ap_iface.key 2>/dev/null")
                 end
-                if chan ~= "" then os.execute(string.format("uci set wireless.radio0.channel='%s' 2>/dev/null", string.gsub(chan, "'", "'\\''"))) end
+                if chan ~= "" then os.execute(string.format("uci set wireless.radio0.channel='%s' 2>/dev/null", sanitize_shell(chan))) end
                 os.execute(string.format("uci set wireless.ap_iface.disabled='%s' 2>/dev/null; uci commit wireless 2>/dev/null", dis))
             end
             os.execute("(sleep 1 && wifi reload) >/dev/null 2>&1 &")
@@ -771,7 +781,7 @@ function handle_request(env)
             uci_ctx:commit("mcud")
         else
             os.execute(string.format("uci set mcud.main.mqtt_enabled='%s'; uci set mcud.main.mqtt_host='%s'; uci set mcud.main.mqtt_port='%d'; uci set mcud.main.mqtt_topic_prefix='%s'; uci set mcud.main.mqtt_user='%s'; uci set mcud.main.mqtt_password='%s'; uci commit mcud 2>/dev/null",
-                en, string.gsub(host, "'", "'\\''"), port, string.gsub(pre, "'", "'\\''"), string.gsub(user, "'", "'\\''"), string.gsub(pass, "'", "'\\''")))
+                en, sanitize_shell(host), port, sanitize_shell(pre), sanitize_shell(user), sanitize_shell(pass)))
         end
         os.execute("/etc/init.d/mcud restart >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"MQTT settings saved"}')
@@ -821,7 +831,7 @@ function handle_request(env)
             uci_ctx:commit("audiopro_presets")
         else
             os.execute(string.format("uci set audiopro_presets.%d.name='%s' 2>/dev/null; uci set audiopro_presets.%d.mode='%s' 2>/dev/null; uci set audiopro_presets.%d.url='%s' 2>/dev/null; uci set audiopro_presets.%d.command='%s' 2>/dev/null; uci commit audiopro_presets 2>/dev/null",
-                pid, string.gsub(pname, "'", "'\\''"), pid, string.gsub(pmode, "'", "'\\''"), pid, string.gsub(purl, "'", "'\\''"), pid, string.gsub(pcmd, "'", "'\\''")))
+                pid, sanitize_shell(pname), pid, sanitize_shell(pmode), pid, sanitize_shell(purl), pid, sanitize_shell(pcmd)))
         end
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d updated"}', pid))
 
@@ -888,9 +898,9 @@ function handle_request(env)
             uci_ctx:commit("mcud")
         else
             os.execute(string.format("uci set mcud.alarm.enabled='%s'; uci set mcud.alarm.time='%s'; uci set mcud.alarm.days='%s'; uci set mcud.alarm.target_volume='%d'; uci set mcud.alarm.alarm_mode='%s'; uci set mcud.alarm.sound_type='%s'; uci set mcud.alarm.sound_file='%s'; uci set mcud.alarm.stream_url='%s'; uci set mcud.alarm.spotify_uri='%s'; uci set mcud.alarm.fade_sec='%d'; uci set mcud.alarm.duration_min='%d'; uci set mcud.alarm.snooze_min='%d'; uci commit mcud 2>/dev/null",
-                a_en, string.gsub(a_time, "'", "'\\''"), string.gsub(a_days, "'", "'\\''"), a_vol,
-                string.gsub(a_mode, "'", "'\\''"), string.gsub(a_stype, "'", "'\\''"), string.gsub(a_sfile, "'", "'\\''"),
-                string.gsub(a_url, "'", "'\\''"), string.gsub(a_suri, "'", "'\\''"), a_fade, a_dur, a_snooze))
+                a_en, sanitize_shell(a_time), sanitize_shell(a_days), a_vol,
+                sanitize_shell(a_mode), sanitize_shell(a_stype), sanitize_shell(a_sfile),
+                sanitize_shell(a_url), sanitize_shell(a_suri), a_fade, a_dur, a_snooze))
         end
         os.execute("/usr/bin/smart_alarm.sh sync_cron >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Smart alarm configuration saved"}')
@@ -918,7 +928,7 @@ function handle_request(env)
         local vol = tonumber(params.volume or "70") or 70
         if sec > 0 then
             os.execute(string.format("/usr/bin/smart_timer.sh start %d '%s' '%s' %d >/dev/null 2>&1 &",
-                sec, string.gsub(name, "'", "'\\''"), string.gsub(sound, "'", "'\\''"), vol))
+                sec, sanitize_shell(name), sanitize_shell(sound), vol))
             uhttpd.send(string.format('{"status":"ok","message":"Timer started","seconds":%d,"name":"%s"}', sec, json_escape(name)))
         else
             uhttpd.send('{"status":"error","message":"Invalid duration in seconds or minutes"}')
