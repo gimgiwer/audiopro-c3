@@ -904,6 +904,31 @@ function handle_request(env)
         os.execute("/usr/bin/smart_alarm.sh stop >/dev/null 2>&1")
         uhttpd.send('{"status":"ok","message":"Alarm stopped"}')
 
+    elseif action == "start_timer" or action == "set_timer" then
+        local sec = tonumber(params.seconds or params.sec or "0") or 0
+        if sec <= 0 then
+            local min = tonumber(params.minutes or params.min or "0") or 0
+            sec = min * 60
+        end
+        local name = params.name or "Timer"
+        local sound = params.sound or "/usr/share/sounds/alarm_sharp.wav"
+        local vol = tonumber(params.volume or "70") or 70
+        if sec > 0 then
+            os.execute(string.format("/usr/bin/smart_timer.sh start %d '%s' '%s' %d >/dev/null 2>&1 &",
+                sec, string.gsub(name, "'", "'\\''"), string.gsub(sound, "'", "'\\''"), vol))
+            uhttpd.send(string.format('{"status":"ok","message":"Timer started","seconds":%d,"name":"%s"}', sec, json_escape(name)))
+        else
+            uhttpd.send('{"status":"error","message":"Invalid duration in seconds or minutes"}')
+        end
+
+    elseif action == "get_timer" or action == "timer_status" then
+        local st = read_file("/tmp/timer_state.json") or '{"active":false,"ringing":false,"remaining":0,"total":0,"name":""}'
+        uhttpd.send(string.format('{"status":"ok","timer":%s}', st))
+
+    elseif action == "cancel_timer" or action == "stop_timer" or action == "dismiss_timer" then
+        os.execute("/usr/bin/smart_timer.sh cancel >/dev/null 2>&1")
+        uhttpd.send('{"status":"ok","message":"Timer cancelled"}')
+
     elseif action == "reboot" then
         os.execute("(sleep 2 && reboot) >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Rebooting..."}')
