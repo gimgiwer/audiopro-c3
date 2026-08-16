@@ -52,7 +52,7 @@ Pre-compiled production images:
 
 | File | Size | SHA-256 Checksum | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`openwrt-23.05.5-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin`** | **9.9 MB** | `5f5b9a897ab4e02079facb3d21eeda3b479dfe44053a830935dd03b03a66538d` | Full firmware image for permanent installation via `sysupgrade` or U-Boot. |
+| **`openwrt-23.05.5-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin`** | **9.9 MB** | `0a482a4041b7e4774c723d35965a7d54718a5ee2a45fd26c0ca45deaf65eb1c9` | Full firmware image for permanent installation via `sysupgrade` or U-Boot. |
 | `openwrt-ramips-mt76x8-audiopro_c3.manifest` | 4.2 KB | Package Manifest | Complete list of all compiled packages and kernel modules. |
 | `sha256sums` | 683 B | Checksums | Cryptographic SHA-256 verification hash list. |
 

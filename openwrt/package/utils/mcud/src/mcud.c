@@ -118,6 +118,25 @@ static int uart_send(const char *cmd) {
     return (written == (ssize_t)len) ? 0 : -1;
 }
 
+static void spawn_async_cmd(const char *path, char *const argv[]) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        LOG_WARN("Failed to fork for %s: %s", path, strerror(errno));
+        return;
+    }
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > STDERR_FILENO) close(devnull);
+        }
+        execv(path, argv);
+        _exit(127);
+    }
+}
+
 static void play_sound(const char *path) {
     if (!path || access(path, R_OK) != 0) return;
     pid_t pid = fork();
@@ -178,7 +197,8 @@ static void graceful_shutdown(void) {
     LOG_INFO("Initiating graceful shutdown of audio services and system...");
 
     /* Stop streaming processes first */
-    (void)!system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
+    char *k_argv[] = {"/usr/bin/killall", "-TERM", "librespot", "shairport-sync", "squeezelite", NULL};
+    spawn_async_cmd("/usr/bin/killall", k_argv);
     usleep(300000);
 
     /* Mute amplifier */
@@ -194,7 +214,8 @@ static void graceful_shutdown(void) {
     }
 
     sync();
-    (void)!system("/sbin/poweroff");
+    char *p_argv[] = {"/sbin/poweroff", NULL};
+    spawn_async_cmd("/sbin/poweroff", p_argv);
 }
 
 /* Ensure ALSA software volume controls are pegged to 100% (0 dB bit-perfect pass-through) */
@@ -488,11 +509,14 @@ static void process_mcu_command(const char *cmd) {
         mqtt_send_button("play_pause");
         /* Priority alert dismissal: Ringing Timer -> Active Alarm -> Normal Play/Pause toggle */
         if (access("/tmp/timer_ring.pid", F_OK) == 0) {
-            (void)!system("/usr/bin/smart_timer.sh stop >/dev/null 2>&1 &");
+            char *t_argv[] = {"/usr/bin/smart_timer.sh", "stop", NULL};
+            spawn_async_cmd("/usr/bin/smart_timer.sh", t_argv);
         } else if (access("/tmp/alarm.pid", F_OK) == 0) {
-            (void)!system("/usr/bin/smart_alarm.sh stop >/dev/null 2>&1 &");
+            char *a_argv[] = {"/usr/bin/smart_alarm.sh", "stop", NULL};
+            spawn_async_cmd("/usr/bin/smart_alarm.sh", a_argv);
         } else {
-            (void)!system("/usr/bin/player_control.sh toggle all >/dev/null 2>&1 &");
+            char *p_argv[] = {"/usr/bin/player_control.sh", "toggle", "all", NULL};
+            spawn_async_cmd("/usr/bin/player_control.sh", p_argv);
             int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
             if (fd >= 0) { safe_write(fd, "toggle\n", 7); close(fd); }
         }
@@ -507,9 +531,10 @@ static void process_mcu_command(const char *cmd) {
             snprintf(buf, sizeof(buf), "preset:%d\n", preset);
             int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
             if (fd >= 0) { safe_write(fd, buf, strlen(buf)); close(fd); }
-            char hcmd[64];
-            snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", preset);
-            (void)!system(hcmd);
+            char pstr[8];
+            snprintf(pstr, sizeof(pstr), "%d", preset);
+            char *pr_argv[] = {"/usr/bin/audiopro_preset_handler.sh", pstr, NULL};
+            spawn_async_cmd("/usr/bin/audiopro_preset_handler.sh", pr_argv);
         }
     } else if (strstr(cmd, "MCU+KEY+SRC")) {
         mqtt_send_button("source");
