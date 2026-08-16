@@ -17,8 +17,8 @@ case "$MODE" in
         killall -9 mpg123 madplay 2>/dev/null || true
         
         if [ -n "$URL" ]; then
-            # Pause other players if running
-            echo "pause" > /tmp/player_cmd 2>/dev/null || true
+            # Invoke Audio Arbiter
+            /usr/bin/audio_arbiter.sh webradio
             
             # Update Now Playing metadata
             cat << JSON_EOF > /tmp/audiopro_meta.json

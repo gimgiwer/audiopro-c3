@@ -73,6 +73,7 @@ while true; do
                     ;;
                 *70667374*|*70737474*) # Play / Pause stream status
                     PLAYING="1"
+                    /usr/bin/audio_arbiter.sh airplay &
                     update_json
                     ;;
             esac

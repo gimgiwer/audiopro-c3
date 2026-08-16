@@ -16,3 +16,16 @@ config mcud 'main'
 	option mqtt_user ''
 	option mqtt_pass ''
 	option mqtt_topic_prefix 'audiopro_c3'
+	
+	# --- Audio Arbiter Settings ---
+	# arbiter_policy: 
+	#   mix      = No restrictions, ALSA dmix merges all streams simultaneously
+	#   lifo     = Last In Wins (new stream completely stops previous ones)
+	#   priority = Strict priority hierarchy, higher priority interrupts lower
+	option arbiter_policy 'lifo'
+	
+	# Priorities (Lower number = higher priority)
+	option prio_webradio '1'
+	option prio_spotify '2'
+	option prio_airplay '3'
+	option prio_squeeze '4'
