@@ -2012,6 +2012,7 @@
                   <option value="chime">Built-in Signal (WAV)</option>
                   <option value="stream">Web Radio / MP3 Stream</option>
                   <option value="chime_then_stream">Signal + Radio Stream</option>
+                  <option value="spotify">Spotify Track / Playlist</option>
                 </select>
               </div>
             </div>
@@ -2029,6 +2030,11 @@
             <div id="alarmStreamUrlWrap" class="form-group" style="display:none; margin-bottom:14px;">
               <label style="font-size:0.75rem; color:var(--text-secondary);">Radio Stream URL</label>
               <input type="text" id="alarmStreamUrlInput" class="input-field" style="margin-top:4px;" placeholder="http://..." value="http://icecast.vrtcdn.be/klara-high.mp3">
+            </div>
+
+            <div id="alarmSpotifyUriWrap" class="form-group" style="display:none; margin-bottom:14px;">
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Spotify Track / Playlist URI</label>
+              <input type="text" id="alarmSpotifyUriInput" class="input-field" style="margin-top:4px;" placeholder="spotify:track:... or https://open.spotify.com/..." value="spotify:track:4cOdK2wGLETKBW3PvgPWqT">
             </div>
 
             <div class="form-group" style="margin-bottom:14px;">
@@ -3853,9 +3859,11 @@
       const type = document.getElementById('alarmSoundTypeSelect') ? document.getElementById('alarmSoundTypeSelect').value : 'chime';
       const soundWrap = document.getElementById('alarmSoundFileWrap');
       const streamWrap = document.getElementById('alarmStreamUrlWrap');
+      const spotWrap = document.getElementById('alarmSpotifyUriWrap');
 
-      if (soundWrap) soundWrap.style.display = (type === 'stream') ? 'none' : 'block';
-      if (streamWrap) streamWrap.style.display = (type === 'chime') ? 'none' : 'block';
+      if (soundWrap) soundWrap.style.display = (type === 'stream' || type === 'spotify') ? 'none' : 'block';
+      if (streamWrap) streamWrap.style.display = (type === 'stream' || type === 'chime_then_stream') ? 'block' : 'none';
+      if (spotWrap) spotWrap.style.display = (type === 'spotify') ? 'block' : 'none';
     }
 
     function getSelectedAlarmDays() {
@@ -3890,6 +3898,7 @@
             const typeSel = document.getElementById('alarmSoundTypeSelect');
             const fileSel = document.getElementById('alarmSoundFileSelect');
             const urlIn = document.getElementById('alarmStreamUrlInput');
+            const spotIn = document.getElementById('alarmSpotifyUriInput');
 
             if (toggle) toggle.checked = !!a.enabled;
             if (timeIn) timeIn.value = a.time || '07:00';
@@ -3898,6 +3907,7 @@
             if (typeSel) typeSel.value = a.sound_type || 'chime';
             if (fileSel && a.sound_file) fileSel.value = a.sound_file;
             if (urlIn) urlIn.value = a.stream_url || 'http://icecast.vrtcdn.be/klara-high.mp3';
+            if (spotIn) spotIn.value = a.spotify_uri || 'spotify:track:4cOdK2wGLETKBW3PvgPWqT';
             setSelectedAlarmDays(a.days || '1,2,3,4,5');
             onAlarmSoundTypeChange();
           }
@@ -3915,9 +3925,10 @@
       const stype = document.getElementById('alarmSoundTypeSelect') ? document.getElementById('alarmSoundTypeSelect').value : 'chime';
       const sfile = document.getElementById('alarmSoundFileSelect') ? document.getElementById('alarmSoundFileSelect').value : '/usr/share/sounds/alarm_sharp.wav';
       const url = document.getElementById('alarmStreamUrlInput') ? document.getElementById('alarmStreamUrlInput').value.trim() : '';
+      const spot = document.getElementById('alarmSpotifyUriInput') ? document.getElementById('alarmSpotifyUriInput').value.trim() : '';
       const days = getSelectedAlarmDays();
 
-      const params = `action=save_alarm&enabled=${en}&time=${encodeURIComponent(time)}&target_volume=${vol}&alarm_mode=${mode}&sound_type=${stype}&sound_file=${encodeURIComponent(sfile)}&days=${encodeURIComponent(days)}&stream_url=${encodeURIComponent(url)}`;
+      const params = `action=save_alarm&enabled=${en}&time=${encodeURIComponent(time)}&target_volume=${vol}&alarm_mode=${mode}&sound_type=${stype}&sound_file=${encodeURIComponent(sfile)}&days=${encodeURIComponent(days)}&stream_url=${encodeURIComponent(url)}&spotify_uri=${encodeURIComponent(spot)}`;
       apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(d => showToast(d.message || 'Alarm settings saved'))

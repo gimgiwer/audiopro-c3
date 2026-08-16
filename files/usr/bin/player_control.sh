@@ -7,21 +7,41 @@ TARGET="${2:-all}"
 SAVED_STATE="/tmp/paused_players.state"
 
 pause_spotify() {
-    killall -STOP librespot 2>/dev/null || true
+    # 1. Publish MQTT command for Home Assistant / Spotify Web API
+    if [ -x /usr/bin/mosquitto_pub ]; then
+        local prefix=$(uci -q get mcud.main.mqtt_topic_prefix || echo "audiopro_c3")
+        local host=$(uci -q get mcud.main.mqtt_host || echo "127.0.0.1")
+        local port=$(uci -q get mcud.main.mqtt_port || echo "1883")
+        mosquitto_pub -h "$host" -p "$port" -t "${prefix}/player/state" -m "paused" 2>/dev/null || true
+        mosquitto_pub -h "$host" -p "$port" -t "${prefix}/player/event" -m "{\"action\":\"pause\",\"source\":\"spotify\"}" 2>/dev/null || true
+    fi
+    # 2. Mute Spotify ALSA channel softvol
+    amixer -q -c 0 sset Spotify 0% 2>/dev/null || true
 }
 
 resume_spotify() {
-    killall -CONT librespot 2>/dev/null || true
+    # 1. Publish MQTT command for Home Assistant / Spotify Web API
+    if [ -x /usr/bin/mosquitto_pub ]; then
+        local prefix=$(uci -q get mcud.main.mqtt_topic_prefix || echo "audiopro_c3")
+        local host=$(uci -q get mcud.main.mqtt_host || echo "127.0.0.1")
+        local port=$(uci -q get mcud.main.mqtt_port || echo "1883")
+        mosquitto_pub -h "$host" -p "$port" -t "${prefix}/player/state" -m "playing" 2>/dev/null || true
+        mosquitto_pub -h "$host" -p "$port" -t "${prefix}/player/event" -m "{\"action\":\"play\",\"source\":\"spotify\"}" 2>/dev/null || true
+    fi
+    # 2. Unmute Spotify ALSA channel softvol
+    amixer -q -c 0 sset Spotify 100% 2>/dev/null || true
 }
 
 pause_airplay() {
-    dbus-send --system --type=method_call --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Pause >/dev/null 2>&1 || \
-    killall -STOP shairport-sync 2>/dev/null || true
+    # Native AirPlay DACP remote control via Shairport-Sync D-Bus (iPhone displays Pause icon)
+    dbus-send --system --type=method_call --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Pause >/dev/null 2>&1 || true
+    amixer -q -c 0 sset AirPlay 0% 2>/dev/null || true
 }
 
 resume_airplay() {
-    dbus-send --system --type=method_call --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Play >/dev/null 2>&1 || \
-    killall -CONT shairport-sync 2>/dev/null || true
+    # Native AirPlay DACP remote control via Shairport-Sync D-Bus (iPhone displays Play icon)
+    dbus-send --system --type=method_call --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Play >/dev/null 2>&1 || true
+    amixer -q -c 0 sset AirPlay 100% 2>/dev/null || true
 }
 
 pause_webradio() {
