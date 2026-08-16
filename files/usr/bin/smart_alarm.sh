@@ -1,21 +1,30 @@
 #!/bin/sh
 # Audio Pro C3 - Smart Alarm Engine
-# Autonomous scheduled alarm with ALSA alarm_in routing, hardware ducking, MQTT & REST API control
+# Fully customizable autonomous alarm with sharp/gentle modes, sound selectors, hard ducking, Snooze & Web REST API
 
 PID_FILE="/tmp/alarm.pid"
 STATE_FILE="/tmp/alarm_state.json"
 CRON_FILE="/etc/crontabs/root"
 
-duck_down() {
-    amixer -q -c 0 sset Music 30%- 2>/dev/null || true
-    amixer -q -c 0 sset Spotify 30%- 2>/dev/null || true
-    amixer -q -c 0 sset AirPlay 30%- 2>/dev/null || true
+duck_down_hard() {
+    # Completely suppress or heavily mute background music streams
+    amixer -q -c 0 sset Music 0% 2>/dev/null || true
+    amixer -q -c 0 sset Spotify 0% 2>/dev/null || true
+    amixer -q -c 0 sset AirPlay 0% 2>/dev/null || true
+    amixer -q -c 0 sset Squeeze 0% 2>/dev/null || true
 }
 
-duck_up() {
-    amixer -q -c 0 sset Music 30%+ 2>/dev/null || true
-    amixer -q -c 0 sset Spotify 30%+ 2>/dev/null || true
-    amixer -q -c 0 sset AirPlay 30%+ 2>/dev/null || true
+duck_restore() {
+    # Smoothly restore background music channels
+    amixer -q -c 0 sset Music 50% 2>/dev/null || true
+    amixer -q -c 0 sset Spotify 50% 2>/dev/null || true
+    amixer -q -c 0 sset AirPlay 50% 2>/dev/null || true
+    amixer -q -c 0 sset Squeeze 50% 2>/dev/null || true
+    usleep 50000
+    amixer -q -c 0 sset Music 100% 2>/dev/null || true
+    amixer -q -c 0 sset Spotify 100% 2>/dev/null || true
+    amixer -q -c 0 sset AirPlay 100% 2>/dev/null || true
+    amixer -q -c 0 sset Squeeze 100% 2>/dev/null || true
 }
 
 set_hw_volume() {
@@ -54,10 +63,22 @@ do_stop() {
         done
         rm -f "$PID_FILE"
     fi
-    killall -9 mpg123_alarm 2>/dev/null || true
-    duck_up
-    printf '{"status":"idle"}\n' > "$STATE_FILE"
+    killall -9 mpg123_alarm aplay_alarm 2>/dev/null || true
+    duck_restore
+    printf '{"status":"idle","ringing":false}\n' > "$STATE_FILE"
     mqtt_pub "alarm/status" "idle"
+}
+
+do_snooze() {
+    local snooze_min=$(uci -q get mcud.alarm.snooze_min || echo "9")
+    do_stop
+    printf '{"status":"snoozed","snooze_min":%d}\n' "$snooze_min" > "$STATE_FILE"
+    mqtt_pub "alarm/status" "snoozed"
+
+    (
+        sleep $((snooze_min * 60))
+        /usr/bin/smart_alarm.sh start 1
+    ) &
 }
 
 do_start() {
@@ -69,58 +90,74 @@ do_start() {
         exit 0
     fi
 
-    local target_vol=$(uci -q get mcud.alarm.target_volume || echo "40")
+    local target_vol=$(uci -q get mcud.alarm.target_volume || echo "60")
+    local alarm_mode=$(uci -q get mcud.alarm.alarm_mode || echo "sharp")
+    local sound_type=$(uci -q get mcud.alarm.sound_type || echo "chime")
+    local sound_file=$(uci -q get mcud.alarm.sound_file || echo "/usr/share/sounds/alarm_sharp.wav")
     local stream_url=$(uci -q get mcud.alarm.stream_url || echo "http://icecast.vrtcdn.be/klara-high.mp3")
-    local sound_file=$(uci -q get mcud.alarm.sound || echo "/usr/share/sounds/bell.wav")
-    local fade_sec=$(uci -q get mcud.alarm.fade_sec || echo "60")
-    local duration_min=$(uci -q get mcud.alarm.duration_min || echo "60")
+    local fade_sec=$(uci -q get mcud.alarm.fade_sec || echo "0")
+    local duration_min=$(uci -q get mcud.alarm.duration_min || echo "30")
 
-    duck_down
+    # Hard-duck all competing audio streams
+    duck_down_hard
     set_hw_volume "$target_vol"
-    set_alarm_channel_vol 5
 
-    printf '{"status":"active","volume":%d,"stream":"%s"}\n' "$target_vol" "$stream_url" > "$STATE_FILE"
+    echo "$$" > "$PID_FILE"
+    printf '{"status":"active","ringing":true,"mode":"%s","volume":%d}\n' "$alarm_mode" "$target_vol" > "$STATE_FILE"
     mqtt_pub "alarm/status" "active"
 
-    # Play chime to alarm_in channel
-    if [ -f "$sound_file" ]; then
-        aplay -q -D alarm_in "$sound_file" 2>/dev/null || aplay -q "$sound_file" 2>/dev/null || true
+    # Volume Setup (Sharp = instant 100%, Gentle = fade-in)
+    if [ "$alarm_mode" = "sharp" ] || [ "$fade_sec" -le 0 ]; then
+        set_alarm_channel_vol 100
+    else
+        set_alarm_channel_vol 10
+        (
+            local cur=10
+            local steps=10
+            local delay=$((fade_sec / steps))
+            [ "$delay" -lt 1 ] && delay=1
+            local step_v=$(((100 - 10) / steps))
+            local i=0
+            while [ "$i" -lt "$steps" ]; do
+                sleep "$delay"
+                [ ! -f "$PID_FILE" ] && exit 0
+                cur=$((cur + step_v))
+                [ "$cur" -gt 100 ] && cur=100
+                set_alarm_channel_vol "$cur"
+                i=$((i + 1))
+            done
+            set_alarm_channel_vol 100
+        ) &
     fi
 
-    # Start audio stream
-    mpg123 -a alarm_in "$stream_url" >/dev/null 2>&1 &
-    local stream_pid=$!
-    echo "$stream_pid $$" > "$PID_FILE"
+    # Audio Playback Loop
+    (
+        local end_time=$(($(date +%s) + (duration_min * 60)))
+        
+        if [ "$sound_type" = "chime" ] || [ "$sound_type" = "chime_then_stream" ]; then
+            local repeats=0
+            while [ $(date +%s) -lt "$end_time" ] && [ -f "$PID_FILE" ]; do
+                if [ -f "$sound_file" ]; then
+                    aplay -q -D alarm_in "$sound_file" 2>/dev/null || aplay -q "$sound_file" 2>/dev/null || true
+                else
+                    aplay -q -D alarm_in /usr/share/sounds/bell.wav 2>/dev/null || true
+                fi
+                repeats=$((repeats + 1))
+                if [ "$sound_type" = "chime_then_stream" ] && [ "$repeats" -ge 3 ]; then
+                    break
+                fi
+                sleep 0.5
+            done
+        fi
 
-    # Non-blocking smooth fade-in
-    local steps=10
-    local step_delay=$((fade_sec / steps))
-    [ "$step_delay" -lt 1 ] && step_delay=1
-    local vol_step=$(((target_vol - 5) / steps))
-    [ "$vol_step" -lt 1 ] && vol_step=1
+        if [ "$sound_type" = "stream" ] || [ "$sound_type" = "chime_then_stream" ]; then
+            if [ $(date +%s) -lt "$end_time" ] && [ -f "$PID_FILE" ]; then
+                mpg123 -a alarm_in "$stream_url" >/dev/null 2>&1
+            fi
+        fi
 
-    local cur_vol=5
-    local i=0
-    while [ "$i" -lt "$steps" ]; do
-        sleep "$step_delay"
-        [ ! -f "$PID_FILE" ] && exit 0
-        cur_vol=$((cur_vol + vol_step))
-        [ "$cur_vol" -gt 100 ] && cur_vol=100
-        set_alarm_channel_vol "$cur_vol"
-        i=$((i + 1))
-    done
-    set_alarm_channel_vol 100
-
-    # Auto-stop after duration
-    local total_wait=$((duration_min * 60))
-    local elapsed=0
-    while [ "$elapsed" -lt "$total_wait" ]; do
-        sleep 5
-        [ ! -f "$PID_FILE" ] && exit 0
-        elapsed=$((elapsed + 5))
-    done
-
-    do_stop
+        do_stop
+    ) &
 }
 
 do_sync_cron() {
@@ -135,7 +172,6 @@ do_sync_cron() {
     hour=$((10#$hour))
     min=$((10#$min))
 
-    # Remove existing smart_alarm lines
     mkdir -p /etc/crontabs
     touch "$CRON_FILE"
     grep -v "smart_alarm.sh" "$CRON_FILE" > "${CRON_FILE}.tmp" || true
@@ -150,13 +186,16 @@ do_sync_cron() {
 
 case "$1" in
     start|trigger)
-        do_start 0 &
+        do_start 0
         ;;
     test)
-        do_start 1 &
+        do_start 1
         ;;
     stop|dismiss)
         do_stop
+        ;;
+    snooze)
+        do_snooze
         ;;
     sync_cron)
         do_sync_cron
@@ -165,11 +204,11 @@ case "$1" in
         if [ -f "$STATE_FILE" ]; then
             cat "$STATE_FILE"
         else
-            echo '{"status":"idle"}'
+            echo '{"status":"idle","ringing":false}'
         fi
         ;;
     *)
-        echo "Usage: $0 {start|stop|test|sync_cron|status}"
+        echo "Usage: $0 {start|stop|test|snooze|sync_cron|status}"
         exit 1
         ;;
 esac

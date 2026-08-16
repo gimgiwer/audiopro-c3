@@ -1972,14 +1972,14 @@
 
         <div id="smartAlarmSection" class="accordion-body">
           <div class="helper-box">
-            Autonomous scheduled wake-up with gentle volume fade-in and high-priority Web Radio streaming via dedicated ALSA <code>alarm_in</code> channel.
+            Full-featured autonomous alarm with hard music ducking, customizable melody, sharp/gentle wake-up profiles, and Snooze.
           </div>
 
           <form onsubmit="saveAlarmSettings(event)">
             <div class="form-group" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
               <div>
                 <strong style="font-size:0.9rem; color:var(--text-primary);">Alarm Schedule</strong>
-                <div style="font-size:0.75rem; color:var(--text-secondary);">Enable autonomous cron wake-up</div>
+                <div style="font-size:0.75rem; color:var(--text-secondary);">Enable autonomous wake-up</div>
               </div>
               <label class="switch">
                 <input type="checkbox" id="alarmEnabledToggle">
@@ -1994,8 +1994,41 @@
               </div>
               <div>
                 <label style="font-size:0.75rem; color:var(--text-secondary);">Target Volume (%)</label>
-                <input type="number" id="alarmVolumeInput" class="input-field" style="margin-top:4px;" min="5" max="100" value="40" required>
+                <input type="number" id="alarmVolumeInput" class="input-field" style="margin-top:4px;" min="5" max="100" value="60" required>
               </div>
+            </div>
+
+            <div class="form-group" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:14px;">
+              <div>
+                <label style="font-size:0.75rem; color:var(--text-secondary);">Wake-up Profile</label>
+                <select id="alarmModeSelect" class="input-field" style="margin-top:4px;">
+                  <option value="sharp">Sharp / Instant (Резкий звонок)</option>
+                  <option value="gentle">Gentle Fade-in (Плавное нарастание)</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:0.75rem; color:var(--text-secondary);">Sound Source</label>
+                <select id="alarmSoundTypeSelect" class="input-field" style="margin-top:4px;" onchange="onAlarmSoundTypeChange()">
+                  <option value="chime">Built-in Signal (WAV)</option>
+                  <option value="stream">Web Radio / MP3 Stream</option>
+                  <option value="chime_then_stream">Signal + Radio Stream</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="alarmSoundFileWrap" class="form-group" style="margin-bottom:14px;">
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Alarm Melody</label>
+              <select id="alarmSoundFileSelect" class="input-field" style="margin-top:4px;">
+                <option value="/usr/share/sounds/alarm_sharp.wav">Sharp Electronic Chime (Резкий сигнал)</option>
+                <option value="/usr/share/sounds/bell.wav">Gentle Morning Gong (Мягкий гонг)</option>
+                <option value="/usr/share/sounds/boot.wav">Boot Chime</option>
+                <option value="/usr/share/sounds/wifi_connected.wav">Bright Chord</option>
+              </select>
+            </div>
+
+            <div id="alarmStreamUrlWrap" class="form-group" style="display:none; margin-bottom:14px;">
+              <label style="font-size:0.75rem; color:var(--text-secondary);">Radio Stream URL</label>
+              <input type="text" id="alarmStreamUrlInput" class="input-field" style="margin-top:4px;" placeholder="http://..." value="http://icecast.vrtcdn.be/klara-high.mp3">
             </div>
 
             <div class="form-group" style="margin-bottom:14px;">
@@ -2011,19 +2044,17 @@
               </div>
             </div>
 
-            <div class="form-group" style="margin-bottom:16px;">
-              <label style="font-size:0.75rem; color:var(--text-secondary);">Radio Stream URL</label>
-              <input type="text" id="alarmStreamUrlInput" class="input-field" style="margin-top:4px;" placeholder="http://..." value="http://icecast.vrtcdn.be/klara-high.mp3">
-            </div>
-
-            <div style="display:flex; gap:8px;">
-              <button type="submit" class="btn-primary" style="flex:2; height:38px;">
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button type="submit" class="btn-primary" style="flex:2; min-width:120px; height:38px;">
                 <span>Save Alarm</span>
               </button>
-              <button type="button" class="btn-header" style="flex:1; height:38px; border-radius:var(--radius-sm);" onclick="testAlarm()">
+              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="testAlarm()">
                 <span>Test</span>
               </button>
-              <button type="button" class="btn-header" style="flex:1; height:38px; border-radius:var(--radius-sm);" onclick="stopAlarm()">
+              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="snoozeAlarm()">
+                <span>Snooze</span>
+              </button>
+              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="stopAlarm()">
                 <span>Stop</span>
               </button>
             </div>
@@ -3818,6 +3849,15 @@
       btn.classList.toggle('active');
     }
 
+    function onAlarmSoundTypeChange() {
+      const type = document.getElementById('alarmSoundTypeSelect') ? document.getElementById('alarmSoundTypeSelect').value : 'chime';
+      const soundWrap = document.getElementById('alarmSoundFileWrap');
+      const streamWrap = document.getElementById('alarmStreamUrlWrap');
+
+      if (soundWrap) soundWrap.style.display = (type === 'stream') ? 'none' : 'block';
+      if (streamWrap) streamWrap.style.display = (type === 'chime') ? 'none' : 'block';
+    }
+
     function getSelectedAlarmDays() {
       const activeBtns = document.querySelectorAll('#alarmDaysContainer .btn-day-toggle.active');
       const days = [];
@@ -3846,13 +3886,20 @@
             const toggle = document.getElementById('alarmEnabledToggle');
             const timeIn = document.getElementById('alarmTimeInput');
             const volIn = document.getElementById('alarmVolumeInput');
+            const modeSel = document.getElementById('alarmModeSelect');
+            const typeSel = document.getElementById('alarmSoundTypeSelect');
+            const fileSel = document.getElementById('alarmSoundFileSelect');
             const urlIn = document.getElementById('alarmStreamUrlInput');
 
             if (toggle) toggle.checked = !!a.enabled;
             if (timeIn) timeIn.value = a.time || '07:00';
-            if (volIn) volIn.value = a.target_volume || 40;
+            if (volIn) volIn.value = a.target_volume || 60;
+            if (modeSel) modeSel.value = a.alarm_mode || 'sharp';
+            if (typeSel) typeSel.value = a.sound_type || 'chime';
+            if (fileSel && a.sound_file) fileSel.value = a.sound_file;
             if (urlIn) urlIn.value = a.stream_url || 'http://icecast.vrtcdn.be/klara-high.mp3';
             setSelectedAlarmDays(a.days || '1,2,3,4,5');
+            onAlarmSoundTypeChange();
           }
         })
         .catch(err => console.warn('Get alarm error:', err));
@@ -3863,11 +3910,14 @@
       haptic(20);
       const en = document.getElementById('alarmEnabledToggle') ? (document.getElementById('alarmEnabledToggle').checked ? '1' : '0') : '0';
       const time = document.getElementById('alarmTimeInput') ? document.getElementById('alarmTimeInput').value : '07:00';
-      const vol = document.getElementById('alarmVolumeInput') ? document.getElementById('alarmVolumeInput').value : '40';
+      const vol = document.getElementById('alarmVolumeInput') ? document.getElementById('alarmVolumeInput').value : '60';
+      const mode = document.getElementById('alarmModeSelect') ? document.getElementById('alarmModeSelect').value : 'sharp';
+      const stype = document.getElementById('alarmSoundTypeSelect') ? document.getElementById('alarmSoundTypeSelect').value : 'chime';
+      const sfile = document.getElementById('alarmSoundFileSelect') ? document.getElementById('alarmSoundFileSelect').value : '/usr/share/sounds/alarm_sharp.wav';
       const url = document.getElementById('alarmStreamUrlInput') ? document.getElementById('alarmStreamUrlInput').value.trim() : '';
       const days = getSelectedAlarmDays();
 
-      const params = `action=save_alarm&enabled=${en}&time=${encodeURIComponent(time)}&target_volume=${vol}&days=${encodeURIComponent(days)}&stream_url=${encodeURIComponent(url)}`;
+      const params = `action=save_alarm&enabled=${en}&time=${encodeURIComponent(time)}&target_volume=${vol}&alarm_mode=${mode}&sound_type=${stype}&sound_file=${encodeURIComponent(sfile)}&days=${encodeURIComponent(days)}&stream_url=${encodeURIComponent(url)}`;
       apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(d => showToast(d.message || 'Alarm settings saved'))
@@ -3880,6 +3930,14 @@
       apiFetch('/api?action=test_alarm')
         .then(res => res.json())
         .catch(err => console.warn('Test alarm error:', err));
+    }
+
+    function snoozeAlarm() {
+      haptic(25);
+      showToast('Snoozing alarm for 9 minutes...');
+      apiFetch('/api?action=snooze_alarm')
+        .then(res => res.json())
+        .catch(err => console.warn('Snooze alarm error:', err));
     }
 
     function stopAlarm() {

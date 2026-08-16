@@ -819,36 +819,69 @@ function handle_request(env)
         end
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d updated"}', pid))
 
+    elseif action == "list_alarm_sounds" then
+        local p = io.popen("ls /usr/share/sounds/*.wav 2>/dev/null", "r")
+        local sounds = {}
+        if p then
+            for line in p:lines() do
+                local basename = string.match(line, "[^/]+$") or line
+                table.insert(sounds, string.format('{"name":"%s","path":"%s"}', json_escape(basename), json_escape(line)))
+            end
+            p:close()
+        end
+        uhttpd.send(string.format('{"status":"ok","sounds":[%s]}', table.concat(sounds, ",")))
+
     elseif action == "get_alarm" then
         local a_en = uci_get_val("mcud", "alarm", "enabled", "0")
         local a_time = uci_get_val("mcud", "alarm", "time", "07:00")
         local a_days = uci_get_val("mcud", "alarm", "days", "1,2,3,4,5")
-        local a_vol = tonumber(uci_get_val("mcud", "alarm", "target_volume", "40")) or 40
+        local a_vol = tonumber(uci_get_val("mcud", "alarm", "target_volume", "60")) or 60
+        local a_mode = uci_get_val("mcud", "alarm", "alarm_mode", "sharp")
+        local a_stype = uci_get_val("mcud", "alarm", "sound_type", "chime")
+        local a_sfile = uci_get_val("mcud", "alarm", "sound_file", "/usr/share/sounds/alarm_sharp.wav")
         local a_url = uci_get_val("mcud", "alarm", "stream_url", "http://icecast.vrtcdn.be/klara-high.mp3")
-        local a_fade = tonumber(uci_get_val("mcud", "alarm", "fade_sec", "60")) or 60
+        local a_fade = tonumber(uci_get_val("mcud", "alarm", "fade_sec", "0")) or 0
+        local a_dur = tonumber(uci_get_val("mcud", "alarm", "duration_min", "30")) or 30
+        local a_snooze = tonumber(uci_get_val("mcud", "alarm", "snooze_min", "9")) or 9
         local is_active = (read_file("/tmp/alarm.pid") ~= nil)
-        local resp = string.format('{"status":"ok","alarm":{"enabled":%s,"time":"%s","days":"%s","target_volume":%d,"stream_url":"%s","fade_sec":%d,"active":%s}}',
-            (a_en == "1" and "true" or "false"), json_escape(a_time), json_escape(a_days), a_vol, json_escape(a_url), a_fade, (is_active and "true" or "false"))
+
+        local resp = string.format('{"status":"ok","alarm":{"enabled":%s,"time":"%s","days":"%s","target_volume":%d,"alarm_mode":"%s","sound_type":"%s","sound_file":"%s","stream_url":"%s","fade_sec":%d,"duration_min":%d,"snooze_min":%d,"active":%s}}',
+            (a_en == "1" and "true" or "false"), json_escape(a_time), json_escape(a_days), a_vol,
+            json_escape(a_mode), json_escape(a_stype), json_escape(a_sfile), json_escape(a_url),
+            a_fade, a_dur, a_snooze, (is_active and "true" or "false"))
         uhttpd.send(resp)
 
     elseif action == "save_alarm" then
         local a_en = (params.enabled == "1" or params.enabled == "true") and "1" or "0"
         local a_time = params.time or "07:00"
         local a_days = params.days or "1,2,3,4,5"
-        local a_vol = tonumber(params.target_volume or "40") or 40
+        local a_vol = tonumber(params.target_volume or "60") or 60
+        local a_mode = (params.alarm_mode == "gentle") and "gentle" or "sharp"
+        local a_stype = params.sound_type or "chime"
+        local a_sfile = params.sound_file or "/usr/share/sounds/alarm_sharp.wav"
         local a_url = params.stream_url or "http://icecast.vrtcdn.be/klara-high.mp3"
-        local a_fade = tonumber(params.fade_sec or "60") or 60
+        local a_fade = tonumber(params.fade_sec or "0") or 0
+        local a_dur = tonumber(params.duration_min or "30") or 30
+        local a_snooze = tonumber(params.snooze_min or "9") or 9
+
         if uci_ctx then
             uci_ctx:set("mcud", "alarm", "enabled", a_en)
             uci_ctx:set("mcud", "alarm", "time", a_time)
             uci_ctx:set("mcud", "alarm", "days", a_days)
             uci_ctx:set("mcud", "alarm", "target_volume", tostring(a_vol))
+            uci_ctx:set("mcud", "alarm", "alarm_mode", a_mode)
+            uci_ctx:set("mcud", "alarm", "sound_type", a_stype)
+            uci_ctx:set("mcud", "alarm", "sound_file", a_sfile)
             uci_ctx:set("mcud", "alarm", "stream_url", a_url)
             uci_ctx:set("mcud", "alarm", "fade_sec", tostring(a_fade))
+            uci_ctx:set("mcud", "alarm", "duration_min", tostring(a_dur))
+            uci_ctx:set("mcud", "alarm", "snooze_min", tostring(a_snooze))
             uci_ctx:commit("mcud")
         else
-            os.execute(string.format("uci set mcud.alarm.enabled='%s'; uci set mcud.alarm.time='%s'; uci set mcud.alarm.days='%s'; uci set mcud.alarm.target_volume='%d'; uci set mcud.alarm.stream_url='%s'; uci set mcud.alarm.fade_sec='%d'; uci commit mcud 2>/dev/null",
-                a_en, string.gsub(a_time, "'", "'\\''"), string.gsub(a_days, "'", "'\\''"), a_vol, string.gsub(a_url, "'", "'\\''"), a_fade))
+            os.execute(string.format("uci set mcud.alarm.enabled='%s'; uci set mcud.alarm.time='%s'; uci set mcud.alarm.days='%s'; uci set mcud.alarm.target_volume='%d'; uci set mcud.alarm.alarm_mode='%s'; uci set mcud.alarm.sound_type='%s'; uci set mcud.alarm.sound_file='%s'; uci set mcud.alarm.stream_url='%s'; uci set mcud.alarm.fade_sec='%d'; uci set mcud.alarm.duration_min='%d'; uci set mcud.alarm.snooze_min='%d'; uci commit mcud 2>/dev/null",
+                a_en, string.gsub(a_time, "'", "'\\''"), string.gsub(a_days, "'", "'\\''"), a_vol,
+                string.gsub(a_mode, "'", "'\\''"), string.gsub(a_stype, "'", "'\\''"), string.gsub(a_sfile, "'", "'\\''"),
+                string.gsub(a_url, "'", "'\\''"), a_fade, a_dur, a_snooze))
         end
         os.execute("/usr/bin/smart_alarm.sh sync_cron >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Smart alarm configuration saved"}')
@@ -856,6 +889,10 @@ function handle_request(env)
     elseif action == "test_alarm" or action == "trigger_alarm" then
         os.execute("/usr/bin/smart_alarm.sh test >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Alarm test triggered"}')
+
+    elseif action == "snooze_alarm" then
+        os.execute("/usr/bin/smart_alarm.sh snooze >/dev/null 2>&1 &")
+        uhttpd.send('{"status":"ok","message":"Alarm snoozed"}')
 
     elseif action == "stop_alarm" or action == "dismiss_alarm" then
         os.execute("/usr/bin/smart_alarm.sh stop >/dev/null 2>&1")
