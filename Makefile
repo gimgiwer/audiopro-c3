@@ -1,7 +1,7 @@
 # Cross-compilation Makefile for MT7628 MIPS32 LE utilities
 
 CC := zig cc -target mipsel-linux-musleabi
-CFLAGS := -static -Os -fno-stack-protector
+CFLAGS := -static -Os -march=24kc -mtune=24kc -fno-stack-protector
 
 all: bin/i2s_dump bin/i2s_tiny bin/telnetd bin/mcud bin/aec_bridge
 
