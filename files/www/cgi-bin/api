@@ -521,21 +521,23 @@ SEC_EOF
         if [ -f "$EQ_FILE" ]; then
             cat "$EQ_FILE"
         else
-            echo "{\"status\":\"ok\",\"b60\":0,\"b250\":0,\"b1k\":0,\"b4k\":0,\"b12k\":0,\"preset\":\"Default\"}"
+            echo "{\"status\":\"ok\",\"b60\":2,\"b150\":1,\"b400\":0,\"b1k\":0,\"b2k5\":1,\"b6k\":2,\"b14k\":1,\"preset\":\"Default\"}"
         fi
         ;;
     save_eq)
         B60=$(printf "%d" "$(get_param b60)" 2>/dev/null || echo 0)
-        B250=$(printf "%d" "$(get_param b250)" 2>/dev/null || echo 0)
+        B150=$(printf "%d" "$(get_param b150)" 2>/dev/null || echo 0)
+        B400=$(printf "%d" "$(get_param b400)" 2>/dev/null || echo 0)
         B1K=$(printf "%d" "$(get_param b1k)" 2>/dev/null || echo 0)
-        B4K=$(printf "%d" "$(get_param b4k)" 2>/dev/null || echo 0)
-        B12K=$(printf "%d" "$(get_param b12k)" 2>/dev/null || echo 0)
+        B2K5=$(printf "%d" "$(get_param b2k5)" 2>/dev/null || echo 0)
+        B6K=$(printf "%d" "$(get_param b6k)" 2>/dev/null || echo 0)
+        B14K=$(printf "%d" "$(get_param b14k)" 2>/dev/null || echo 0)
         EQ_PRE_RAW=$(get_param preset)
         EQ_PRE=$(urldecode "$EQ_PRE_RAW" | tr -cd "[:alnum:] _-")
         [ -z "$EQ_PRE" ] && EQ_PRE="Custom"
         
         cat << EQ_EOF > /tmp/audiopro_eq.json
-{"status":"ok","b60":$B60,"b250":$B250,"b1k":$B1K,"b4k":$B4K,"b12k":$B12K,"preset":"$EQ_PRE"}
+{"status":"ok","b60":$B60,"b150":$B150,"b400":$B400,"b1k":$B1K,"b2k5":$B2K5,"b6k":$B6K,"b14k":$B14K,"preset":"$EQ_PRE"}
 EQ_EOF
         echo "{\"status\":\"ok\",\"message\":\"Equalizer updated\",\"preset\":\"$EQ_PRE\"}"
         ;;
