@@ -2843,14 +2843,23 @@
       }
     }
 
-    // Custom Fetch Wrapper with automatic 403 handling
+    // Custom Fetch Wrapper with automatic 403 handling & Lua /api acceleration
     function apiFetch(url, options = {}) {
-      return fetch(url, options).then(res => {
+      const targetUrl = url.replace('/cgi-bin/api', '/api');
+      return fetch(targetUrl, options).then(res => {
         if (res.status === 403) {
           showLoginOverlay();
           throw new Error('Authentication required');
         }
+        if (res.status === 404 && targetUrl.startsWith('/api')) {
+          return fetch(url, options);
+        }
         return res;
+      }).catch(err => {
+        if (targetUrl.startsWith('/api') && err.message !== 'Authentication required') {
+          return fetch(url, options);
+        }
+        throw err;
       });
     }
 

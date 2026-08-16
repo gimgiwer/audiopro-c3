@@ -1071,7 +1071,7 @@ define Device/audiopro_c3
   DEVICE_PACKAGES := kmod-sound-mt7620 alsa-utils alsa-lib \
                      shairport-sync-mbedtls librespot squeezelite gmrender-resurrect snapclient mpg123 \
                      avahi-nodbus-daemon zram-swap mcud \
-                     uhttpd uhttpd-mod-ubox px5g-mbedtls
+                     uhttpd uhttpd-mod-ubox px5g-mbedtls uhttpd-mod-lua liblua libuci-lua
   SUPPORTED_DEVICES += audiopro,c3 linkplay,a28
 endef
 TARGET_DEVICES += audiopro_c3
