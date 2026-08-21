@@ -5,7 +5,10 @@ config librespot 'main'
 	option device 'spotify_in'
 	option bitrate '320'
 	option volume_ctrl 'linear'
-	option initial_volume '65'
+	# No initial_volume on purpose: with --mixer alsa, librespot's documented
+	# default is "the current volume", so it reads Master instead of writing it.
+	# Passing a number here made every restart slam the level and fire a phantom
+	# mixer event at mcud.
 	option device_type 'speaker'
 	option disable_audio_cache '1'
 	option mixer 'alsa'
@@ -14,3 +17,7 @@ config librespot 'main'
 	# f64->S16 dither costs a multiply, an add and an RNG draw per sample on a
 	# CPU with no FPU, and buys nothing while the ALSA mixer does the attenuation
 	option dither 'none'
+	# S16 because that is all the i2s block actually plays - it advertises S32_LE
+	# and then hands the DAC white noise (see the dmixer comment in asound.conf).
+	# Matches spotify_in/Master/dmix, so no conversion happens on the way down.
+	option format 'S16'
