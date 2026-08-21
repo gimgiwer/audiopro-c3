@@ -1,0 +1,180 @@
+Round, dither and ramp the softvol attenuator
+
+Two separate reasons the volume control on this speaker rasps:
+
+1. The 16 bit path floors the 16.16 product with a plain shift, so the error is
+   a full LSB wide and biased half an LSB down, and it tracks the signal instead
+   of being noise. That is the gritty edge on quiet passages. Round to nearest
+   and add TPDF dither (xorshift, no FPU here).
+2. get_current_volume() is read once per write, so a whole period - up to 20 ms -
+   is converted at one gain. A slider drag moves the control by more than a dB
+   between two writes, and applying that as a single step mid-waveform clicks.
+   Walk the gain index across the block in 32-frame steps; the index is linear
+   in dB, so a fixed step is a fixed dB slope, and the walk always lands inside
+   the block it started in.
+
+The whole volume tree on this board is softvol - the PCM5102A DAC has no volume
+register and the TPA3116 gain is pin-strapped - so everything the user hears
+goes through this file.
+--- a/src/pcm/pcm_softvol.c
++++ b/src/pcm/pcm_softvol.c
+@@ -48,6 +48,8 @@
+ 	snd_ctl_t *ctl;
+ 	snd_ctl_elem_value_t elem;
+ 	unsigned int cur_vol[2];
++	unsigned int ramp_vol[2];  /* gain index in use, walked toward cur_vol */
++	int ramp_valid;
+ 	unsigned int max_val;     /* max index */
+ 	unsigned int zero_dB_val; /* index at 0 dB */
+ 	double min_dB;
+@@ -58,6 +60,32 @@
+ #define VOL_SCALE_SHIFT		16
+ #define VOL_SCALE_MASK          ((1 << VOL_SCALE_SHIFT) - 1)
+ 
++/* Attenuation shifts the 16.16 product back down to 16 bit and a plain >> floors
++ * it: the error is a full LSB wide, biased half an LSB down, and locked to the
++ * signal - which is what makes a quiet stream sound gritty rather than just
++ * quiet. Round to nearest and add TPDF dither, so what is left is noise with no
++ * bias. 16 bit only; at 24/32 bit the same error sits below -140 dBFS. xorshift
++ * because this core has no FPU.
++ */
++static unsigned int softvol_dither_state = 2463534242U;
++
++static inline unsigned int softvol_random(void)
++{
++	unsigned int x = softvol_dither_state;
++	x ^= x << 13;
++	x ^= x >> 17;
++	x ^= x << 5;
++	softvol_dither_state = x;
++	return x;
++}
++
++/* two uniforms differenced: triangular over +-1 LSB of the product */
++static inline int softvol_tpdf(void)
++{
++	return (int)(softvol_random() & VOL_SCALE_MASK) -
++	       (int)(softvol_random() & VOL_SCALE_MASK);
++}
++
+ #define PRESET_RESOLUTION	256
+ #define PRESET_MIN_DB		-51.0
+ #define ZERO_DB                  0.0
+@@ -164,13 +192,21 @@
+ 	unsigned int gain = b >> VOL_SCALE_SHIFT;
+ 	int fraction;
+ 	a = swap ? (short)bswap_16(a) : a;
+-	fraction = (int)(a * (b & VOL_SCALE_MASK)) >> VOL_SCALE_SHIFT;
+ 	if (gain) {
+-		int amp = a * gain + fraction;
++		int amp;
++		fraction = (int)(a * (b & VOL_SCALE_MASK)) >> VOL_SCALE_SHIFT;
++		amp = a * gain + fraction;
+ 		if (abs(amp) > 0x7fff)
+ 			amp = (a<0) ? (short)0x8000 : (short)0x7fff;
+ 		return swap ? (short)bswap_16((short)amp) : (short)amp;
+ 	}
++	/* 64 bit: a * 0xffff already fills an int, the dither would wrap it */
++	fraction = (int)(((long long)a * (b & VOL_SCALE_MASK) + softvol_tpdf() +
++			  (1 << (VOL_SCALE_SHIFT - 1))) >> VOL_SCALE_SHIFT);
++	if (fraction > 0x7fff)
++		fraction = 0x7fff;
++	else if (fraction < -0x8000)
++		fraction = -0x8000;
+ 	return swap ? (short)bswap_16((short)fraction) : (short)fraction;
+ }
+ 
+@@ -641,6 +677,25 @@
+ 	return 0;
+ }
+ 
++/* One write can carry 20 ms of audio, and a phone dragging the volume slider
++ * moves the control by a dB or more between two of them. Applying the new gain
++ * to the whole block at once steps the waveform mid-cycle and clicks, so walk
++ * the gain index across the block instead. The index is linear in dB, so a
++ * fixed step is a fixed dB slope, and the walk always finishes inside the block
++ * it started in - nothing is held back.
++ */
++#define RAMP_FRAMES	32	/* 0.7 ms at 44.1 kHz */
++
++static unsigned int ramp_move(unsigned int from, unsigned int to,
++			      unsigned int step)
++{
++	if (to > from)
++		return to - from <= step ? to : from + step;
++	if (from - to <= step)
++		return to;
++	return from - step;
++}
++
+ static snd_pcm_uframes_t
+ snd_pcm_softvol_write_areas(snd_pcm_t *pcm,
+ 			    const snd_pcm_channel_area_t *areas,
+@@ -651,15 +706,61 @@
+ 			    snd_pcm_uframes_t *slave_sizep)
+ {
+ 	snd_pcm_softvol_t *svol = pcm->private_data;
++	snd_pcm_uframes_t done = 0;
++	unsigned int target[2], step[2], blocks, c;
++
+ 	if (size > *slave_sizep)
+ 		size = *slave_sizep;
+ 	get_current_volume(svol);
+-	if (svol->cchannels == 1)
+-		softvol_convert_mono_vol(svol, slave_areas, slave_offset,
+-					 areas, offset, pcm->channels, size);
+-	else
+-		softvol_convert_stereo_vol(svol, slave_areas, slave_offset,
+-					   areas, offset, pcm->channels, size);
++	target[0] = svol->cur_vol[0];
++	target[1] = svol->cur_vol[1];
++	if (! svol->ramp_valid) {
++		svol->ramp_vol[0] = target[0];
++		svol->ramp_vol[1] = target[1];
++		svol->ramp_valid = 1;
++	}
++	blocks = size / RAMP_FRAMES;
++	if (! blocks)
++		blocks = 1;
++	/* step off the distance we start with, not the one that is left, or the
++	 * walk decays instead of arriving */
++	for (c = 0; c < 2; c++) {
++		unsigned int delta = svol->ramp_vol[c] < target[c] ?
++			target[c] - svol->ramp_vol[c] :
++			svol->ramp_vol[c] - target[c];
++		step[c] = (delta + blocks - 1) / blocks;
++		if (! step[c])
++			step[c] = 1;
++	}
++
++	while (done < size) {
++		snd_pcm_uframes_t chunk = size - done;
++
++		if (svol->ramp_vol[0] != target[0] ||
++		    svol->ramp_vol[1] != target[1]) {
++			if (chunk > RAMP_FRAMES)
++				chunk = RAMP_FRAMES;
++			svol->ramp_vol[0] = ramp_move(svol->ramp_vol[0],
++						      target[0], step[0]);
++			svol->ramp_vol[1] = ramp_move(svol->ramp_vol[1],
++						      target[1], step[1]);
++		}
++		svol->cur_vol[0] = svol->ramp_vol[0];
++		svol->cur_vol[1] = svol->ramp_vol[1];
++		if (svol->cchannels == 1)
++			softvol_convert_mono_vol(svol, slave_areas,
++						 slave_offset + done,
++						 areas, offset + done,
++						 pcm->channels, chunk);
++		else
++			softvol_convert_stereo_vol(svol, slave_areas,
++						   slave_offset + done,
++						   areas, offset + done,
++						   pcm->channels, chunk);
++		done += chunk;
++	}
++	svol->cur_vol[0] = target[0];
++	svol->cur_vol[1] = target[1];
+ 	*slave_sizep = size;
+ 	return size;
+ }
