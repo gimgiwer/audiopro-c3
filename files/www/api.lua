@@ -1,5 +1,5 @@
 --[[
-    Native In-Process Unified API Engine for Audio Pro Addon C3
+    Native In-Process Unified API Engine for Audio Pro C3
     Zero-fork execution running natively inside uhttpd-mod-lua
 --]]
 

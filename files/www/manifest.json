@@ -1,6 +1,6 @@
 {
-  "name": "Audio Pro Addon C3",
-  "short_name": "AudioPro C3",
+  "name": "Audio Pro C3",
+  "short_name": "Audio Pro C3",
   "description": "Hi-Fi Wireless Sound Controller for Audio Pro C3",
   "start_url": "/",
   "display": "standalone",
