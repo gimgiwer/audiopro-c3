@@ -1,16 +1,21 @@
 
 config librespot 'main'
 	option enabled '1'
-	option name 'Audio Pro Addon C3'
+	option name 'Audio Pro C3'
 	option device 'spotify_in'
 	option bitrate '320'
-	option volume_ctrl 'linear'
-	# No initial_volume on purpose: with --mixer alsa, librespot's documented
-	# default is "the current volume", so it reads Master instead of writing it.
-	# Passing a number here made every restart slam the level and fire a phantom
-	# mixer event at mcud.
+	# log, not linear: on a softvol librespot forces its antilog mapping, which
+	# turns "log" into a straight index = 10 * percent - the same dB scale the
+	# panel buttons and shairport-sync use. linear would make 25% mean -12 dB.
+	option volume_ctrl 'log'
+	# Name it, don't leave it out: 0.8.0 has no "keep current volume" default, it
+	# falls back to u16::MAX/2 and writes 50% to Master on every connect.
+	option initial_volume '25'
 	option device_type 'speaker'
 	option disable_audio_cache '1'
+	# Credentials on flash, so a tap in Spotify is a transfer to an already
+	# logged-in session instead of a full zeroconf handshake (~5 s on this CPU).
+	option system_cache '/root/.cache/librespot'
 	option mixer 'alsa'
 	option mixer_device 'default'
 	option mixer_control 'Master'
