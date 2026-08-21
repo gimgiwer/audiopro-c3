@@ -28,6 +28,7 @@
 #define WATCHDOG_CHECK_MS    5000
 #define SLEEP_CHECK_MS       5000
 #define VOL_STEP_PERCENT     5
+#define MCU_VOL_TOLERANCE    2   /* MCU rounds our 0..100 onto its own scale */
 #define MAX_LINE_LEN         128
 #define READ_BUF_SIZE        256
 #define BUTTON_DEBOUNCE_MS   120
@@ -120,6 +121,8 @@ static int  g_is_playing = 0;        /* 1 = Audio stream running, 0 = Stopped */
 static time_t g_last_activity_time = 0;
 static int64_t g_last_button_ms = 0;
 
+static time_t g_mcu_link_ts = 0;      /* when we last ran the MCU handshake */
+static char g_mcu_ver[16] = "";
 static time_t g_last_vol_pub_sec = 0;
 static int    g_pending_vol_pub = -1;
 static int    g_last_bat = 100;
@@ -308,9 +311,65 @@ static void alsa_set_master(int vol) {
     if (!g_master_elem) return;
     long min = 0, max = 100;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return;
-    long v = min + (long)vol * (max - min) / 100;
+    long v = min + ((long)vol * (max - min) + 50) / 100;
     if (snd_mixer_selem_set_playback_volume_all(g_master_elem, v) < 0)
         LOG_WARN("Failed to set ALSA Master to %d%%", vol);
+}
+
+/* softvol picks its gain up between transfer chunks (10-25 ms here), so a 5% key
+ * press lands as a 3 dB step in the middle of the waveform - that is the click
+ * you hear when turning the volume on a sustained note. Walk there in six pieces
+ * instead: 0.5 dB each at one press, quiet enough to vanish into the music, and
+ * the whole move still lands well inside the panel's 120 ms debounce. */
+#define VOL_RAMP_MS     20
+#define VOL_RAMP_TICKS  6
+
+static struct uloop_timeout g_vol_ramp;
+static long g_ramp_target = -1;   /* raw, -1 when no ramp is in flight */
+static long g_ramp_step;
+
+static void vol_ramp_cb(struct uloop_timeout *t) {
+    (void)t;
+    long cur = 0;
+    if (g_ramp_target < 0 || !g_master_elem) return;
+    if (snd_mixer_selem_get_playback_volume(g_master_elem, SND_MIXER_SCHN_FRONT_LEFT, &cur) < 0) {
+        g_ramp_target = -1;
+        return;
+    }
+    long next = cur + g_ramp_step;
+    if ((g_ramp_step > 0 && next >= g_ramp_target) ||
+        (g_ramp_step < 0 && next <= g_ramp_target)) {
+        next = g_ramp_target;
+        g_ramp_target = -1;
+    }
+    if (snd_mixer_selem_set_playback_volume_all(g_master_elem, next) < 0) {
+        LOG_WARN("Failed to set ALSA Master to raw %ld", next);
+        g_ramp_target = -1;
+        return;
+    }
+    if (g_ramp_target >= 0)
+        uloop_timeout_set(&g_vol_ramp, VOL_RAMP_MS);
+}
+
+static void alsa_ramp_master(int vol) {
+    if (!g_master_elem) return;
+    long min = 0, max = 100, cur = 0;
+    if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return;
+    if (snd_mixer_selem_get_playback_volume(g_master_elem, SND_MIXER_SCHN_FRONT_LEFT, &cur) < 0) {
+        alsa_set_master(vol);
+        return;
+    }
+    long target = min + ((long)vol * (max - min) + 50) / 100;
+    long delta = target - cur;
+    if (!delta) {
+        g_ramp_target = -1;
+        return;
+    }
+    g_ramp_step = delta / VOL_RAMP_TICKS;
+    if (!g_ramp_step) g_ramp_step = delta > 0 ? 1 : -1;
+    g_ramp_target = target;
+    g_vol_ramp.cb = vol_ramp_cb;
+    vol_ramp_cb(&g_vol_ramp);     /* first piece now, the rest on the timer */
 }
 
 static int alsa_get_master(void) {
@@ -319,7 +378,7 @@ static int alsa_get_master(void) {
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return -1;
     if (snd_mixer_selem_get_playback_volume(g_master_elem, SND_MIXER_SCHN_FRONT_LEFT, &v) < 0) return -1;
     if (max == min) return -1;
-    return (int)((v - min) * 100 / (max - min));
+    return (int)(((v - min) * 100 + (max - min) / 2) / (max - min));
 }
 
 /* Someone else moved the control - librespot's alsa mixer, amixer, ha_ducking.
@@ -330,6 +389,7 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
     (void)events;
     if (!g_mixer) return;
     snd_mixer_handle_events(g_mixer);
+    if (g_ramp_target >= 0) return;   /* mid-ramp, this is our own write */
 
     int vol = alsa_get_master();
     if (vol < 0 || vol == g_user_vol) return;
@@ -470,7 +530,7 @@ static void set_user_volume(int vol) {
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
     g_user_vol = vol;
-    alsa_set_master(g_user_vol);
+    alsa_ramp_master(g_user_vol);
 
     /* Raw 0..100, exactly as stock sent it. The MCU only bookkeeps the number so
      * its own +/- buttons start from the right base - it does not attenuate. */
@@ -841,6 +901,39 @@ static void process_mcu_command(const char *cmd) {
         return;
     }
 
+    if (!strncmp(cmd, "MCU+VER+", 8)) {
+        snprintf(g_mcu_ver, sizeof(g_mcu_ver), "%.15s", cmd + 8);
+        LOG_INFO("MCU firmware version: %s", g_mcu_ver);
+        return;
+    }
+
+    /* An absolute volume report, as opposed to MCU+VOL+GET. The panel sends
+     * MCU+KEY+VOL+/- for real presses, so this is the MCU telling us the number
+     * it has been bookkeeping - and it re-quantizes on its own scale (send 049,
+     * get 048 back, MCU+VMX+030 says it thinks in 30 steps). Adopting that
+     * blindly walked the level down one step per handshake. We own the only
+     * attenuator, so within the quantization noise we say "in sync", right after
+     * a handshake we re-assert our value, and only an unsolicited jump counts as
+     * something the MCU changed on its own. */
+    if (!strncmp(cmd, "MCU+VOL+", 8) && isdigit((unsigned char)cmd[8])) {
+        int v = atoi(cmd + 8);
+        if (v < 0 || v > 100) return;
+        int d = v > g_user_vol ? v - g_user_vol : g_user_vol - v;
+        if (d <= MCU_VOL_TOLERANCE) {
+            LOG_DEBUG("MCU volume %d%% vs ours %d%%, within MCU quantization", v, g_user_vol);
+        } else if (time(NULL) - g_mcu_link_ts <= 5) {
+            LOG_INFO("MCU came up holding %d%%, re-asserting %d%%", v, g_user_vol);
+            mcu_report_state("VOL", g_user_vol);
+        } else {
+            LOG_INFO("Volume changed on the MCU side: %d%%", v);
+            g_user_vol = v;
+            alsa_set_master(v);
+            mqtt_publish_volume(v);
+            vol_touch();
+        }
+        return;
+    }
+
     if (strstr(cmd, "MCU+KEY+")) {
         /* Mechanical Debounce only for hardware button presses */
         struct timespec ts;
@@ -1024,6 +1117,7 @@ static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
     blobmsg_add_u8(&b, "power", true);
     blobmsg_add_u32(&b, "volume", g_user_vol);
     blobmsg_add_u32(&b, "mcu_volume", g_user_vol);
+    blobmsg_add_string(&b, "mcu_version", g_mcu_ver);
     blobmsg_add_string(&b, "source", get_source_name(g_current_source));
     blobmsg_add_u32(&b, "battery", g_battery_pct);
     blobmsg_add_u8(&b, "charging", g_is_charging ? 1 : 0);
@@ -1525,7 +1619,15 @@ int main(int argc, char *argv[]) {
     uart_send(CMD_UNMUTE);
     uart_send(CMD_PLAY_START);
 
+    /* Straight write first: softvol creates the control at 0 dB when its params
+     * change, and fading down from full scale is not something to do while
+     * something might already be playing. */
+    alsa_set_master(g_user_vol);
     set_user_volume(g_user_vol);
+    /* The MCU only volunteers its version when asked, and it answers this one
+     * (AXX+VER+GET gets nothing). Worth having in the log next to a bug report. */
+    uart_send("AXX+MCU+VER\n");
+    g_mcu_link_ts = time(NULL);
     LOG_INFO("Linkplay MCU initialized: I2S Play Mode (AXX+PLM+000), Amplifier Unmuted, AudioPro Wake synced.");
     if (g_auto_sleep_min > 0) {
         LOG_INFO("Inactivity Auto-Sleep timer enabled: %d minutes", g_auto_sleep_min);
