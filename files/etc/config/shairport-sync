@@ -6,7 +6,13 @@ config shairport-sync 'shairport_sync'
 	option mdns_backend 'avahi'
 	option port '5000'
 	option alsa_output_device 'airplay_in'
-	option alsa_mixer_control_name 'AirPlay'
+	# Master, not AirPlay: the per-app softvol attenuates in whatever format the
+	# client opened (S16 for AirPlay), and 16-bit attenuation puts the truncation
+	# floor right where the music is being pushed. Master is the S32 stage, and
+	# sharing it means the phone slider, the panel and mcud all move the same
+	# number. It also always exists - mcud creates it at boot, while a per-app
+	# softvol control only appears once that PCM is first opened.
+	option alsa_mixer_control_name 'Master'
 	# Buffer size in frames @ 44.1kHz:
 	# 6615 = 150ms (Default — stable on 2.4GHz Wi-Fi)
 	# 2205 =  50ms (Fast home network)
@@ -16,4 +22,5 @@ config shairport-sync 'shairport_sync'
 	option alsa_disable_synchronization 'no'
 	# 50ms drift threshold before forced resync (0 = disabled, causes glitches on bad Wi-Fi)
 	option resync_threshold '2205'
-	option ignore_volume_control 'yes'
+	# Let the AirPlay client's slider through; it lands on Master above
+	option ignore_volume_control 'no'

@@ -8,7 +8,7 @@ PROG=/usr/bin/librespot
 
 start_service() {
     local enabled name device bitrate volume vol_ctrl dev_type disable_cache
-    local mixer mixer_dev mixer_ctl dither saved
+    local mixer mixer_dev mixer_ctl dither format
     local fifo=/tmp/librespot_cmd
 
     config_load librespot
@@ -18,17 +18,7 @@ start_service() {
     config_get name main name 'Audio Pro Addon C3'
     config_get device main device 'spotify_in'
     config_get bitrate main bitrate '320'
-    config_get volume main initial_volume '65'
-
-    # mcud persists the live Master level. Adopt it, otherwise the first Spotify
-    # connect yanks a 1% night-time volume back up to the config default.
-    if [ -r /etc/mcud.volume ]; then
-        read -r saved < /etc/mcud.volume
-        case "$saved" in
-            ''|*[!0-9]*) ;;
-            *) [ "$saved" -le 100 ] && volume="$saved" ;;
-        esac
-    fi
+    config_get volume main initial_volume ''
     config_get vol_ctrl main volume_ctrl 'linear'
     config_get dev_type main device_type 'speaker'
     config_get_bool disable_cache main disable_audio_cache 1
@@ -36,8 +26,14 @@ start_service() {
     config_get mixer_dev main mixer_device 'default'
     config_get mixer_ctl main mixer_control 'Master'
     config_get dither main dither 'none'
+    config_get format main format 'S32'
 
-    local args="--backend alsa --device $device --bitrate $bitrate --name \"$name\" --initial-volume $volume --volume-ctrl $vol_ctrl --device-type $dev_type --onevent /usr/bin/spotify_event_handler.sh --dither $dither"
+    local args="--backend alsa --device $device --bitrate $bitrate --name \"$name\" --volume-ctrl $vol_ctrl --device-type $dev_type --onevent /usr/bin/spotify_event_handler.sh --dither $dither --format $format"
+
+    # Left empty on purpose: with --mixer alsa librespot's default initial volume
+    # is "the current volume", so it reads Master instead of writing it. Passing a
+    # number slammed the level on every restart and fired a phantom mixer event.
+    [ -n "$volume" ] && args="$args --initial-volume $volume"
     [ "$disable_cache" -eq 1 ] && args="$args --disable-audio-cache"
 
     # Drive the shared Master softvol instead of librespot's own attenuation,
@@ -47,9 +43,15 @@ start_service() {
 
     # Local transport control: Spotify Connect has no way for the speaker itself
     # to press play, so player_control.sh feeds commands in here. librespot holds
-    # it open read+write, so writers never block.
-    [ -p "$fifo" ] || { rm -f "$fifo"; mkfifo -m 0644 "$fifo"; }
-    args="$args --control-fifo $fifo"
+    # it open read+write, so writers never block. The flag is ours (see
+    # patches/librespot/), so probe for it - an unpatched binary treats it as a
+    # usage error and procd just respawn-loops it forever.
+    if $PROG --help 2>&1 | grep -q -- --control-fifo; then
+        [ -p "$fifo" ] || { rm -f "$fifo"; mkfifo -m 0644 "$fifo"; }
+        args="$args --control-fifo $fifo"
+    else
+        logger -t librespot "binary has no --control-fifo, local transport control disabled"
+    fi
 
     procd_open_instance
     procd_set_param command /bin/sh -c "exec $PROG $args"
