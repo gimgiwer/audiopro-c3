@@ -1,4 +1,10 @@
 #!/bin/sh
+play_file() {  # $1=file $2=alsa slot; mp3 через mpg123, остальное через aplay
+    case "$1" in
+        *.mp3|*.MP3) mpg123 -q -a "$2" -- "$1" 2>/dev/null ;;
+        *) aplay -q -D "$2" -- "$1" 2>/dev/null ;;
+    esac
+}
 # Audio Pro C3 - Smart Countdown Timer Engine
 # Handles background countdowns, MQTT state broadcasting, and ALSA alarm chime on completion
 
@@ -36,7 +42,7 @@ do_stop_ringing() {
             [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
         done
     fi
-    local extra_pids=$(pgrep -f "aplay.*timer_in" 2>/dev/null)
+    local extra_pids=$(pgrep -f "mpg123.*timer_in|aplay.*timer_in" 2>/dev/null)
     if [ -n "$extra_pids" ]; then
         for ep in $extra_pids; do
             kill -9 "$ep" 2>/dev/null || true
@@ -89,9 +95,9 @@ do_ring() {
     local end_ring=$(($(date +%s) + ring_duration))
     while [ $(date +%s) -lt "$end_ring" ] && [ -f "$RING_PID_FILE" ]; do
         if [ -f "$sound_file" ]; then
-            aplay -q -D timer_in "$sound_file" 2>/dev/null || aplay -q -D timer_in /usr/share/sounds/timer_sharp.wav 2>/dev/null || true
+            play_file "$sound_file" timer_in || play_file /usr/share/sounds/timer_sharp.mp3 timer_in || true
         else
-            aplay -q -D timer_in /usr/share/sounds/timer_sharp.wav 2>/dev/null || true
+            play_file /usr/share/sounds/timer_sharp.mp3 timer_in || true
         fi
         sleep 0.4
     done
@@ -102,7 +108,7 @@ do_ring() {
 do_start() {
     local total_sec=${1:-300}
     local name=${2:-"Timer"}
-    local sound_file=${3:-"/usr/share/sounds/timer_sharp.wav"}
+    local sound_file=${3:-"/usr/share/sounds/timer_sharp.mp3"}
     local volume=${4:-70}
 
     [ "$total_sec" -le 0 ] && exit 0

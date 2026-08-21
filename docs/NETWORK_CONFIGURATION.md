@@ -1,66 +1,72 @@
-# 🌐 Руководство по настройке сети (Network Configuration Guide)
+# Network Configuration
 
-Колонка **Audio Pro Addon C3** под управлением OpenWrt 23.05 поддерживает два режима работы Wi-Fi:
-1. **AP Mode (Точка доступа)** — режим по умолчанию для первоначальной настройки (полностью идентичен стоковому `10.10.10.254/24`).
-2. **STA Mode (Клиент Wi-Fi)** — подключение к вашей домашней Wi-Fi сети для интеграции с Home Assistant, Spotify Connect и AirPlay.
+The speaker runs two Wi-Fi interfaces off the single MT7628 radio at the same time:
+a setup access point that is always up, and an optional station link to your own
+network. All values below are read from `files/etc/config/{wireless,network,dhcp,uhttpd,system}`.
 
----
+## 1. Setup access point (default, always on)
 
-## 1. Режим точки доступа (AP Mode — По умолчанию)
+Out of the box the speaker publishes its own network:
 
-При первом старте колонка создаёт собственную защищённую беспроводную сеть с привычной стоковой адресацией:
+| | |
+|---|---|
+| SSID | `AudioPro-C3-Setup` |
+| Passphrase | `setup12345` |
+| Encryption | `psk2` (WPA2-PSK) |
+| Address | `10.10.10.254/24` (interface `ap`) |
+| DHCP pool | `10.10.10.100` – `10.10.10.199` (start 100, limit 100), 1 h leases |
 
-* **Имя сети (SSID):** `AudioPro-C3-Setup`
-* **Пароль:** `setup12345`
-* **Шифрование:** WPA2-PSK
-* **IP-адрес колонки:** `10.10.10.254` (Маска: `255.255.255.0` / 24)
-* **DHCP-сервер:** автоматически выдаёт IP-адреса подключающимся клиентам в диапазоне `10.10.10.100` – `10.10.10.250`.
+Change the passphrase before putting the speaker on an untrusted network — it is a
+published default, so treat it as public.
 
-### Как подключиться:
-1. Подключитесь со смартфона или ПК к Wi-Fi сети `AudioPro-C3-Setup`.
-2. Откройте терминал или веб-браузер:
-   * **SSH:** `ssh root@10.10.10.254` (без пароля).
-   * **REST API:** `http://10.10.10.254/cgi-bin/api?status`.
-
----
-
-## 2. Подключение к домашней Wi-Fi сети (STA Mode)
-
-Чтобы колонка подключилась к вашему домашнему роутеру, выполните на колонке следующие команды через SSH:
+To connect:
 
 ```bash
-# 1. Задайте имя и пароль вашей домашней Wi-Fi сети:
-uci set wireless.sta_iface.ssid='ИМЯ_ВАШЕГО_WI_FI'
-uci set wireless.sta_iface.key='ПАРОЛЬ_ОТ_WI_FI'
+ssh root@10.10.10.254                 # no password on a fresh image
+curl http://10.10.10.254/api/status   # REST API
+```
+
+The API prefix is `/api` (`uhttpd.main.lua_prefix`), served by `/www/api.lua`.
+uhttpd listens on `:80` and `:443` on both IPv4 and IPv6, so `https://` works on
+every one of those addresses too — see the networking table in the README.
+
+## 2. Joining your own Wi-Fi (station mode)
+
+`sta_iface` ships disabled with an empty SSID so the image carries nobody's
+credentials. Fill it in over SSH:
+
+```bash
+uci set wireless.sta_iface.ssid='your-network'
+uci set wireless.sta_iface.encryption='psk2'
+uci set wireless.sta_iface.key='your-passphrase'
 uci set wireless.sta_iface.disabled='0'
-
-# 2. (Опционально) Отключите точку доступа для настройки:
-uci set wireless.ap_iface.disabled='1'
-
-# 3. Примените настройки:
 uci commit wireless
 /etc/init.d/network restart
 ```
 
----
+Leave `ap_iface` enabled. Keeping the setup AP up costs one virtual interface and
+is the only way back in if the station link fails, which is why `wwan` carries a
+higher route metric (600) than `lan` (100) rather than the AP being torn down.
 
-## 3. Обнаружение колонки в домашней сети (mDNS / Avahi)
+## 3. Finding the speaker afterwards
 
-После подключения к домашнему роутеру колонка получает IP по DHCP и автоматически транслирует своё имя по протоколу mDNS (Avahi):
+`system.@system[0].hostname` is `audiopro`, so avahi advertises:
 
-* **mDNS имя:** `http://audiopro-c3.local`
-* **AirPlay (Shairport-sync):** устройство `Audio Pro C3` автоматически отобразится на всех iPhone, iPad и Mac в локальной сети.
-* **Spotify Connect (Librespot):** колонка появится в списке доступных устройств приложения Spotify.
-* **Home Assistant:** автоматически обнаружит колонку по MQTT и добавит сенсоры и кнопки панели.
+* `http://audiopro.local` and `https://audiopro.local`
+* AirPlay via shairport-sync — appears on iOS/macOS automatically
+* Spotify Connect via librespot — appears in the Spotify device list
+* MQTT for Home Assistant on port 1883 (plaintext; `mcud.main.mqtt_port`)
 
----
+Ethernet (`eth0`) is configured as `lan` with `proto dhcp`, so if your unit exposes
+a wired port it takes an address from your router — it is *not* `10.10.10.254`.
+That address only ever belongs to the wireless setup AP.
 
-## 4. Возврат в режим точки доступа (Reset to AP)
+## 4. Getting back in after a Wi-Fi change
 
-Если вы сменили роутер или пароль от Wi-Fi и потеряли доступ:
-1. Подключитесь кабелем Ethernet к разъёму LAN (IP `10.10.10.254`).
-2. Либо выполните команду:
-   ```bash
-   uci set wireless.ap_iface.disabled='0'
-   uci commit wireless && /etc/init.d/network restart
-   ```
+The setup AP is unaffected by station-mode settings, so join `AudioPro-C3-Setup`
+and reach `10.10.10.254` as in section 1. If it was disabled:
+
+```bash
+uci set wireless.ap_iface.disabled='0'
+uci commit wireless && /etc/init.d/network restart
+```

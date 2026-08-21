@@ -1,4 +1,0 @@
-# SIP Accounts for Audio Pro C3
-# We don't register to a server, we just listen for direct IP calls from Home Assistant
-# answermode=auto ensures the speaker picks up immediately (Intercom/Paging mode)
-<sip:audiopro@0.0.0.0>;regint=0;pubint=0;answermode=auto

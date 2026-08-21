@@ -1,6 +1,23 @@
+> **CORRECTIONS — read before copying anything from this guide.**
+> Parts of this document predate testing on real hardware. The following claims in
+> it are wrong and are superseded by `docs/FLASHING.md`, `docs/I2S_HARDWARE_REGISTERS.md`
+> and the DTS actually shipped in `dts/mt7628an_audiopro_c3.dts`:
+>
+> | Stated here | Actually |
+> |---|---|
+> | SoC `MT7688AN` @ 575 MHz | `MT7628AN` @ 580 MHz |
+> | `firmware` capped at `0xB30000` (`reg = <0x250000 0xB30000>`) | single `firmware` at `<0x50000 0xfb0000>`, `IMAGE_SIZE := 16064k` — the capped layout is untested |
+> | codec `linux,snd-soc-dummy` | `pcm5102a` (`snd_soc_pcm5102a`) |
+> | TAS5707 DAC/DSP over I2C | no I2C devices exist on this board at all |
+> | MCLK 11.2896 MHz | stock builds with `CONFIG_I2S_MCLK_12MHZ=y` |
+> | GPIO_MODE `0x10000060` = `0x54154115` | not confirmed on hardware; see the register dump doc |
+>
+> The `bkKernel` / `user` / `user2` nodes below describe the **stock** layout. Our
+> image deliberately spans them — that is documented and intentional, not an accident.
+
 # Audio Pro Addon C3 (Linkplay A28 V01) — Complete Engineering & Porting Bundle
 
-> **Purpose:** Standalone engineering guide and reference bundle for system architects and embedded developers porting OpenWrt 5.15 / Linux to the **Linkplay A28 V01** module (MediaTek MT7688AN SoC, 16MB SPI Flash).
+> **Purpose:** Standalone engineering guide and reference bundle for system architects and embedded developers porting OpenWrt 5.15 / Linux to the **Linkplay A28 V01** module (MediaTek MT7628AN SoC, 16MB SPI Flash).
 
 ---
 
@@ -27,14 +44,14 @@
 | :--- | :--- | :--- |
 | **Device** | Audio Pro Addon C3 | Portable Hi-Fi Wireless Active Speaker |
 | **Module** | **Linkplay A28 V01** | Black PCB module, UUID `FF280012`, OUI `00:22:6C` |
-| **SoC** | **MediaTek MT7688AN** | MIPS 24KEc @ 575 MHz, Little-Endian (`mipsel`), **Soft-Float** (no hardware FPU, MT7628 family) |
+| **SoC** | **MediaTek MT7628AN** | MIPS 24KEc @ 580 MHz, Little-Endian (`mipsel`), **Soft-Float** (no hardware FPU, MT7628 family) |
 | **RAM** | **64 MB DDR2 SDRAM** | Winbond W9751G6KB-25 (512 Mbit, 16-bit, DDR2-800) |
 | **Flash** | 16 MB SPI NOR Flash | Winbond W25Q128BV (`0x00000000` – `0x01000000`) |
 | **Secondary MCU** | STM8 / Linkplay MCU | Manages 18650 battery charger, top panel pushbuttons, LEDs, input selector and amplifier power/mute |
 | **Bluetooth** | BT2 Sub-module | Dedicated daughterboard with 26 MHz crystal. Connected directly to the analog/DSP multiplexer and controlled via MCU |
-| **Audio Path** | I2S Master bus → DSP/Amp | MT7688AN generates MCLK/BCLK/WS, I2S Master stream, 44.1 kHz, 16-bit stereo |
+| **Audio Path** | I2S Master bus → DSP/Amp | MT7628AN generates MCLK/BCLK/WS, I2S Master stream, 44.1 kHz, 16-bit stereo |
 | **UART Console** | **3.3V TTL @ 57600 8N1** | Exposed test pads: `GND`, `TX`, `RX`, `3.3V`. In Linux: **`ttyS1`** (via `&uart0`) |
-| **UART MCU** | **`/dev/ttyS0` @ 57600 8N1** | Internal communication bus between MT7688AN SoC and Secondary MCU (via `&uart1`) |
+| **UART MCU** | **`/dev/ttyS0` @ 57600 8N1** | Internal communication bus between MT7628AN SoC and Secondary MCU (via `&uart1`) |
 
 ---
 
@@ -230,7 +247,8 @@ Source file: [`dts/mt7628an_audiopro_c3.dts`](../dts/mt7628an_audiopro_c3.dts)
 
 ### 5.1. MT7688 ASoC Sound Driver (`kmod-sound-mt7620`)
 In OpenWrt 23.05 (Linux 5.15), the MediaTek MT7688 I2S controller is natively supported via the upstream `kmod-sound-mt7620` package and patch `835-asoc-add-mt7620-support.patch`. 
-The driver handles hardware DMA FIFO buffers and registers `AudioPro-C3-I2S` as the primary sound card connected to Texas Instruments TAS5707 DAC/DSP.
+The driver handles hardware DMA FIFO buffers and registers the card that `simple-audio-card` names in the DTS. The codec is a
+pcm5102a-compatible I2S DAC with no control bus; there is no TAS5707 and no I2C.
 
 ### 5.2. Compilation Optimization Flags
 All C daemons and native binaries are compiled targeting the MIPS 24KEc core:
@@ -452,7 +470,7 @@ First-boot script (`/etc/uci-defaults/99-network-init`):
 #!/bin/sh
 # 1. LAN Network Configuration
 uci set network.lan.proto='static'
-uci set network.lan.ipaddr='192.168.1.1'
+uci set network.lan.ipaddr='<speaker-ip>'
 uci set network.lan.netmask='255.255.255.0'
 uci commit network
 
@@ -478,6 +496,6 @@ exit 0
    ```
 2. **Flash OpenWrt Sysupgrade to SPI Flash:**
    ```bash
-   scp openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin root@192.168.1.1:/tmp/sysupgrade.bin
-   ssh root@192.168.1.1 "sysupgrade -n /tmp/sysupgrade.bin"
+   scp openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin root@<speaker-ip>:/tmp/sysupgrade.bin
+   ssh root@<speaker-ip> "sysupgrade -n /tmp/sysupgrade.bin"
    ```

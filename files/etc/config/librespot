@@ -1,0 +1,16 @@
+
+config librespot 'main'
+	option enabled '1'
+	option name 'Audio Pro Addon C3'
+	option device 'spotify_in'
+	option bitrate '320'
+	option volume_ctrl 'linear'
+	option initial_volume '65'
+	option device_type 'speaker'
+	option disable_audio_cache '1'
+	option mixer 'alsa'
+	option mixer_device 'default'
+	option mixer_control 'Master'
+	# f64->S16 dither costs a multiply, an add and an RNG draw per sample on a
+	# CPU with no FPU, and buys nothing while the ALSA mixer does the attenuation
+	option dither 'none'

@@ -1,0 +1,82 @@
+--- a/drivers/staging/ralink-gdma/ralink-gdma.c
++++ b/drivers/staging/ralink-gdma/ralink-gdma.c
+@@ -220,11 +220,24 @@
+ {
+ 	struct gdma_dmaengine_chan *chan = to_gdma_dma_chan(c);
+ 	struct gdma_dma_dev *dma_dev = gdma_dma_chan_get_dev(chan);
+-	unsigned long flags, timeout;
++	unsigned long flags;
+ 	LIST_HEAD(head);
+-	int i = 0;
+ 
+ 	spin_lock_irqsave(&chan->vchan.lock, flags);
++
++	/* Kill the channel right here. The original code spun until it drained,
++	 * which wedges the box for good: alsa calls us from snd_pcm_drop() with
++	 * interrupts off, so jiffies never moves and the 5s timeout never fires.
++	 */
++	if (gdma_dma_read(dma_dev, GDMA_REG_CTRL0(chan->id)) &
++	    GDMA_REG_CTRL0_ENABLE) {
++		gdma_dma_write(dma_dev, GDMA_REG_CTRL0(chan->id), 0);
++		/* aborted mid-flight, so no done irq will release its slot and
++		 * the tasklet's two-transfer limit would stay blocked forever
++		 */
++		atomic_dec(&dma_dev->cnt);
++	}
++
+ 	chan->desc = NULL;
+ 	clear_bit(chan->id, &dma_dev->chan_issued);
+ 	vchan_get_all_descriptors(&chan->vchan, &head);
+@@ -232,25 +245,6 @@
+ 
+ 	vchan_dma_desc_free_list(&chan->vchan, &head);
+ 
+-	/* wait dma transfer complete */
+-	timeout = jiffies + msecs_to_jiffies(5000);
+-	while (gdma_dma_read(dma_dev, GDMA_REG_CTRL0(chan->id)) &
+-			GDMA_REG_CTRL0_ENABLE) {
+-		if (time_after_eq(jiffies, timeout)) {
+-			dev_err(dma_dev->ddev.dev, "chan %d wait timeout\n",
+-				chan->id);
+-			/* restore to init value */
+-			gdma_dma_write(dma_dev, GDMA_REG_CTRL0(chan->id), 0);
+-			break;
+-		}
+-		cpu_relax();
+-		i++;
+-	}
+-
+-	if (i)
+-		dev_dbg(dma_dev->ddev.dev, "terminate chan %d loops %d\n",
+-			chan->id, i);
+-
+ 	return 0;
+ }
+ 
+@@ -365,6 +359,7 @@
+ 		dst_addr = chan->fifo_addr;
+ 		ctrl0 = GDMA_REG_CTRL0_DST_ADDR_FIXED;
+ 		ctrl1 = (32 << GDMA_REG_CTRL1_SRC_REQ_SHIFT) |
++			GDMA_REG_CTRL1_COHERENT |
+ 			(chan->slave_id << GDMA_REG_CTRL1_DST_REQ_SHIFT);
+ 	} else if (chan->desc->direction == DMA_DEV_TO_MEM) {
+ 		src_addr = chan->fifo_addr;
+@@ -392,6 +387,8 @@
+ 	ctrl1 |= chan->id << GDMA_REG_CTRL1_NEXT_SHIFT;
+ 
+ 	chan->next_sg++;
++	gdma_dma_write(dma_dev, GDMA_REG_UNMASK_INT,
++		       gdma_dma_read(dma_dev, GDMA_REG_UNMASK_INT) | BIT(chan->id));
+ 	gdma_dma_write(dma_dev, GDMA_REG_SRC_ADDR(chan->id), src_addr);
+ 	gdma_dma_write(dma_dev, GDMA_REG_DST_ADDR(chan->id), dst_addr);
+ 	gdma_dma_write(dma_dev, GDMA_REG_CTRL1(chan->id), ctrl1);
+@@ -758,6 +755,9 @@
+ {
+ 	u32 gct;
+ 
++	/* unmask all channel interrupts */
++	gdma_dma_write(dma_dev, GDMA_REG_UNMASK_INT, 0xffff);
++
+ 	/* all chans round robin */
+ 	gdma_dma_write(dma_dev, GDMA_REG_GCT, GDMA_REG_GCT_ARBIT_RR);
+ 

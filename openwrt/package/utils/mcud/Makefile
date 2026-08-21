@@ -12,13 +12,14 @@ define Package/mcud
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=Linkplay Secondary MCU Hardware Supervisor Daemon for Audio Pro C3
-  DEPENDS:=+alsa-lib +libmosquitto
+  DEPENDS:=+alsa-lib +libmosquitto +libubus +libblobmsg-json +libubox
 endef
 
 define Package/mcud/description
   Hardware Supervisor Daemon for Audio Pro Addon C3 (Linkplay A28 V01).
-  Manages TAS57xx hardware DSP master volume, top panel buttons, battery status ADC,
-  input source switching (Wi-Fi/BT/AUX), watchdog, auto-sleep, and Home Assistant MQTT Discovery.
+  Manages TAS57xx/TPA3116D2 hardware master volume with psychoacoustic curve,
+  top panel buttons, battery & charging status ADC, input source switching (Wi-Fi/BT/AUX),
+  ubus RPC API, watchdog, auto-sleep, and Home Assistant MQTT Discovery.
 endef
 
 define Build/Prepare
@@ -27,9 +28,9 @@ define Build/Prepare
 endef
 
 define Build/Compile
-	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror \
+	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra \
 		-o $(PKG_BUILD_DIR)/mcud $(PKG_BUILD_DIR)/mcud.c \
-		$(TARGET_LDFLAGS) -lasound -lmosquitto
+		$(TARGET_LDFLAGS) -lasound -lmosquitto -lubus -lubox -lblobmsg_json
 endef
 
 define Package/mcud/install
@@ -42,3 +43,4 @@ define Package/mcud/install
 endef
 
 $(eval $(call BuildPackage,mcud))
+

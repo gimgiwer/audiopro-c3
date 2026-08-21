@@ -1,78 +1,78 @@
-# Reference Hardware Registers: MediaTek MT7628AN (Audio Pro Addon C3)
+# I2S / GDMA registers on the MT7628AN (Audio Pro Addon C3)
 
-Captured from a live factory firmware session on **Audio Pro Addon C3 (Linkplay A28 V01)**:
-* **Firmware:** `4.2.337151`
-* **Release:** `20211130` (`build: release`)
-* **Inspection Method:** Direct physical memory inspection via `/dev/mem` using `src/i2s_dump.c`.
+> **This file was rewritten on 2026-08-21.** The previous version presented a
+> register table as a "live dump from factory firmware via `/dev/mem` using
+> `src/i2s_dump.c`". That capture never happened and the values in it were
+> wrong — see [Why the old table was wrong](#why-the-old-table-was-wrong).
+> Everything below is copy-pasted from the running speaker.
 
----
+## How to read the registers
 
-## 1. Pinmux & Clock Gating Configuration
+`/dev/mem` does not exist on this firmware (`CONFIG_DEVMEM` is off), so
+`i2s_dump.c` and anything else that mmaps physical memory cannot work. The I2S
+block is exposed through regmap debugfs instead:
 
-```text
-CHIP_ID (0x10000000):
-  [0x10000000] = 0x3637544D ("MT")
-  [0x10000004] = 0x20203832 ("28  ")
-  [0x1000000C] = 0x00010102 (MT7628AN Rev 2)
-
-CLKCFG (Clock configuration):
-  [0x1000002C] = 0x0020100C
-  [0x10000030] = 0xFBFFFFC0
-  [0x10000034] = 0x04000000
-  [0x10000038] = 0xC0030200
-
-AGPIO_CFG / GPIO_MODE (Pinmux):
-  [0x10000060] = 0x54154115   <--- REFERENCE PINMUX VALUE FOR OPENWRT DTS
-  [0x10000064] = 0x05540554
+```sh
+cat /sys/kernel/debug/regmap/10000a00.i2s/registers
 ```
 
-> **Key for OpenWrt DTS:** Register `0x10000060` = `0x54154115` configures the hardware pin multiplexing for I2S (MCLK, BCLK, WS, SDO, SDI), UART1, and GPIO lines.
-
----
-
-## 2. I2S Controller Registers (Base: `0x10000A00`)
-
-| Offset | Register | Value | Description |
-| :--- | :--- | :--- | :--- |
-| `0x10000A00` | `I2S_REG_CFG0` | `0xE1054040` | I2S Enable, Master Mode, FIFO setup |
-| `0x10000A04` | `I2S_REG_INT_STATUS` | `0x00000000` | Interrupt status |
-| `0x10000A08` | `I2S_REG_INT_EN` | `0x00000000` | Interrupt mask |
-| `0x10000A0C` | `I2S_REG_FF_STATUS` | `0x00001003` | FIFO buffer status |
-| `0x10000A10` | `I2S_REG_WREG` | `0x00001003` | DMA write port to I2S FIFO |
-| `0x10000A14` | `I2S_REG_RREG` | `0x00000000` | FIFO read port |
-| `0x10000A18` | `I2S_REG_CFG1` | `0x00000000` | Channel configuration |
-| `0x10000A1C` | `I2S_REG_DIVINT` | `0x00000000` | Integer MCLK clock divider |
-| `0x10000A20` | `I2S_REG_DIVCOMP` | `0x00000000` | Fractional MCLK clock divider |
-| `0x10000A24` | `I2S_REG_FLAGS` | `0x00000000` | Controller flags |
-
----
-
-## 3. General DMA (GDMA) Controller Registers (Base: `0x10002800`)
+## Live capture, card idle (no stream open)
 
 ```text
-GDMA Channels Configuration:
-  [0x10002800] = 0x03F05000
-  [0x10002804] = 0x10000A10   <--- Destination points to I2S FIFO WREG (0x10000A10)
-  [0x10002808] = 0x10000046
-  [0x1000280C] = 0x00200209
-  [0x10002810] = 0x03F06000
-  [0x10002814] = 0x10000A10   <--- Second DMA channel destination also points to I2S FIFO WREG
-  [0x10002818] = 0x10000046
-  [0x1000281C] = 0x00200211
+000: e0054040   CFG0    enable / DMA / format / thresholds
+004: 00000000   INT_STATUS
+008: 00000000   INT_EN
+00c: 00001003   FF_STATUS   FIFO level
+010: 00001003   WREG        DMA write port
+014: 00000000   RREG
+018: 00000000   CFG1
+020: 80000022   DIVCMP      fractional divider
+024: 000000aa   DIVINT      integer divider = 170
+100: 00160001
 ```
 
----
+Offsets `0x028`–`0x0fc` all read back `000000aa`. The hardware only decodes a
+few registers in that window, so `DIVINT` is mirrored across the rest; it is
+aliasing, not 54 real registers.
 
-## 4. Real-time ALSA Hardware Parameters during Playback
+Note `DIVINT` is at **0x24**, not 0x1c. Getting this wrong shifts every clock
+write by two registers and you get no BCLK at all.
 
-During active Spotify Connect / AirPlay playback at 44.1 kHz:
+## Clock
+
+    BCLK = 480 MHz / (DIVINT + DIVCMP_fraction/512),  BCLK = 64 x fs
+
+With the values above at 44.1 kHz: `DIVINT = 170 (0xaa)`, `DIVCMP = 0x80000022`.
+That is 480e6/170 = 2.824 MHz = 64 x 44.1 kHz, which checks out.
+
+## Audio topology, as reported by the running kernel
 
 ```text
-Sound Card:      0 [mtksnd]: noop - mtk_snd (MediaTek SoC I2S Master)
-Format:          S16_LE (16-bit Signed Little-Endian)
-Channels:        2 (Stereo)
-Sample Rate:     44100 Hz (44.1 kHz)
-Period Size:     1024 frames
-Buffer Size:     8192 frames
-Access:          MMAP_INTERLEAVED
+card 0: AudioProC3I2S [AudioPro-C3-I2S], simple-card
+codec:  snd_soc_pcm5102a      (TI PCM5102A, hardware-strapped)
+cpu:    snd_soc_ralink_i2s
+dma:    ralink_gdma
 ```
+
+There is **no I2C bus in use** — `/sys/bus/i2c/devices/` is empty. The PCM5102A
+has no control interface; its format and de-emphasis are strapped in hardware.
+So there is nothing to configure from software beyond the I2S clock itself.
+
+`snd_soc_wm8960` is also loaded but has a refcount of 0. It is pulled in by the
+kmod package and is not part of this board's path.
+
+## Why the old table was wrong
+
+| claim in the old file | what the hardware says |
+| --- | --- |
+| captured via `/dev/mem` + `i2s_dump.c` | `/dev/mem` does not exist on this build |
+| `CFG0 = 0xE1054040` | `0xe0054040` |
+| `DIVINT = 0x00000000` at offset `0x1C` | `0x000000aa` at offset `0x24` |
+| `DIVCOMP = 0x00000000` | `0x80000022` |
+| amplifier is a TAS5707 driven over I2C | codec is a PCM5102A, no I2C devices bound |
+| `noop` codec, card `mtksnd` | `simple-card`, card `AudioPro-C3-I2S` |
+
+The GDMA table in the old file (`0x10002800`…) was presented the same way and
+came from the same non-existent capture. Live GDMA state is visible through
+`/sys/kernel/debug/dmaengine/` and the driver in
+`patches/836-drivers-staging-ralink-gdma-fixes.patch`.

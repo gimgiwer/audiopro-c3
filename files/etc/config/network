@@ -8,6 +8,7 @@ config interface 'loopback'
 config interface 'lan'
 	option device 'eth0'
 	option proto 'dhcp'
+	option metric '100'
 
 # Wi-Fi AP Hotspot: Standalone setup mode (dedicated 10.10.10.254/24 subnet with DHCP server)
 config interface 'ap'
@@ -19,4 +20,20 @@ config interface 'ap'
 # Wi-Fi STA: Client mode (connects to home Wi-Fi and gets DHCP from home router)
 config interface 'wwan'
 	option proto 'dhcp'
+	option metric '600'
 
+# uhttpd listens on [::]:80 and [::]:443, so without these the v6 sockets
+# have nothing to bind to
+config interface 'lan6'
+	option device 'eth0'
+	option proto 'dhcpv6'
+	option reqaddress 'try'
+	option reqprefix 'no'
+	option metric '100'
+
+config interface 'wwan6'
+	option device '@wwan'
+	option proto 'dhcpv6'
+	option reqaddress 'try'
+	option reqprefix 'no'
+	option metric '600'

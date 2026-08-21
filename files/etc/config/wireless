@@ -1,10 +1,11 @@
 config wifi-device 'radio0'
+	option path 'platform/10300000.wmac'
 	option type 'mac80211'
-	option path '10300000.wmac'
 	option channel 'auto'
 	option band '2g'
 	option htmode 'HT20'
 	option disabled '0'
+	option powersave '0'
 
 # AP Mode: Setup access point for initial configuration (10.10.10.254 with DHCP server)
 config wifi-iface 'ap_iface'
@@ -26,4 +27,5 @@ config wifi-iface 'sta_iface'
 	option ssid ''
 	option encryption 'none'
 	option disabled '1'
+	option disassoc_low_ack '0'
 

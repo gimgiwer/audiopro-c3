@@ -19,7 +19,7 @@ start_service() {
     config_get_bool sleep_in_bt main sleep_in_bt 0
     config_get log_lvl main log_level "2"
     config_get_bool mqtt_enabled main mqtt_enabled 1
-    config_get mqtt_host main mqtt_host "127.0.0.1"
+    config_get mqtt_host main mqtt_host ""
     config_get mqtt_port main mqtt_port "1883"
     config_get mqtt_user main mqtt_user ""
     config_get mqtt_pass main mqtt_password ""
@@ -30,7 +30,8 @@ start_service() {
     [ "$sleep_in_aux" -eq 1 ] && args="$args -a"
     [ "$sleep_in_bt" -eq 1 ] && args="$args -b"
 
-    if [ "$mqtt_enabled" -eq 1 ]; then
+    # no broker host means MQTT stays off - otherwise mosquitto reconnects forever
+    if [ "$mqtt_enabled" -eq 1 ] && [ -n "$mqtt_host" ]; then
         args="$args -h $mqtt_host -p $mqtt_port -t $mqtt_prefix"
         [ -n "$mqtt_user" ] && args="$args -u $mqtt_user"
         [ -n "$mqtt_pass" ] && args="$args -P $mqtt_pass"
@@ -47,6 +48,3 @@ start_service() {
     procd_close_instance
 }
 
-stop_service() {
-    killall -TERM mcud 2>/dev/null
-}

@@ -4,20 +4,52 @@ START=90
 STOP=15
 
 USE_PROCD=1
-PROG=/usr/bin/librespot-wrapper.sh
+PROG=/usr/bin/librespot
 
 start_service() {
+    local enabled name device bitrate volume vol_ctrl dev_type disable_cache
+    local mixer mixer_dev mixer_ctl dither saved
+
+    config_load librespot
+    config_get_bool enabled main enabled 1
+    [ "$enabled" -eq 1 ] || return 0
+
+    config_get name main name 'Audio Pro Addon C3'
+    config_get device main device 'spotify_in'
+    config_get bitrate main bitrate '320'
+    config_get volume main initial_volume '65'
+
+    # mcud persists the live Master level. Adopt it, otherwise the first Spotify
+    # connect yanks a 1% night-time volume back up to the config default.
+    if [ -r /etc/mcud.volume ]; then
+        read -r saved < /etc/mcud.volume
+        case "$saved" in
+            ''|*[!0-9]*) ;;
+            *) [ "$saved" -le 100 ] && volume="$saved" ;;
+        esac
+    fi
+    config_get vol_ctrl main volume_ctrl 'linear'
+    config_get dev_type main device_type 'speaker'
+    config_get_bool disable_cache main disable_audio_cache 1
+    config_get mixer main mixer 'alsa'
+    config_get mixer_dev main mixer_device 'default'
+    config_get mixer_ctl main mixer_control 'Master'
+    config_get dither main dither 'none'
+
+    local args="--backend alsa --device $device --bitrate $bitrate --name \"$name\" --initial-volume $volume --volume-ctrl $vol_ctrl --device-type $dev_type --onevent /usr/bin/spotify_event_handler.sh --dither $dither"
+    [ "$disable_cache" -eq 1 ] && args="$args --disable-audio-cache"
+
+    # Drive the shared Master softvol instead of librespot's own attenuation,
+    # otherwise the Spotify slider and the panel buttons fight each other.
+    args="$args --mixer $mixer"
+    [ "$mixer" = "alsa" ] && args="$args --alsa-mixer-device $mixer_dev --alsa-mixer-control \"$mixer_ctl\""
+
     procd_open_instance
-    procd_set_param command "$PROG" \
-        --name "Audio Pro C3" \
-        --backend alsa \
-        --device spotify_in \
-        --mixer softvol \
-        --bitrate 320 \
-        --disable-audio-cache \
-        --onevent /usr/share/audiopro/meta_spotify.sh
+    procd_set_param command /bin/sh -c "exec $PROG $args"
     procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
     procd_set_param stderr 1
+    procd_set_param user root
     procd_close_instance
 }
+
