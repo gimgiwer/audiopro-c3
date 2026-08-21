@@ -1,2 +1,2 @@
-# Запуск умного будильника каждый будний день (ПН-ПТ) в 07:00 утра
+# Weekday wake-up alarm, off by default. Args: volume%, stream url.
 # 0 7 * * 1-5 /usr/bin/smart_alarm.sh 50 "http://icecast.vrtcdn.be/klara-high.mp3"

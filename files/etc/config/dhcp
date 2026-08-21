@@ -20,6 +20,8 @@ config dhcp 'ap'
 	option limit '100'
 	option leasetime '1h'
 	option dhcpv4 'server'
+	list dhcp_option '3,10.10.10.254'
+	list dhcp_option '6,10.10.10.254'
 
 
 # Ethernet LAN: No DHCP server (speaker is a client on the home network)

@@ -1,9 +1,15 @@
 #!/bin/sh
+play_file() {  # $1=file $2=alsa slot; mp3 через mpg123, остальное через aplay
+    case "$1" in
+        *.mp3|*.MP3) mpg123 -q -a "$2" -- "$1" 2>/dev/null ;;
+        *) aplay -q -D "$2" -- "$1" 2>/dev/null ;;
+    esac
+}
 # Advanced Home Assistant Audio Ducking & TTS Announcer
 ACTION="${1:-play}"
 TARGET="$2"
 MODE="${3:-normal}" # normal | critical
-CHIME="/usr/share/sounds/bell.wav"
+CHIME="/usr/share/sounds/bell.mp3"
 
 duck_down() {
     local is_critical="$1"
@@ -62,11 +68,11 @@ case "$ACTION" in
         duck_down "$is_crit"
         sleep 0.1
         amixer -q -c 0 sset TTS 100% 2>/dev/null || true
-        [ -f "$CHIME" ] && aplay -q -D tts_in -- "$CHIME" 2>/dev/null || true
+        [ -f "$CHIME" ] && play_file "$CHIME" tts_in || true
         
         if [ -n "$TARGET" ]; then
             if [ -f "$TARGET" ]; then
-                aplay -q -D tts_in -- "$TARGET" 2>/dev/null || true
+                play_file "$TARGET" tts_in || true
             elif echo "$TARGET" | grep -qE "^https?://"; then
                 if command -v mpg123 >/dev/null 2>&1; then
                     mpg123 -q -a tts_in -- "$TARGET" 2>/dev/null || true

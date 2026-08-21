@@ -1,3 +1,12 @@
+> **ARCHIVED — HISTORICAL, PARTLY UNVERIFIED.**
+> This is a working report from an earlier stage of the project, kept for the
+> reverse-engineering detail in it. Several claims in here were later disproved
+> against the actual hardware — notably the I2S register values, the "TAS5707
+> over I2C" amplifier, an 11.2896 MHz MCLK, and the smaller ALSA buffer figures.
+> For anything hardware-related trust `docs/I2S_HARDWARE_REGISTERS.md` and the
+> patches in `patches/`, not this file.
+
+
 # 📋 Исчерпывающая техническая спецификация: Кастомная прошивка OpenWrt 23.05 для Audio Pro Addon C3 (Linkplay A28 V01)
 
 Данный документ представляет собой полную инженерную спецификацию и отчёт портирования современной прошивки **OpenWrt 23.05.5 (Linux Kernel 5.15.167)** на беспроводную активную Hi-Fi акустику **Audio Pro Addon C3** (вычислительный модуль **Linkplay A28 V01**, SoC MediaTek MT7688AN, 64 MB RAM, 16 MB SPI Flash).
@@ -541,9 +550,9 @@ ctl.!default {
 
 | Файл | Размер | Назначение |
 | :--- | :--- | :--- |
-| [**`tftp_root/openwrt.bin`**](file:///home/gimgiwer/.gemini/antigravity/scratch/tftp_root/openwrt.bin) | **6.93 MB** | **Целевой образ для TFTP RAM Boot** (загрузка в оперативную память без прошивки) |
-| [`audiopro-c3/bin/openwrt-ramips-mt76x8-audiopro_c3-initramfs-kernel.bin`](file:///home/gimgiwer/.gemini/antigravity/scratch/audiopro-c3/bin/openwrt-ramips-mt76x8-audiopro_c3-initramfs-kernel.bin) | 6.93 MB | Резервная копия initramfs |
-| [`audiopro-c3/bin/openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin`](file:///home/gimgiwer/.gemini/antigravity/scratch/audiopro-c3/bin/openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin) | 7.1 MB | Образ для постоянной прошивки во Flash через `sysupgrade` или `mtd write` |
+| [**`tftp_root/openwrt.bin`**]((local path removed)) | **6.93 MB** | **Целевой образ для TFTP RAM Boot** (загрузка в оперативную память без прошивки) |
+| [`audiopro-c3/bin/openwrt-ramips-mt76x8-audiopro_c3-initramfs-kernel.bin`]((local path removed)) | 6.93 MB | Резервная копия initramfs |
+| [`audiopro-c3/bin/openwrt-ramips-mt76x8-audiopro_c3-squashfs-sysupgrade.bin`]((local path removed)) | 7.1 MB | Образ для постоянной прошивки во Flash через `sysupgrade` или `mtd write` |
 
 ### Заголовок uImage (`mkimage -l`):
 ```text

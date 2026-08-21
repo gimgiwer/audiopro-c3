@@ -3,12 +3,16 @@
 CC := zig cc -target mipsel-linux-musleabi
 CFLAGS := -static -Os -march=24kc -mtune=24kc -fno-stack-protector
 
+# mcud normally builds inside OpenWrt (openwrt/package/utils/mcud). This target is
+# only for a quick syntax/size check outside the buildroot.
+MCUD_SRC := openwrt/package/utils/mcud/src/mcud.c
+
 all: bin/i2s_dump bin/i2s_tiny bin/telnetd bin/mcud bin/aec_bridge
 
 bin:
 	mkdir -p bin
 
-bin/mcud: services/mcud.c | bin
+bin/mcud: $(MCUD_SRC) | bin
 	$(CC) $(CFLAGS) -o $@ $< -lpthread -lmosquitto
 
 bin/aec_bridge: services/aec_bridge.c | bin

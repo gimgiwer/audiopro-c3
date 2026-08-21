@@ -472,17 +472,18 @@ function handle_request(env)
         write_file("/tmp/current_mute", "0")
         uhttpd.send('{"status":"ok","mute":false}')
 
+    -- Stock has no input-select opcode: AXX+INP+* used to be sent here but it
+    -- appears nowhere in the stock rootfs, so the MCU just dropped it. AXX+PLM is
+    -- play/pause (mv_ioguard emits GNOTIFY=PLM_PAUSE/PLM_RESUME for it), not a
+    -- source selector. So the source is ours to track; only unmute is a real command.
     elseif action == "input" then
         local input = string.lower(params.val or params.input or "wifi")
-        if input == "wifi" or input == "i2s" then
-            send_mcu("AXX+INP+000\nAXX+PLM+001\nAXX+MUT+000\n")
-            write_file("/tmp/audio_source", "wifi")
-        elseif input == "bt" or input == "bluetooth" then
-            send_mcu("AXX+INP+002\n")
-            write_file("/tmp/audio_source", "bluetooth")
-        elseif input == "aux" then
-            send_mcu("AXX+INP+001\n")
-            write_file("/tmp/audio_source", "aux")
+        local sources = { wifi = "wifi", i2s = "wifi", bt = "bluetooth",
+                          bluetooth = "bluetooth", aux = "aux" }
+        local src = sources[input]
+        if src then
+            write_file("/tmp/audio_source", src)
+            send_mcu("AXX+MUT+000\n")
         end
         uhttpd.send(string.format('{"status":"ok","input":"%s"}', json_escape(input)))
 
@@ -840,7 +841,7 @@ function handle_request(env)
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d updated"}', pid))
 
     elseif action == "list_alarm_sounds" then
-        local p = io.popen("ls /usr/share/sounds/*.wav 2>/dev/null", "r")
+        local p = io.popen("ls /usr/share/sounds/*.mp3 /usr/share/sounds/*.wav 2>/dev/null", "r")
         local sounds = {}
         if p then
             for line in p:lines() do
@@ -858,7 +859,7 @@ function handle_request(env)
         local a_vol = tonumber(uci_get_val("mcud", "alarm", "target_volume", "60")) or 60
         local a_mode = uci_get_val("mcud", "alarm", "alarm_mode", "sharp")
         local a_stype = uci_get_val("mcud", "alarm", "sound_type", "chime")
-        local a_sfile = uci_get_val("mcud", "alarm", "sound_file", "/usr/share/sounds/alarm_sharp.wav")
+        local a_sfile = uci_get_val("mcud", "alarm", "sound_file", "/usr/share/sounds/alarm_sharp.mp3")
         local a_url = uci_get_val("mcud", "alarm", "stream_url", "http://icecast.vrtcdn.be/klara-high.mp3")
         local a_suri = uci_get_val("mcud", "alarm", "spotify_uri", "spotify:track:4cOdK2wGLETKBW3PvgPWqT")
         local a_fade = tonumber(uci_get_val("mcud", "alarm", "fade_sec", "0")) or 0
@@ -879,7 +880,7 @@ function handle_request(env)
         local a_vol = tonumber(params.target_volume or "60") or 60
         local a_mode = (params.alarm_mode == "gentle") and "gentle" or "sharp"
         local a_stype = params.sound_type or "chime"
-        local a_sfile = params.sound_file or "/usr/share/sounds/alarm_sharp.wav"
+        local a_sfile = params.sound_file or "/usr/share/sounds/alarm_sharp.mp3"
         local a_url = params.stream_url or "http://icecast.vrtcdn.be/klara-high.mp3"
         local a_suri = params.spotify_uri or "spotify:track:4cOdK2wGLETKBW3PvgPWqT"
         local a_fade = tonumber(params.fade_sec or "0") or 0
@@ -928,7 +929,7 @@ function handle_request(env)
             sec = min * 60
         end
         local name = params.name or "Timer"
-        local sound = params.sound or "/usr/share/sounds/alarm_sharp.wav"
+        local sound = params.sound or "/usr/share/sounds/alarm_sharp.mp3"
         local vol = tonumber(params.volume or "70") or 70
         if sec > 0 then
             os.execute(string.format("/usr/bin/smart_timer.sh start %d '%s' '%s' %d >/dev/null 2>&1 &",

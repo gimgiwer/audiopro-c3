@@ -2020,11 +2020,11 @@
             <div id="alarmSoundFileWrap" class="form-group" style="margin-bottom:14px;">
               <label style="font-size:0.75rem; color:var(--text-secondary);">Alarm Melody</label>
               <select id="alarmSoundFileSelect" class="input-field" style="margin-top:4px;">
-                <option value="/usr/share/sounds/alarm_wake_up.wav">🌅 Sunrise Harmonic Chimes (Мягкое утреннее пробуждение)</option>
-                <option value="/usr/share/sounds/bell.wav">🔔 Gentle Morning Gong (Мягкий гонг)</option>
-                <option value="/usr/share/sounds/alarm_sharp.wav">⚡ Sharp Electronic Chime (Резкий сигнал)</option>
-                <option value="/usr/share/sounds/wifi_connected.wav">✨ Bright Harmonic Chord (Светлый аккорд)</option>
-                <option value="/usr/share/sounds/boot.wav">🎵 Boot Melody</option>
+                <option value="/usr/share/sounds/alarm_wake_up.mp3">🌅 Восходящее арпеджио (мягкое пробуждение)</option>
+                <option value="/usr/share/sounds/bell.mp3">🔔 Колокол (стоковый)</option>
+                <option value="/usr/share/sounds/alarm_sharp.mp3">⚡ Двухтональный настойчивый</option>
+                <option value="/usr/share/sounds/timer_sharp.mp3">🔺 Три резких сигнала</option>
+                <option value="/usr/share/sounds/boot.mp3">🎵 Загрузочная мелодия (стоковая)</option>
               </select>
             </div>
 
@@ -3988,7 +3988,7 @@
       const vol = document.getElementById('alarmVolumeInput') ? document.getElementById('alarmVolumeInput').value : '60';
       const mode = document.getElementById('alarmModeSelect') ? document.getElementById('alarmModeSelect').value : 'sharp';
       const stype = document.getElementById('alarmSoundTypeSelect') ? document.getElementById('alarmSoundTypeSelect').value : 'chime';
-      const sfile = document.getElementById('alarmSoundFileSelect') ? document.getElementById('alarmSoundFileSelect').value : '/usr/share/sounds/alarm_sharp.wav';
+      const sfile = document.getElementById('alarmSoundFileSelect') ? document.getElementById('alarmSoundFileSelect').value : '/usr/share/sounds/alarm_sharp.mp3';
       const url = document.getElementById('alarmStreamUrlInput') ? document.getElementById('alarmStreamUrlInput').value.trim() : '';
       const spot = document.getElementById('alarmSpotifyUriInput') ? document.getElementById('alarmSpotifyUriInput').value.trim() : '';
       const days = getSelectedAlarmDays();

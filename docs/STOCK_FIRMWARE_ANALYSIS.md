@@ -43,7 +43,11 @@ Deep technical breakdown of the factory firmware captured from a running Audio P
 * **Linkplay MCU ASCII Protocol Commands:**
   - Power on / un-mute amplifier: `AXX+PLM+001\n` followed by `AXX+MUT+000\n`.
   - Set hardware volume: `AXX+VOL+020\n` (range `000` to `100`).
-  - Input selector: `AXX+INP+000\n` (Wi-Fi), `AXX+INP+001\n` (Aux 3.5mm), `AXX+INP+002\n` (Bluetooth).
+  - There is **no input-selector opcode**. `AXX+INP+*` was documented here earlier but
+    it occurs zero times anywhere in the stock rootfs, so the MCU never understood it.
+  - `AXX+PLM+%03d` is play/pause state, not a source selector — `mv_ioguard` emits
+    `GNOTIFY=PLM_PAUSE` / `GNOTIFY=PLM_RESUME` for it. Out-of-range values are sent as
+    `AXX+PLM+FFF`; the dispatcher range-checks `value < 101` (mv_ioguard `0x40cf5c`).
 
 ---
 
@@ -61,3 +65,7 @@ Deep technical breakdown of the factory firmware captured from a running Audio P
 | `mtd7` | **`0x00250000`** | **11.18 MB** | **Kernel_RootFS** (Target partition for OpenWrt `firmware`) |
 | `mtd8` | `0x00d80000` | 512 KB | **user** (JFFS2 writable config partition) |
 | `mtd9` | `0x00e00000` | 2 MB | **user2** (JFFS2 vendor certificates & keys) |
+
+> **Note:** the table above is the *stock* layout. Our firmware partition spans
+> `0x50000`–`0x1000000`, so `bkKernel`, `user` and `user2` are overwritten on flash.
+> `factory` (MAC + Wi-Fi calibration) sits below it and survives. See `docs/FLASHING.md`.

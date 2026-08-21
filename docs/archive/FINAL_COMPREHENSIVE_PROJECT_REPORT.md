@@ -1,3 +1,11 @@
+> **ARCHIVED — HISTORICAL, PARTLY UNVERIFIED.**
+> This is a working report from an earlier stage of the project, kept for the
+> reverse-engineering detail in it. Several claims in here were later disproved
+> against the actual hardware — notably the I2S register values, the "TAS5707
+> over I2C" amplifier, an 11.2896 MHz MCLK, and the smaller ALSA buffer figures.
+> For anything hardware-related trust `docs/I2S_HARDWARE_REGISTERS.md` and the
+> patches in `patches/`, not this file.
+
 # 📑 Исчерпывающий технический отчёт и спецификация проекта: Audio Pro Addon C3 (Linkplay A28 V01)
 
 > **Статус проекта:** Завершён, верифицирован, полностью протестирован и оформлен под ключ.  
@@ -785,7 +793,7 @@ config mcud 'main'
 	option enabled '1'
 	option default_volume '25'
 	option mqtt_enabled '1'
-	option mqtt_host '192.168.1.202'
+	option mqtt_host '<speaker-ip>'
 	option mqtt_port '1883'
 	option mqtt_user ''
 	option mqtt_pass ''
@@ -1022,7 +1030,7 @@ esac
 #define CHANNELS          2
 
 int main(int argc, char *argv[]) {
-    const char *ha_ip = (argc > 1) ? argv[1] : "192.168.1.202";
+    const char *ha_ip = (argc > 1) ? argv[1] : "<speaker-ip>";
     int ha_port = (argc > 2) ? atoi(argv[2]) : 12345;
 
     snd_pcm_t *c_handle, *p_handle;

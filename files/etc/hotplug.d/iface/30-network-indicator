@@ -1,0 +1,25 @@
+#!/bin/sh
+# Mirror the real uplink onto the MCU status LED. ubus is the only writer -
+# the old version also poked /tmp/mcu_fifo, which is not the fifo mcud opens.
+
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifdown ] || exit 0
+
+case "$INTERFACE" in
+	lan|wan|wan6|wwan|wwan6) ;;
+	*) exit 0 ;;
+esac
+
+# an ifdown on one medium while the other still routes must not blank the LED,
+# so trust the routing table instead of the event
+dev=$(ip route 2>/dev/null | awk '/^default/{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+
+if [ -n "$dev" ]; then
+	case "$dev" in
+		eth*) link=eth ;;
+		*)    link=wifi ;;
+	esac
+	ubus call mcud set_network_state "{\"state\":\"connected\",\"link\":\"$link\"}" 2>/dev/null
+else
+	ubus call mcud set_network_state '{"state":"disconnected"}' 2>/dev/null
+fi
+exit 0

@@ -1,0 +1,753 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 0d2d841..822b9df 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1978,6 +1978,7 @@ name = "librespot-playback"
+ version = "0.8.0"
+ dependencies = [
+  "alsa 0.10.0",
++ "cc",
+  "cpal",
+  "form_urlencoded",
+  "futures-util",
+diff --git a/Cargo.toml b/Cargo.toml
+index 71df187..cee5bf3 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -131,6 +131,8 @@ with-dns-sd = ["librespot-discovery/with-dns-sd"]
+ # externally. When enabled, audio is not decoded by librespot but passed through as raw Ogg Vorbis
+ # data.
+ passthrough-decoder = ["librespot-playback/passthrough-decoder"]
++# tremor-decoder: fixed-point Vorbis decoding, for CPUs with no FPU.
++tremor-decoder = ["librespot-playback/tremor-decoder"]
+ 
+ [lib]
+ name = "librespot"
+@@ -215,3 +217,10 @@ clippy.redundant_closure_for_method_calls = "warn"
+ 
+ [lints]
+ workspace = true
++
++[profile.release]
++opt-level = 3
++lto = true
++codegen-units = 1
++panic = "abort"
++strip = true
+diff --git a/connect/src/spirc.rs b/connect/src/spirc.rs
+index fec6057..12b2ad2 100644
+--- a/connect/src/spirc.rs
++++ b/connect/src/spirc.rs
+@@ -42,7 +42,10 @@ use std::{
+     time::{Duration, SystemTime, UNIX_EPOCH},
+ };
+ use thiserror::Error;
+-use tokio::{sync::mpsc, time::sleep};
++use tokio::{
++    sync::mpsc,
++    time::{Interval, MissedTickBehavior, interval, sleep},
++};
+ 
+ #[derive(Debug, Error)]
+ enum SpircError {
+@@ -144,6 +147,11 @@ const CONTEXT_FETCH_THRESHOLD: usize = 2;
+ const VOLUME_UPDATE_DELAY: Duration = Duration::from_millis(500);
+ // to reduce updates to remote, we group some request by waiting for a set amount of time
+ const UPDATE_STATE_DELAY: Duration = Duration::from_millis(200);
++// the alsa control we drive is shared with the speaker's own volume buttons and with
++// ha ducking, and librespot only reads it back in handle_play(), so poll it
++const MIXER_POLL_INTERVAL: Duration = Duration::from_millis(1000);
++// one step of a 100-step control, so the mixer's own rounding isn't seen as a move
++const MIXER_POLL_TOLERANCE: u16 = u16::MAX / 100;
+ 
+ /// The spotify connect handle
+ pub struct Spirc {
+@@ -463,6 +471,9 @@ impl SpircTask {
+             return;
+         }
+ 
++        let mut mixer_poll: Interval = interval(MIXER_POLL_INTERVAL);
++        mixer_poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
++
+         while !self.session.is_invalid() && !self.shutdown {
+             let commands = self.commands.as_mut();
+             let player_events = self.player_events.as_mut();
+@@ -537,6 +548,15 @@ impl SpircTask {
+                         error!("could not dispatch player event: {e}");
+                     }
+                 },
++                // someone else moved the mixer - the volume buttons go straight to alsa
++                _ = mixer_poll.tick(), if !self.update_volume => {
++                    let hw_volume = self.mixer.volume();
++                    let known = self.connect_state.device_info().volume as u16;
++                    if hw_volume.abs_diff(known) > MIXER_POLL_TOLERANCE {
++                        debug!("mixer moved externally: {known} -> {hw_volume}");
++                        self.set_volume(hw_volume);
++                    }
++                },
+                 _ = async { sleep(UPDATE_STATE_DELAY).await }, if self.update_state => {
+                     self.update_state = false;
+ 
+@@ -1151,6 +1171,13 @@ impl SpircTask {
+                 if let Some(shuffle) = shuffle {
+                     self.handle_shuffle(shuffle)?;
+                 }
++
++                if let Some(ref modes) = set_options.modes {
++                    if let Some(quality) = modes.get("audio_quality") {
++                        debug!("received audio_quality mode change: {quality}");
++                        self.connect_state.set_playback_quality(quality);
++                    }
++                }
+             }
+             SkipNext(skip_next) => self.handle_next(skip_next.track.map(|t| t.uri))?,
+             SkipPrev(_) => self.handle_prev()?,
+@@ -1871,6 +1898,8 @@ impl SpircTask {
+     }
+ 
+     fn load_track(&mut self, start_playing: bool, position_ms: u32) -> Result<(), Error> {
++        self.connect_state.apply_target_playback_quality();
++
+         if self.connect_state.current_track(MessageField::is_none) {
+             debug!("current track is none, stopping playback");
+             self.handle_stop();
+diff --git a/connect/src/state.rs b/connect/src/state.rs
+index f810d85..ee83d63 100644
+--- a/connect/src/state.rs
++++ b/connect/src/state.rs
+@@ -17,8 +17,8 @@ use crate::{
+         connect::{Capabilities, Device, DeviceInfo, MemberType, PutStateReason, PutStateRequest},
+         media::AudioQuality,
+         player::{
+-            ContextIndex, ContextPlayerOptions, PlayOrigin, PlayerState, ProvidedTrack,
+-            Suppressions,
++            BitrateLevel, BitrateStrategy, ContextIndex, ContextPlayerOptions, PlayOrigin,
++            PlaybackQuality, PlayerState, ProvidedTrack, Suppressions,
+         },
+     },
+     state::{
+@@ -202,6 +202,13 @@ impl ConnectState {
+                     device_info: MessageField::some(device_info),
+                     player_state: MessageField::some(PlayerState {
+                         session_id: session.session_id(),
++                        playback_quality: MessageField::some(PlaybackQuality {
++                            bitrate_level: EnumOrUnknown::new(BitrateLevel::very_high),
++                            strategy: EnumOrUnknown::new(BitrateStrategy::best_matching),
++                            target_bitrate_level: EnumOrUnknown::new(BitrateLevel::very_high),
++                            target_bitrate_available: true,
++                            ..Default::default()
++                        }),
+                         ..Default::default()
+                     }),
+                     ..Default::default()
+@@ -221,9 +228,21 @@ impl ConnectState {
+ 
+         // preserve the session_id
+         let session_id = self.player().session_id.clone();
++        let playback_quality = if self.player().playback_quality.is_some() {
++            self.player().playback_quality.clone()
++        } else {
++            MessageField::some(PlaybackQuality {
++                bitrate_level: EnumOrUnknown::new(BitrateLevel::very_high),
++                strategy: EnumOrUnknown::new(BitrateStrategy::best_matching),
++                target_bitrate_level: EnumOrUnknown::new(BitrateLevel::very_high),
++                target_bitrate_available: true,
++                ..Default::default()
++            })
++        };
+ 
+         self.device_mut().player_state = MessageField::some(PlayerState {
+             session_id,
++            playback_quality,
+             is_system_initiated: true,
+             playback_speed: 1.,
+             play_origin: MessageField::some(PlayOrigin::new()),
+@@ -326,6 +345,61 @@ impl ConnectState {
+         self.player_mut().session_id = session_id;
+     }
+ 
++    pub fn set_playback_quality(&mut self, quality: &str) {
++        let (bitrate_level, strategy) = match quality {
++            "low" => (BitrateLevel::low, BitrateStrategy::best_matching),
++            "normal" => (BitrateLevel::normal, BitrateStrategy::best_matching),
++            "high" => (BitrateLevel::high, BitrateStrategy::best_matching),
++            "very_high" => (BitrateLevel::very_high, BitrateStrategy::best_matching),
++            "auto" => (BitrateLevel::very_high, BitrateStrategy::best_matching),
++            _ => {
++                log::warn!("unknown audio quality mode: {quality}");
++                return;
++            }
++        };
++
++        let player = self.player_mut();
++        if let Some(pq) = player.playback_quality.as_mut() {
++            pq.target_bitrate_level = EnumOrUnknown::new(bitrate_level);
++            pq.strategy = EnumOrUnknown::new(strategy);
++            pq.target_bitrate_available = true;
++        } else {
++            player.playback_quality = MessageField::some(PlaybackQuality {
++                bitrate_level: EnumOrUnknown::new(bitrate_level),
++                strategy: EnumOrUnknown::new(strategy),
++                target_bitrate_level: EnumOrUnknown::new(bitrate_level),
++                target_bitrate_available: true,
++                ..Default::default()
++            });
++        }
++        log::debug!(
++            "set playback quality: target={:?}, strategy={:?}",
++            bitrate_level, strategy
++        );
++    }
++
++    pub fn apply_target_playback_quality(&mut self) {
++        let player = self.player_mut();
++        if let Some(pq) = player.playback_quality.as_mut() {
++            let target = pq
++                .target_bitrate_level
++                .enum_value()
++                .unwrap_or(BitrateLevel::very_high);
++            if target != BitrateLevel::unknown_bitrate_level {
++                pq.bitrate_level = EnumOrUnknown::new(target);
++                log::debug!("applied target playback quality: bitrate_level={:?}", target);
++            }
++        } else {
++            player.playback_quality = MessageField::some(PlaybackQuality {
++                bitrate_level: EnumOrUnknown::new(BitrateLevel::very_high),
++                strategy: EnumOrUnknown::new(BitrateStrategy::best_matching),
++                target_bitrate_level: EnumOrUnknown::new(BitrateLevel::very_high),
++                target_bitrate_available: true,
++                ..Default::default()
++            });
++        }
++    }
++
+     pub(crate) fn set_status(&mut self, status: &SpircPlayStatus) {
+         let player = self.player_mut();
+         player.is_paused = matches!(
+diff --git a/core/src/dealer/protocol/request.rs b/core/src/dealer/protocol/request.rs
+index 8125750..406c92c 100644
+--- a/core/src/dealer/protocol/request.rs
++++ b/core/src/dealer/protocol/request.rs
+@@ -149,6 +149,7 @@ pub struct SetOptionsCommand {
+     pub shuffling_context: Option<bool>,
+     pub repeating_context: Option<bool>,
+     pub repeating_track: Option<bool>,
++    pub modes: Option<std::collections::HashMap<String, String>>,
+     pub options: Option<OptionsOptions>,
+     pub logging_params: LoggingParams,
+ }
+diff --git a/playback/Cargo.toml b/playback/Cargo.toml
+index dd916b5..adf71ab 100644
+--- a/playback/Cargo.toml
++++ b/playback/Cargo.toml
+@@ -28,6 +28,8 @@ sdl-backend = ["dep:sdl2"]
+ 
+ # Audio processing features
+ passthrough-decoder = ["dep:ogg"]
++# Fixed-point Vorbis via Tremor, for targets without an FPU
++tremor-decoder = []
+ 
+ # TLS backend propagation
+ native-tls = [
+@@ -98,5 +100,8 @@ rand_distr = "0.5"
+ # Local file handling
+ form_urlencoded = "1.2.2"
+ 
++[build-dependencies]
++cc = "1"
++
+ [lints]
+ workspace = true
+diff --git a/playback/build.rs b/playback/build.rs
+new file mode 100644
+index 0000000..8eb256a
+--- /dev/null
++++ b/playback/build.rs
+@@ -0,0 +1,57 @@
++use std::{env, path::PathBuf};
++
++fn main() {
++    // Nothing to do unless the fixed-point Vorbis decoder was asked for.
++    if env::var_os("CARGO_FEATURE_TREMOR_DECODER").is_none() {
++        return;
++    }
++
++    let tremor = PathBuf::from(
++        env::var("TREMOR_SRC").expect("TREMOR_SRC must point at a libvorbisidec source tree"),
++    );
++    let ogg =
++        PathBuf::from(env::var("OGG_SRC").expect("OGG_SRC must point at a libogg source tree"));
++
++    println!("cargo:rerun-if-changed=tremor_shim.c");
++    println!("cargo:rerun-if-env-changed=TREMOR_SRC");
++    println!("cargo:rerun-if-env-changed=OGG_SRC");
++    println!("cargo:rerun-if-env-changed=TREMOR_COPT");
++
++    // Compiled from source instead of linked against the packaged library: the
++    // distro build is -Os with MIPS16 packing, which costs real decode time on
++    // a slow core, and its objects aren't PIC so they can't go into a PIE.
++    let tremor_srcs = [
++        "mdct.c",
++        "block.c",
++        "window.c",
++        "synthesis.c",
++        "info.c",
++        "floor1.c",
++        "floor0.c",
++        "vorbisfile.c",
++        "res012.c",
++        "mapping0.c",
++        "registry.c",
++        "codebook.c",
++        "sharedbook.c",
++    ];
++
++    // -O3 measured ~3% less decode CPU than -O2 on 24KEc, same stripped size
++    cc::Build::new()
++        .include(&tremor)
++        .include(ogg.join("include"))
++        .opt_level(
++            env::var("TREMOR_COPT")
++                .ok()
++                .and_then(|v| v.parse().ok())
++                .unwrap_or(3u32),
++        )
++        .pic(true)
++        .warnings(false)
++        .flag_if_supported("-mno-mips16")
++        .file("tremor_shim.c")
++        .files(tremor_srcs.iter().map(|f| tremor.join(f)))
++        .file(ogg.join("src/framing.c"))
++        .file(ogg.join("src/bitwise.c"))
++        .compile("tremor");
++}
+diff --git a/playback/src/decoder/mod.rs b/playback/src/decoder/mod.rs
+index e77d6e9..d2ea18d 100644
+--- a/playback/src/decoder/mod.rs
++++ b/playback/src/decoder/mod.rs
+@@ -10,12 +10,20 @@ pub use passthrough_decoder::PassthroughDecoder;
+ mod symphonia_decoder;
+ pub use symphonia_decoder::SymphoniaDecoder;
+ 
++#[cfg(feature = "tremor-decoder")]
++mod tremor_decoder;
++#[cfg(feature = "tremor-decoder")]
++pub use tremor_decoder::TremorDecoder;
++
+ #[derive(Error, Debug)]
+ pub enum DecoderError {
+     #[error("Passthrough Decoder Error: {0}")]
+     PassthroughDecoder(String),
+     #[error("Symphonia Decoder Error: {0}")]
+     SymphoniaDecoder(String),
++    #[cfg(feature = "tremor-decoder")]
++    #[error("Tremor Decoder Error: {0}")]
++    TremorDecoder(String),
+ }
+ 
+ pub type DecoderResult<T> = Result<T, DecoderError>;
+diff --git a/playback/src/decoder/tremor_decoder.rs b/playback/src/decoder/tremor_decoder.rs
+new file mode 100644
+index 0000000..faf0e92
+--- /dev/null
++++ b/playback/src/decoder/tremor_decoder.rs
+@@ -0,0 +1,214 @@
++use std::{
++    io::{Read, Seek, SeekFrom},
++    os::raw::{c_int, c_long, c_void},
++};
++
++use super::{AudioDecoder, AudioPacket, AudioPacketPosition, DecoderError, DecoderResult};
++
++// ov_read hands back at most one Vorbis block. 8 KiB is 2048 samples, about
++// 23 ms of 44.1k stereo, which keeps packet sizes in the range the player was
++// already seeing from symphonia.
++const READ_BUF: usize = 8192;
++
++// A lost page is recoverable: Tremor resyncs on the next read. Give up after a
++// while so a stream that only produces holes can't spin the playback thread.
++const OV_HOLE: c_long = -3;
++const MAX_HOLES: u32 = 64;
++
++// Tremor emits full-scale i16; the player wants normalised f64.
++const SCALE: f64 = 1.0 / 32768.0;
++
++#[repr(C)]
++struct TremCtx {
++    _opaque: [u8; 0],
++}
++
++type ReadFn = extern "C" fn(*mut c_void, *mut u8, c_long) -> c_long;
++type SeekFn = extern "C" fn(*mut c_void, i64, c_int) -> c_int;
++type TellFn = extern "C" fn(*mut c_void) -> i64;
++
++unsafe extern "C" {
++    fn trem_open(user: *mut c_void, rd: ReadFn, sk: SeekFn, tl: TellFn) -> *mut TremCtx;
++    fn trem_read(ctx: *mut TremCtx, buf: *mut u8, len: c_int) -> c_long;
++    fn trem_pcm_seek(ctx: *mut TremCtx, pos: i64) -> c_int;
++    fn trem_pcm_tell(ctx: *mut TremCtx) -> i64;
++    fn trem_channels(ctx: *mut TremCtx) -> c_int;
++    fn trem_rate(ctx: *mut TremCtx) -> c_long;
++    fn trem_close(ctx: *mut TremCtx);
++}
++
++// Unwinding out of these into C is UB, so every path returns an error code.
++extern "C" fn cb_read<R: Read + Seek>(user: *mut c_void, buf: *mut u8, len: c_long) -> c_long {
++    if len <= 0 || buf.is_null() || user.is_null() {
++        return 0;
++    }
++
++    let src = unsafe { &mut *(user as *mut R) };
++    let dst = unsafe { std::slice::from_raw_parts_mut(buf, len as usize) };
++
++    // Tremor reads a short count as end of stream, but the streaming reader
++    // can legitimately hand back less than asked for, so fill the buffer.
++    let mut done = 0;
++    while done < dst.len() {
++        match src.read(&mut dst[done..]) {
++            Ok(0) => break,
++            Ok(n) => done += n,
++            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
++            Err(_) => return if done > 0 { done as c_long } else { -1 },
++        }
++    }
++
++    done as c_long
++}
++
++extern "C" fn cb_seek<R: Read + Seek>(user: *mut c_void, off: i64, whence: c_int) -> c_int {
++    if user.is_null() {
++        return -1;
++    }
++
++    let src = unsafe { &mut *(user as *mut R) };
++    let target = match whence {
++        0 if off >= 0 => SeekFrom::Start(off as u64),
++        1 => SeekFrom::Current(off),
++        2 => SeekFrom::End(off),
++        _ => return -1,
++    };
++
++    match src.seek(target) {
++        Ok(_) => 0,
++        Err(_) => -1,
++    }
++}
++
++extern "C" fn cb_tell<R: Read + Seek>(user: *mut c_void) -> i64 {
++    if user.is_null() {
++        return -1;
++    }
++
++    let src = unsafe { &mut *(user as *mut R) };
++
++    match src.stream_position() {
++        Ok(pos) => pos as i64,
++        Err(_) => -1,
++    }
++}
++
++pub struct TremorDecoder<R: Read + Seek> {
++    ctx: *mut TremCtx,
++    src: *mut R,
++    channels: usize,
++    rate: u64,
++    buf: Vec<u8>,
++}
++
++// The pointers are owned by this struct and never shared.
++unsafe impl<R: Read + Seek + Send> Send for TremorDecoder<R> {}
++
++impl<R: Read + Seek> TremorDecoder<R> {
++    pub fn new(input: R) -> DecoderResult<Self> {
++        let src = Box::into_raw(Box::new(input));
++
++        let ctx = unsafe {
++            trem_open(
++                src as *mut c_void,
++                cb_read::<R>,
++                cb_seek::<R>,
++                cb_tell::<R>,
++            )
++        };
++
++        if ctx.is_null() {
++            drop(unsafe { Box::from_raw(src) });
++            return Err(DecoderError::TremorDecoder(
++                "ov_open_callbacks failed, not a Vorbis stream?".to_string(),
++            ));
++        }
++
++        let channels = unsafe { trem_channels(ctx) };
++        let rate = unsafe { trem_rate(ctx) };
++
++        if channels <= 0 || rate <= 0 {
++            unsafe { trem_close(ctx) };
++            drop(unsafe { Box::from_raw(src) });
++            return Err(DecoderError::TremorDecoder(format!(
++                "bogus stream: {channels} channels at {rate} Hz"
++            )));
++        }
++
++        Ok(Self {
++            ctx,
++            src,
++            channels: channels as usize,
++            rate: rate as u64,
++            buf: vec![0u8; READ_BUF],
++        })
++    }
++
++    fn position_ms(&self) -> u32 {
++        let pcm = unsafe { trem_pcm_tell(self.ctx) }.max(0) as u64;
++
++        (pcm * 1000 / self.rate) as u32
++    }
++}
++
++impl<R: Read + Seek> AudioDecoder for TremorDecoder<R> {
++    fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError> {
++        let pcm = (u64::from(position_ms) * self.rate / 1000) as i64;
++
++        let rc = unsafe { trem_pcm_seek(self.ctx, pcm) };
++        if rc != 0 {
++            return Err(DecoderError::TremorDecoder(format!(
++                "ov_pcm_seek to {position_ms} ms: {rc}"
++            )));
++        }
++
++        Ok(self.position_ms())
++    }
++
++    fn next_packet(&mut self) -> DecoderResult<Option<(AudioPacketPosition, AudioPacket)>> {
++        let position_ms = self.position_ms();
++
++        let mut holes = 0;
++        let read = loop {
++            let rc = unsafe { trem_read(self.ctx, self.buf.as_mut_ptr(), READ_BUF as c_int) };
++
++            match rc {
++                0 => return Ok(None),
++                OV_HOLE if holes < MAX_HOLES => {
++                    holes += 1;
++                    continue;
++                }
++                n if n < 0 => {
++                    return Err(DecoderError::TremorDecoder(format!("ov_read: {n}")));
++                }
++                n => break n as usize,
++            }
++        };
++
++        // Drop any trailing partial frame; the player expects whole frames.
++        let frame = 2 * self.channels;
++        let read = read - (read % frame);
++
++        let samples: Vec<f64> = self.buf[..read]
++            .chunks_exact(2)
++            .map(|s| f64::from(i16::from_ne_bytes([s[0], s[1]])) * SCALE)
++            .collect();
++
++        let position = AudioPacketPosition {
++            position_ms,
++            skipped: false,
++        };
++
++        Ok(Some((position, AudioPacket::Samples(samples))))
++    }
++}
++
++impl<R: Read + Seek> Drop for TremorDecoder<R> {
++    fn drop(&mut self) {
++        // ov_clear can still touch the callbacks, so tear it down first.
++        unsafe {
++            trem_close(self.ctx);
++            drop(Box::from_raw(self.src));
++        }
++    }
++}
+diff --git a/playback/src/player.rs b/playback/src/player.rs
+index f3d803d..42802e7 100644
+--- a/playback/src/player.rs
++++ b/playback/src/player.rs
+@@ -19,6 +19,8 @@ use std::{
+ 
+ #[cfg(feature = "passthrough-decoder")]
+ use crate::decoder::PassthroughDecoder;
++#[cfg(feature = "tremor-decoder")]
++use crate::decoder::TremorDecoder;
+ use crate::{
+     audio::{AudioDecrypt, AudioFetchParams, AudioFile, StreamLoaderController},
+     audio_backend::Sink,
+@@ -1151,6 +1153,18 @@ impl PlayerTrackLoader {
+                 })
+             };
+ 
++            // Prefer the fixed-point decoder for Vorbis where it's built in:
++            // on an FPU-less core the float path costs about five times as much.
++            let mut best_decoder = |audio_file, hint| {
++                #[cfg(feature = "tremor-decoder")]
++                {
++                    if is_ogg_vorbis {
++                        return TremorDecoder::new(audio_file).map(|d| Box::new(d) as Decoder);
++                    }
++                }
++                symphonia_decoder(audio_file, hint)
++            };
++
+             let mut hint = Hint::new();
+             if let Some(mime_type) = AudioFiles::mime_type(format) {
+                 hint.mime_type(mime_type);
+@@ -1160,11 +1174,11 @@ impl PlayerTrackLoader {
+             let decoder_type = if self.config.passthrough {
+                 PassthroughDecoder::new(audio_file, format).map(|x| Box::new(x) as Decoder)
+             } else {
+-                symphonia_decoder(audio_file, hint)
++                best_decoder(audio_file, hint)
+             };
+ 
+             #[cfg(not(feature = "passthrough-decoder"))]
+-            let decoder_type = { symphonia_decoder(audio_file, hint) };
++            let decoder_type = { best_decoder(audio_file, hint) };
+ 
+             let normalisation_data = normalisation_data.unwrap_or_else(|| {
+                 warn!("Unable to get normalisation data, continuing with defaults.");
+diff --git a/playback/tremor_shim.c b/playback/tremor_shim.c
+new file mode 100644
+index 0000000..aded8d0
+--- /dev/null
++++ b/playback/tremor_shim.c
+@@ -0,0 +1,133 @@
++/* Glue for Tremor (libvorbisidec), the fixed-point Vorbis decoder.
++ *
++ * Targets like the MT7628 have no FPU, so a float Vorbis decoder spends about
++ * half the core on soft-float emulation. Tremor does the same job in integer
++ * arithmetic for roughly a fifth of the cost.
++ *
++ * The API is deliberately flat: OggVorbis_File is large and its layout shifts
++ * between Tremor snapshots, so mirroring it in Rust would be an ABI trap.
++ */
++
++#include <stdlib.h>
++#include <ivorbisfile.h>
++
++typedef long      (*trem_read_fn)(void *user, unsigned char *buf, long len);
++typedef int       (*trem_seek_fn)(void *user, long long off, int whence);
++typedef long long (*trem_tell_fn)(void *user);
++
++struct trem_ctx {
++	OggVorbis_File vf;
++	void *user;
++	trem_read_fn rd;
++	trem_seek_fn sk;
++	trem_tell_fn tl;
++};
++
++/* fread semantics: return the item count, not the byte count */
++static size_t shim_read(void *ptr, size_t size, size_t nmemb, void *ds)
++{
++	struct trem_ctx *c = (struct trem_ctx *)ds;
++	long got;
++
++	if (size == 0 || nmemb == 0)
++		return 0;
++
++	got = c->rd(c->user, (unsigned char *)ptr, (long)(size * nmemb));
++	if (got <= 0)
++		return 0;
++
++	return (size_t)got / size;
++}
++
++static int shim_seek(void *ds, ogg_int64_t off, int whence)
++{
++	struct trem_ctx *c = (struct trem_ctx *)ds;
++
++	return c->sk(c->user, (long long)off, whence);
++}
++
++/* the Rust side owns the reader and drops it itself */
++static int shim_close(void *ds)
++{
++	(void)ds;
++	return 0;
++}
++
++static long shim_tell(void *ds)
++{
++	struct trem_ctx *c = (struct trem_ctx *)ds;
++
++	return (long)c->tl(c->user);
++}
++
++struct trem_ctx *trem_open(void *user, trem_read_fn rd, trem_seek_fn sk,
++			   trem_tell_fn tl)
++{
++	ov_callbacks cb;
++	struct trem_ctx *c;
++
++	if (!rd || !sk || !tl)
++		return NULL;
++
++	c = calloc(1, sizeof *c);
++	if (!c)
++		return NULL;
++
++	c->user = user;
++	c->rd = rd;
++	c->sk = sk;
++	c->tl = tl;
++
++	cb.read_func = shim_read;
++	cb.seek_func = shim_seek;
++	cb.close_func = shim_close;
++	cb.tell_func = shim_tell;
++
++	if (ov_open_callbacks(c, &c->vf, NULL, 0, cb) < 0) {
++		free(c);
++		return NULL;
++	}
++
++	return c;
++}
++
++/* 16-bit signed host-endian interleaved; <0 is an OV_* code, 0 is EOF */
++long trem_read(struct trem_ctx *c, unsigned char *buf, int len)
++{
++	int bitstream = 0;
++
++	return ov_read(&c->vf, (char *)buf, len, &bitstream);
++}
++
++int trem_pcm_seek(struct trem_ctx *c, long long pos)
++{
++	return ov_pcm_seek(&c->vf, (ogg_int64_t)pos);
++}
++
++long long trem_pcm_tell(struct trem_ctx *c)
++{
++	return (long long)ov_pcm_tell(&c->vf);
++}
++
++int trem_channels(struct trem_ctx *c)
++{
++	vorbis_info *vi = ov_info(&c->vf, -1);
++
++	return vi ? vi->channels : -1;
++}
++
++long trem_rate(struct trem_ctx *c)
++{
++	vorbis_info *vi = ov_info(&c->vf, -1);
++
++	return vi ? vi->rate : -1;
++}
++
++void trem_close(struct trem_ctx *c)
++{
++	if (!c)
++		return;
++
++	ov_clear(&c->vf);
++	free(c);
++}

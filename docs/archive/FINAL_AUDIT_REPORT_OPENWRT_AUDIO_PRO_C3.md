@@ -1,3 +1,11 @@
+> **ARCHIVED — HISTORICAL, PARTLY UNVERIFIED.**
+> This is a working report from an earlier stage of the project, kept for the
+> reverse-engineering detail in it. Several claims in here were later disproved
+> against the actual hardware — notably the I2S register values, the "TAS5707
+> over I2C" amplifier, an 11.2896 MHz MCLK, and the smaller ALSA buffer figures.
+> For anything hardware-related trust `docs/I2S_HARDWARE_REGISTERS.md` and the
+> patches in `patches/`, not this file.
+
 # 📑 Полный технический отчёт и спецификация прошивки OpenWrt 23.05.5 для Audio Pro Addon C3 (Linkplay A28 V01)
 
 > **Статус:** `VERIFIED & READY FOR RAM BOOT / FLASHING`  
@@ -113,7 +121,7 @@ static int g_uart_fd = -1;
 static snd_mixer_t *g_mixer = NULL;
 static struct mosquitto *g_mosq = NULL;
 
-static char g_mqtt_host[128] = "192.168.1.202";
+static char g_mqtt_host[128] = "<speaker-ip>";
 static int  g_mqtt_port = 1883;
 static char g_mqtt_user[64] = "";
 static char g_mqtt_pass[64] = "";
@@ -602,7 +610,7 @@ static void sig_handler(int sig) {
 }
 
 int main(int argc, char *argv[]) {
-    const char *ha_ip = (argc > 1) ? argv[1] : "192.168.1.100";
+    const char *ha_ip = (argc > 1) ? argv[1] : "<speaker-ip>";
     int ha_port = (argc > 2) ? atoi(argv[2]) : 5000;
 
     signal(SIGTERM, sig_handler);
@@ -787,7 +795,7 @@ start_service() {
 ```sh
 #!/bin/sh
 ACTION="${1:-status}"
-HA_SERVER="${2:-192.168.1.100}"
+HA_SERVER="${2:-<speaker-ip>}"
 PORT="${3:-5000}"
 
 case "$ACTION" in
@@ -952,11 +960,11 @@ Entry Point:  80000000
 picocom -b 57600 /dev/ttyUSB0
 ```
 В меню U-Boot нажать `5`, ввести:
-* **Device IP:** `192.168.1.122`
-* **Server IP:** `192.168.1.202`
+* **Device IP:** `<speaker-ip>`
+* **Server IP:** `<speaker-ip>`
 * **File name:** `openwrt.bin`
 
-### Шаг 2: Проверка живой системы в OpenWrt (SSH на 192.168.1.1:22)
+### Шаг 2: Проверка живой системы в OpenWrt (SSH на <speaker-ip>:22)
 ```bash
 # 1. Проверка отсутствия отложенных устройств ядра
 dmesg | grep -E "i2s|deferred|simple-audio"
@@ -978,6 +986,6 @@ ps | grep -E "librespot|squeezelite"
 ### Шаг 3: Постоянная прошивка во Flash-память (Sysupgrade)
 После успешного теста в RAM:
 ```bash
-scp /srv/tftp/sysupgrade.bin root@192.168.1.1:/tmp/sysupgrade.bin
-ssh root@192.168.1.1 "sysupgrade -n /tmp/sysupgrade.bin"
+scp /srv/tftp/sysupgrade.bin root@<speaker-ip>:/tmp/sysupgrade.bin
+ssh root@<speaker-ip> "sysupgrade -n /tmp/sysupgrade.bin"
 ```
