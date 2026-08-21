@@ -46,6 +46,46 @@ cp -r "$REPO_ROOT/openwrt/package/sound/alsa-plugin-c3eq/." \
     "$OPENWRT_DIR/package/sound/alsa-plugin-c3eq/"
 say "package/sound/alsa-plugin-c3eq"
 
+# --- 3c. package feed patches ----------------------------------------------
+# These three packages live in the packages feed, so they get patched in place.
+# Needs `./scripts/feeds install` to have run first - build.sh does that before
+# calling us. Adding a file under a package's patches/ is enough to force a
+# rebuild; OpenWrt hashes that directory into the prepared stamp.
+feed_patches() {
+    local pkg="$1" dir="$OPENWRT_DIR/feeds/packages/$2"
+    if [ ! -d "$dir" ]; then
+        echo "[!] $dir missing - run ./scripts/feeds install -a, then re-run me" >&2
+        return
+    fi
+    mkdir -p "$dir/patches"
+    for p in "$REPO_ROOT/patches/$pkg"/[0-9]*.patch; do
+        [ -e "$p" ] || continue
+        install -m644 "$p" "$dir/patches/$(basename "$p")"
+        say "$pkg patch -> feeds/packages/$2/patches/$(basename "$p")"
+    done
+}
+
+# The init scripts ship inside the feed, not as a build-time patch, so these are
+# applied to the feed tree itself. Guarded on a string the patch adds, since
+# patch(1) exits non-zero on an already-applied patch and we run with -e.
+init_patch() {
+    local dir="$OPENWRT_DIR/feeds/packages/$1" marker="$2" patch="$3"
+    [ -d "$dir" ] || return
+    if grep -qr "$marker" "$dir/files"; then
+        say "$1 init already patched"
+    else
+        patch -p1 -d "$dir" < "$REPO_ROOT/$patch"
+        say "$1 init patched"
+    fi
+}
+
+feed_patches alsa-lib libs/alsa-lib
+feed_patches shairport-sync sound/shairport-sync
+init_patch sound/shairport-sync volume_control_profile \
+    patches/shairport-sync/feed-init-volume-control-profile.patch
+init_patch sound/squeezelite procd_append_param \
+    patches/squeezelite/feed-init-quote-args.patch
+
 # --- 4. root overlay -------------------------------------------------------
 mkdir -p "$OPENWRT_DIR/files"
 cp -r "$REPO_ROOT/files/." "$OPENWRT_DIR/files/"
