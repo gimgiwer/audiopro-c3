@@ -1,0 +1,52 @@
+Bound the ALAC decoder by its own buffers
+
+The bundled Hammerton decoder trusts the bitstream. entropy_rice_decode()
+takes a 16-bit zero-run length off the wire and memsets that many samples
+without looking at how much room is left, and the optional per-frame sample
+count is only checked against the caller's buffer, never against the work
+buffers, which are all malloc'd at setinfo_max_samples_per_frame.
+
+One corrupt AirPlay frame is therefore enough to memset up to 256 kB past
+the end of the sample buffer:
+
+  do_page_fault(): sending SIGSEGV to shairport-sync for invalid write
+  access to 77969000, epc = 77eb8f80 (memset), ra = 0041361f
+  (entropy_rice_decode)
+
+procd respawns the daemon, but the stream is gone and playback stops dead.
+
+--- a/alac.c
++++ b/alac.c
+@@ -385,6 +385,12 @@
+ 
+       // got blockSize 0s
+       if (blockSize > 0) {
++        // blockSize comes straight off the wire and can claim up to 64k zero
++        // samples. A corrupt frame otherwise memsets past the end of the
++        // sample buffer and takes the daemon down mid-stream.
++        int32_t room = outputSize - outputCount - 1;
++        if (blockSize > room)
++          blockSize = room;
+         memset(&outputBuffer[outputCount + 1], 0, blockSize * sizeof(*outputBuffer));
+         outputCount += blockSize;
+       }
+@@ -688,7 +694,8 @@
+        * as a 32bit integer */
+       outputsamples = readbits(alac, 32);
+       *outputsize = outputsamples * alac->bytespersample;
+-      if (*outputsize > outbuffer_allocation_size) {
++      if ((*outputsize > outbuffer_allocation_size) ||
++          ((uint32_t)outputsamples > alac->setinfo_max_samples_per_frame)) {
+         fprintf(stderr, "FIXME: Not enough space if the output buffer for audio frame - E2.\n");
+         *outputsize = 0;
+         return;
+@@ -843,7 +850,8 @@
+        * as a 32bit integer */
+       outputsamples = readbits(alac, 32);
+       *outputsize = outputsamples * alac->bytespersample;
+-      if (*outputsize > outbuffer_allocation_size) {
++      if ((*outputsize > outbuffer_allocation_size) ||
++          ((uint32_t)outputsamples > alac->setinfo_max_samples_per_frame)) {
+         fprintf(stderr, "FIXME: Not enough space if the output buffer for audio frame - E3.\n");
+         *outputsize = 0;
+         return;

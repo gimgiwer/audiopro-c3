@@ -24,3 +24,6 @@ config shairport-sync 'shairport_sync'
 	option resync_threshold '2205'
 	# Let the AirPlay client's slider through; it lands on Master above
 	option ignore_volume_control 'no'
+	# flat = straight-through in dB, so the phone slider means the same number
+	# on Master as librespot and the panel buttons. "standard" bends the curve.
+	option volume_control_profile 'flat'
