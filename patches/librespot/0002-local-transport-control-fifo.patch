@@ -1,0 +1,134 @@
+Local transport control over a fifo.
+
+Spotify Connect gives the device itself no way to press play, so the web
+api and the front panel key feed play/pause/toggle/next/prev in through a
+fifo and we replay them as spirc commands -- the same path a phone tap
+takes, so track position and the app ui stay in sync.
+
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -26,6 +26,7 @@
+     env,
+     ffi::OsStr,
+     fs::create_dir_all,
++    io::BufRead,
+     ops::RangeInclusive,
+     path::{Path, PathBuf},
+     pin::Pin,
+@@ -218,6 +219,7 @@
+     oauth_port: Option<u16>,
+     zeroconf_port: u16,
+     player_event_program: Option<String>,
++    control_fifo: Option<String>,
+     emit_sink_events: bool,
+     zeroconf_ip: Vec<std::net::IpAddr>,
+     zeroconf_backend: Option<DnsSdServiceBuilder>,
+@@ -239,6 +241,7 @@
+     const BITRATE: &str = "bitrate";
+     const CACHE: &str = "cache";
+     const CACHE_SIZE_LIMIT: &str = "cache-size-limit";
++    const CONTROL_FIFO: &str = "control-fifo";
+     const DEVICE: &str = "device";
+     const DEVICE_TYPE: &str = "device-type";
+     const DEVICE_IS_GROUP: &str = "group";
+@@ -532,6 +535,12 @@
+         "PROGRAM",
+     )
+     .optopt(
++        "",
++        CONTROL_FIFO,
++        "Read transport commands from FIFO: play, pause, toggle, next, prev.",
++        "PATH",
++    )
++    .optopt(
+         ALSA_MIXER_CONTROL_SHORT,
+         ALSA_MIXER_CONTROL,
+         ALSA_MIXER_CONTROL_DESC,
+@@ -1839,6 +1848,7 @@
+     };
+ 
+     let player_event_program = opt_str(ONEVENT);
++    let control_fifo = opt_str(CONTROL_FIFO);
+     let emit_sink_events = opt_present(EMIT_SINK_EVENTS);
+ 
+     Setup {
+@@ -1856,6 +1866,7 @@
+         oauth_port,
+         zeroconf_port,
+         player_event_program,
++        control_fifo,
+         emit_sink_events,
+         zeroconf_ip,
+         zeroconf_backend,
+@@ -2007,8 +2018,71 @@
+         }
+     }
+ 
++    // Spotify Connect gives the device itself no way to press play, so the web
++    // ui and the front panel button feed commands in through a fifo and we
++    // replay them as spirc commands. Same path a phone tap takes, so position
++    // and the app ui stay in sync -- unlike muting a softvol, which keeps the
++    // stream running and loses your place.
++    let mut control_rx = setup.control_fifo.as_ref().map(|path| {
++        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
++        let path = path.clone();
++        std::thread::spawn(move || {
++            loop {
++                // Read+write, not read-only, for two reasons: a read-only open
++                // blocks until some writer turns up, and it hands us EOF every
++                // time the last writer leaves. Holding a write end ourselves
++                // means the fifo always has a reader, so uhttpd and mcud can
++                // never block writing to it, and reads just wait for data.
++                match std::fs::OpenOptions::new().read(true).write(true).open(&path) {
++                    Ok(f) => {
++                        for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
++                            let cmd = line.trim().to_ascii_lowercase();
++                            if !cmd.is_empty() && tx.send(cmd).is_err() {
++                                return;
++                            }
++                        }
++                    }
++                    Err(e) => {
++                        warn!("control fifo {path}: {e}");
++                        std::thread::sleep(Duration::from_secs(5));
++                    }
++                }
++            }
++        });
++        rx
++    });
++
+     loop {
+         tokio::select! {
++            cmd = async { control_rx.as_mut().unwrap().recv().await }, if control_rx.is_some() => {
++                match cmd {
++                    // Reader thread gave up. Drop the branch or select spins on
++                    // a closed channel, and a spin here starves the decoder.
++                    None => {
++                        warn!("control fifo reader stopped, local transport control is off");
++                        control_rx = None;
++                    }
++                    Some(cmd) => match spirc.as_ref() {
++                        Some(spirc) => {
++                            let result = match cmd.as_str() {
++                                "play" => spirc.play(),
++                                "pause" => spirc.pause(),
++                                "toggle" | "playpause" => spirc.play_pause(),
++                                "next" => spirc.next(),
++                                "prev" | "previous" => spirc.prev(),
++                                other => {
++                                    warn!("ignoring unknown control command {other}");
++                                    Ok(())
++                                }
++                            };
++                            if let Err(e) = result {
++                                error!("control command {cmd} failed: {e}");
++                            }
++                        }
++                        None => info!("control command {cmd} dropped, no spotify session"),
++                    },
++                }
++            },
+             credentials = async {
+                 match discovery.as_mut() {
+                     Some(d) => d.next().await,
