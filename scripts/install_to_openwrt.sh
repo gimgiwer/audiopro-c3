@@ -39,6 +39,13 @@ mkdir -p "$OPENWRT_DIR/package/utils/mcud"
 cp -r "$REPO_ROOT/openwrt/package/utils/mcud/." "$OPENWRT_DIR/package/utils/mcud/"
 say "package/utils/mcud"
 
+# --- 3b. c3eq ALSA plugin --------------------------------------------------
+rm -rf "$OPENWRT_DIR/package/sound/alsa-plugin-c3eq"
+mkdir -p "$OPENWRT_DIR/package/sound/alsa-plugin-c3eq"
+cp -r "$REPO_ROOT/openwrt/package/sound/alsa-plugin-c3eq/." \
+    "$OPENWRT_DIR/package/sound/alsa-plugin-c3eq/"
+say "package/sound/alsa-plugin-c3eq"
+
 # --- 4. root overlay -------------------------------------------------------
 mkdir -p "$OPENWRT_DIR/files"
 cp -r "$REPO_ROOT/files/." "$OPENWRT_DIR/files/"

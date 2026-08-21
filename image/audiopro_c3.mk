@@ -10,7 +10,7 @@ define Device/audiopro_c3
   DEVICE_VARIANT := Linkplay A28 V01
   DEVICE_DTS := mt7628an_audiopro_c3
   KERNEL := kernel-bin | append-dtb | lzma | uImage lzma -O linux
-  DEVICE_PACKAGES := kmod-sound-mt7620 alsa-utils alsa-lib mpg123 \
+  DEVICE_PACKAGES := kmod-sound-mt7620 alsa-utils alsa-lib alsa-plugin-c3eq mpg123 \
                      shairport-sync-mbedtls avahi-dbus-daemon \
                      zram-swap mcud dnsmasq \
                      uhttpd uhttpd-mod-ubox uhttpd-mod-lua px5g-mbedtls \

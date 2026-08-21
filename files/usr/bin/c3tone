@@ -1,0 +1,48 @@
+#!/bin/sh
+# Bass/treble tone control, same two knobs the stock app had. Rewrites
+# /etc/c3eq.conf; the plugin picks it up on the next stream open.
+CONF=/etc/c3eq.conf
+
+usage() {
+	echo "usage: c3tone show | off | <bass_dB> <treble_dB>   (-12..+12)" >&2
+	exit 1
+}
+
+case "$1" in
+show)
+	grep -qE '^bypass[[:space:]]+1' $CONF && { echo "off (factory flat)"; exit 0; }
+	b=$(sed -n 's/^lowshelf 120 0.7 //p' $CONF)
+	t=$(sed -n 's/^highshelf 8000 0.7 //p' $CONF)
+	echo "bass ${b:-0} dB, treble ${t:-0} dB"
+	exit 0
+	;;
+off)
+	cat > $CONF <<'X'
+bypass 1
+X
+	echo "tone off - factory flat"
+	exit 0
+	;;
+esac
+
+b="$1"; t="$2"
+[ -n "$b" ] && [ -n "$t" ] || usage
+for v in "$b" "$t"; do
+	case "$v" in
+	-[0-9]*|[0-9]*) ;;
+	*) usage ;;
+	esac
+	# awk does the range check, shell has no float compare
+	awk -v x="$v" 'BEGIN{exit !(x>=-12 && x<=12)}' || usage
+done
+
+# headroom so a boost cannot clip the 32-bit path
+pre=$(awk -v b="$b" -v t="$t" 'BEGIN{m=b>t?b:t; if(m<0)m=0; printf "%.1f", -(m+0.5)}')
+
+cat > $CONF <<X
+bypass 0
+preamp $pre
+lowshelf 120 0.7 $b
+highshelf 8000 0.7 $t
+X
+echo "bass $b dB, treble $t dB (preamp $pre dB)"
