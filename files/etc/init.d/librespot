@@ -8,14 +8,14 @@ PROG=/usr/bin/librespot
 
 start_service() {
     local enabled name device bitrate volume vol_ctrl dev_type disable_cache
-    local mixer mixer_dev mixer_ctl dither format
+    local mixer mixer_dev mixer_ctl dither format syscache
     local fifo=/tmp/librespot_cmd
 
     config_load librespot
     config_get_bool enabled main enabled 1
     [ "$enabled" -eq 1 ] || return 0
 
-    config_get name main name 'Audio Pro Addon C3'
+    config_get name main name 'Audio Pro C3'
     config_get device main device 'spotify_in'
     config_get bitrate main bitrate '320'
     config_get volume main initial_volume ''
@@ -27,14 +27,27 @@ start_service() {
     config_get mixer_ctl main mixer_control 'Master'
     config_get dither main dither 'none'
     config_get format main format 'S32'
+    config_get syscache main system_cache ''
 
     local args="--backend alsa --device $device --bitrate $bitrate --name \"$name\" --volume-ctrl $vol_ctrl --device-type $dev_type --onevent /usr/bin/spotify_event_handler.sh --dither $dither --format $format"
 
-    # Left empty on purpose: with --mixer alsa librespot's default initial volume
-    # is "the current volume", so it reads Master instead of writing it. Passing a
-    # number slammed the level on every restart and fired a phantom mixer event.
+    # 0.8.0 does NOT fall back to "the current volume" with --mixer alsa: main.rs
+    # ends with unwrap_or(ConnectConfig::default()), i.e. u16::MAX/2, and Spirc::new
+    # writes it to Master. Leaving this empty means every start (and every zeroconf
+    # handover) silently jumps the speaker to 50%. Name the number we want instead.
     [ -n "$volume" ] && args="$args --initial-volume $volume"
     [ "$disable_cache" -eq 1 ] && args="$args --disable-audio-cache"
+
+    # Credentials on flash: with them librespot logs into the AP at boot, so tapping
+    # the speaker in Spotify is a transfer to a live session instead of a full
+    # zeroconf handover (blob decrypt + AP handshake + token, ~5 s on this CPU).
+    # The volume file lives in the same dir and is rewritten on every slider move,
+    # so park it in tmpfs - nothing in 0.8.0 ever reads it back anyway.
+    if [ -n "$syscache" ]; then
+        mkdir -p "$syscache"
+        [ -L "$syscache/volume" ] || { rm -f "$syscache/volume"; ln -s /tmp/librespot_volume "$syscache/volume"; }
+        args="$args --system-cache $syscache"
+    fi
 
     # Drive the shared Master softvol instead of librespot's own attenuation,
     # otherwise the Spotify slider and the panel buttons fight each other.
