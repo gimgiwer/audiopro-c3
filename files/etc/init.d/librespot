@@ -9,6 +9,7 @@ PROG=/usr/bin/librespot
 start_service() {
     local enabled name device bitrate volume vol_ctrl dev_type disable_cache
     local mixer mixer_dev mixer_ctl dither saved
+    local fifo=/tmp/librespot_cmd
 
     config_load librespot
     config_get_bool enabled main enabled 1
@@ -43,6 +44,12 @@ start_service() {
     # otherwise the Spotify slider and the panel buttons fight each other.
     args="$args --mixer $mixer"
     [ "$mixer" = "alsa" ] && args="$args --alsa-mixer-device $mixer_dev --alsa-mixer-control \"$mixer_ctl\""
+
+    # Local transport control: Spotify Connect has no way for the speaker itself
+    # to press play, so player_control.sh feeds commands in here. librespot holds
+    # it open read+write, so writers never block.
+    [ -p "$fifo" ] || { rm -f "$fifo"; mkfifo -m 0644 "$fifo"; }
+    args="$args --control-fifo $fifo"
 
     procd_open_instance
     procd_set_param command /bin/sh -c "exec $PROG $args"

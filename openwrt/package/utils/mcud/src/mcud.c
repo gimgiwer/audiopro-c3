@@ -512,8 +512,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
         } else if (strcasecmp(payload, "PAUSE") == 0 || strcasecmp(payload, "STOP") == 0 || strcasecmp(payload, "MUTE") == 0) {
             set_hardware_mute(1);
         } else if (strcasecmp(payload, "TOGGLE") == 0) {
-            int fd = open("/tmp/player_cmd", O_WRONLY | O_NONBLOCK);
-            if (fd >= 0) { write(fd, "toggle\n", 7); close(fd); }
+            system("/usr/bin/player_control.sh toggle >/dev/null 2>&1 &");
         }
     } else if (strcmp(msg->topic, vol_topic) == 0) {
         g_last_activity_time = time(NULL);
@@ -862,11 +861,9 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+KEY+PLPA")) {
         mqtt_send_button("play_pause");
         ubus_notify_button("play_pause");
-        int pfd = open("/tmp/player_cmd", O_WRONLY | O_CREAT | O_NONBLOCK, 0644);
-        if (pfd >= 0) {
-            write(pfd, "toggle\n", 7);
-            close(pfd);
-        }
+        /* O_CREAT on /tmp/player_cmd just made a plain file nothing ever read,
+         * so this key did nothing at all until now */
+        system("/usr/bin/player_control.sh toggle >/dev/null 2>&1 &");
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);

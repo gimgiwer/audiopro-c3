@@ -490,28 +490,25 @@ function handle_request(env)
     elseif action == "player_play" or action == "play" then
         send_mcu("AXX+PLM+001\nAXX+MUT+000\n")
         os.execute("/usr/bin/player_control.sh play all >/dev/null 2>&1 &")
-        write_file("/tmp/player_cmd", "play\n")
         uhttpd.send('{"status":"ok","playing":true}')
 
     elseif action == "player_pause" or action == "pause" then
         send_mcu("AXX+PLM+000\n")
         os.execute("/usr/bin/player_control.sh pause all >/dev/null 2>&1 &")
-        write_file("/tmp/player_cmd", "pause\n")
         uhttpd.send('{"status":"ok","playing":false}')
 
     elseif action == "player_toggle" or action == "play_pause" then
         os.execute("/usr/bin/player_control.sh toggle all >/dev/null 2>&1 &")
-        write_file("/tmp/player_cmd", "toggle\n")
         uhttpd.send('{"status":"ok","action":"toggle"}')
 
     elseif action == "player_next" or action == "next" then
         send_mcu("AXX+TRK+001\n")
-        write_file("/tmp/player_cmd", "next\n")
+        os.execute("/usr/bin/player_control.sh next >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","action":"next"}')
 
     elseif action == "player_prev" or action == "prev" then
         send_mcu("AXX+TRK+000\n")
-        write_file("/tmp/player_cmd", "prev\n")
+        os.execute("/usr/bin/player_control.sh prev >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","action":"prev"}')
 
     elseif action == "trigger_preset" or action == "preset" then
