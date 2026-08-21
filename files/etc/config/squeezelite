@@ -1,0 +1,21 @@
+# Slimproto player. This is what Music Assistant / LMS talk to natively, and it
+# is the better path than AirPlay here: no ALAC decode and no 2 s RTP buffer.
+config options 'options'
+	option enabled '1'
+	option name 'Audio Pro C3'
+	option model_name 'Audio Pro C3'
+	# squeeze_in is the per-app softvol in asound.conf; it feeds dmix like the
+	# other sources, so Spotify and AirPlay can keep playing alongside it.
+	option device 'squeeze_in'
+	# -O/-V: hand volume to the shared Master softvol instead of squeezelite's own
+	# software gain, otherwise the server slider and the real level are two
+	# independent attenuations in series. mixer_device is the ctl, not the PCM.
+	option mixer_device 'default'
+	option volume_control 'Master'
+	# 44.1k only - the i2s block is clocked for it and dmix runs at that rate
+	option max_sr '44100'
+	# hold the device open, reopening dmix mid-queue clicks
+	option close_delay '0'
+	option priority '0'
+	option dsd_over_pcm '0'
+	option ircontrol '0'
