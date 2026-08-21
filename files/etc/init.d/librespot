@@ -46,6 +46,12 @@ start_service() {
 
     procd_open_instance
     procd_set_param command /bin/sh -c "exec $PROG $args"
+    # Single core, and AlsaSink is synchronous so decode and output share this
+    # thread. Measured on hardware at 6 competing nice-0 hogs: playback stretches
+    # +4.7% without this, +1.6% at -12. Gains flatten past -12, and SCHED_FIFO is
+    # deliberately avoided -- a busy-looping RT decoder on one core starves procd's
+    # 30s watchdog and reboots the speaker.
+    procd_set_param nice -12
     procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
     procd_set_param stderr 1

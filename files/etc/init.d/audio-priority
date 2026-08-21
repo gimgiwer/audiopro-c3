@@ -1,0 +1,55 @@
+#!/bin/sh /etc/rc.common
+# Pull the audio path up and push everything else down.
+#
+# CFS shares are relative and this SoC has one core, so lowering the competition
+# measured better than only raising audio. Playing an 8s clip against 6 spinning
+# nice-0 hogs: +4.7% dilation untuned, +1.6% with audio at -12 alone, +1.1% with
+# the hogs at +10 alone, +0.9% with both. Gains flatten past -12.
+#
+# No SCHED_FIFO/RR anywhere on purpose: decode is CPU-bound on a single core, so
+# an RT thread that ever spins starves procd and its 30s watchdog reboots us.
+#
+# Deliberately never touched: procd and watchdogd (they pet the watchdog -- slow
+# them down and the box reboots), wpa_supplicant and hostapd (a starved supplicant
+# drops the wifi link the audio arrives over), kswapd0, and ksoftirqd/0. That last
+# one looks tempting since it carries DMA completion softirqs, but it had burned
+# 1165 of 3724380 uptime ticks (0.03%) and renicing it changed dilation by less
+# than the run-to-run noise. It never runs, so there is nothing to fix.
+
+START=99
+
+AUDIO="shairport-sync"          # librespot gets -12 from procd at launch instead
+RESPONSIVE="mcud"               # UART button latency, but never above the audio path
+NEARBY="uhttpd avahi-daemon dbus-daemon dnsmasq netifd"
+BACKGROUND="crond ntpd logd logread odhcpd odhcp6c udhcpc urngd rpcd ubusd dropbear"
+
+renice_comm() {
+	local prio="$1" name="$2" pid comm
+	for pid in /proc/[0-9]*; do
+		pid="${pid#/proc/}"
+		read -r comm 2>/dev/null < "/proc/$pid/comm" || continue
+		# bare PRIORITY is absolute; "renice -n" is relative and compounds on re-run
+		[ "$comm" = "$name" ] && renice "$prio" -p "$pid" >/dev/null 2>&1
+	done
+}
+
+apply() {
+	local n
+	for n in $AUDIO;       do renice_comm "$1" "$n"; done
+	for n in $RESPONSIVE;  do renice_comm "$2" "$n"; done
+	for n in $NEARBY;      do renice_comm "$3" "$n"; done
+	for n in $BACKGROUND;  do renice_comm "$4" "$n"; done
+}
+
+start() {
+	command -v renice >/dev/null 2>&1 || {
+		logger -t audio-priority "no renice applet, priorities left alone"
+		return 1
+	}
+	apply -12 -5 3 10
+	logger -t audio-priority "audio raised, background lowered"
+}
+
+stop() {
+	command -v renice >/dev/null 2>&1 && apply 0 0 0 0
+}
