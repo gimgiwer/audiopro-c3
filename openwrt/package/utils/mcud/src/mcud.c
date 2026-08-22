@@ -522,7 +522,16 @@ static void alsa_init(void) {
             }
         }
     }
-    LOG_INFO("ALSA Master volume control ready (cubic, 25%% = -29.3 dB, 0 = mute)");
+    /* Read the number out of the table instead of hardcoding it - the last two
+       times the curve changed this line kept printing the old dB and sent the
+       next reader down the wrong path. */
+    {
+        int mute_top = 0;
+        while (mute_top < 100 && vol_curve[mute_top + 1] == 0) mute_top++;
+        int dbt = (vol_curve[25] * 6) / 10 - 600;
+        LOG_INFO("ALSA Master volume control ready (cubic, 25%% = %d.%d dB, <=%d%% = mute)",
+                 dbt / 10, (-dbt) % 10, mute_top);
+    }
 }
 
 static void mqtt_publish_volume(int vol) {
