@@ -6,7 +6,7 @@ ACTION="${1:-toggle}"
 TARGET="${2:-all}"
 SAVED_STATE="/tmp/paused_players.state"
 LR_FIFO="/tmp/librespot_cmd"
-AP_LEVEL="/tmp/airplay_premute.level"
+LEVEL_DIR="/tmp"
 
 # Real Spotify Connect commands, so the phone's ui and the track position stay
 # in sync -- muting the softvol instead would keep the stream running and lose
@@ -24,25 +24,33 @@ spotify_cmd() {
 pause_spotify()  { spotify_cmd pause; }
 resume_spotify() { spotify_cmd play; }
 
-# No real pause for AirPlay yet: this shairport-sync is built without dbus or
-# mpris, so there is no way into its DACP remote. Muting the input is the honest
-# approximation -- the phone keeps playing, so resume lands further along the
-# track. Restore the level we found rather than a hardcoded 100%, or one pause
-# would wipe whatever level the user had set.
-pause_airplay() {
-	amixer -c 0 sget AirPlay >/dev/null 2>&1 || return 1
-	amixer -c 0 sget AirPlay | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -1 > "$AP_LEVEL"
-	amixer -q -c 0 sset AirPlay 0%
+# AirPlay and squeezelite have no reachable control channel on this build:
+# shairport-sync is compiled without dbus/mpris, and squeezelite only takes
+# orders from its LMS server. Muting the input is the honest approximation --
+# the sender keeps playing, so resume lands further along the track. Save the
+# level we found instead of assuming 100%, or one pause would wipe whatever the
+# user had set. SIGSTOP would be tighter but a stopped dmix client leaves its
+# ring position frozen while the mixer keeps reading it, which loops a fragment.
+mute_ctl() {
+	local ctl="$1" f="$LEVEL_DIR/premute_$1.level"
+	amixer -c 0 sget "$ctl" >/dev/null 2>&1 || return 1
+	amixer -c 0 sget "$ctl" | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -1 > "$f"
+	amixer -q -c 0 sset "$ctl" 0%
 }
 
-resume_airplay() {
-	amixer -c 0 sget AirPlay >/dev/null 2>&1 || return 1
-	local lvl=100
-	[ -r "$AP_LEVEL" ] && read -r lvl < "$AP_LEVEL"
-	case "$lvl" in ''|*[!0-9]*) lvl=100 ;; esac
-	amixer -q -c 0 sset AirPlay "${lvl}%"
-	rm -f "$AP_LEVEL"
+unmute_ctl() {
+	local ctl="$1" f="$LEVEL_DIR/premute_$1.level" lvl=100
+	amixer -c 0 sget "$ctl" >/dev/null 2>&1 || return 1
+	[ -r "$f" ] && read -r lvl < "$f"
+	case "$lvl" in ''|*[!0-9]*|0) lvl=100 ;; esac
+	amixer -q -c 0 sset "$ctl" "${lvl}%"
+	rm -f "$f"
 }
+
+pause_airplay()  { mute_ctl AirPlay; }
+resume_airplay() { unmute_ctl AirPlay; }
+pause_squeeze()  { mute_ctl Squeeze; }
+resume_squeeze() { unmute_ctl Squeeze; }
 
 # SIGSTOP is crude but mpg123 has no control channel. It also catches a TTS
 # prompt if one happens to be playing; mcud's alarm() reaps that either way.
@@ -61,6 +69,9 @@ do_pause_all() {
 	if pgrep shairport-sync >/dev/null 2>&1 && pause_airplay; then
 		paused="$paused airplay"
 	fi
+	if pgrep squeezelite >/dev/null 2>&1 && pause_squeeze; then
+		paused="$paused squeeze"
+	fi
 	if pgrep mpg123 >/dev/null 2>&1 && pause_webradio; then
 		paused="$paused webradio"
 	fi
@@ -77,6 +88,7 @@ do_resume_all() {
 			case "$p" in
 				spotify)  resume_spotify ;;
 				airplay)  resume_airplay ;;
+				squeeze)  resume_squeeze ;;
 				webradio) resume_webradio ;;
 			esac
 		done
@@ -84,6 +96,7 @@ do_resume_all() {
 	else
 		resume_spotify
 		resume_airplay
+		resume_squeeze
 		resume_webradio
 	fi
 }
@@ -93,6 +106,7 @@ one_target() {
 	case "$2" in
 		spotify)  if [ "$act" = pause ]; then pause_spotify;  else resume_spotify;  fi ;;
 		airplay)  if [ "$act" = pause ]; then pause_airplay;  else resume_airplay;  fi ;;
+		squeeze)  if [ "$act" = pause ]; then pause_squeeze;  else resume_squeeze;  fi ;;
 		webradio) if [ "$act" = pause ]; then pause_webradio; else resume_webradio; fi ;;
 	esac
 }
@@ -112,11 +126,19 @@ case "$ACTION" in
 		spotify_cmd "$ACTION"
 		;;
 	stop)
-		killall -9 mpg123 2>/dev/null || true
+		# TERM first: a -9'd alsa client leaves the dmix slave holding its slot,
+		# and this busybox has neither usleep nor fractional sleep to shorten
+		# the grace period.
+		if pgrep mpg123 >/dev/null 2>&1; then
+			killall -CONT mpg123 2>/dev/null
+			killall -TERM mpg123 2>/dev/null
+			sleep 1
+			killall -KILL mpg123 2>/dev/null
+		fi
 		do_pause_all
 		;;
 	*)
-		echo "Usage: $0 {pause|play|resume|toggle|next|prev|stop} [spotify|airplay|webradio|all]"
+		echo "Usage: $0 {pause|play|resume|toggle|next|prev|stop} [spotify|airplay|squeeze|webradio|all]"
 		exit 1
 		;;
 esac

@@ -2,8 +2,11 @@ config system
 	option hostname 'audiopro'
 	option timezone 'UTC'
 	option ttylogin '0'
-	option log_size '64'
+	option log_size '128'
 	option urandom_seed '0'
+	# lzo-rle is the rle-aware variant of the same codec: same speed class, much
+	# better on the zero-filled pages that dominate swap on this box
+	option zram_comp_algo 'lzo-rle'
 
 config timeserver 'ntp'
 	option enabled '1'

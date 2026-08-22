@@ -1,13 +1,9 @@
 # Put your custom commands here that should be executed once
 # the system init finished. By default this file does nothing.
 
-# Ensure 32MB ZRAM Swap is enabled on every boot for 64MB RAM SoC
-if [ -e /dev/zram0 ] && ! swapon -s | grep -q "/dev/zram0"; then
-    echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lzo-rle > /sys/block/zram0/comp_algorithm 2>/dev/null
-    echo $((32 * 1024 * 1024)) > /sys/block/zram0/disksize 2>/dev/null
-    mkswap /dev/zram0 >/dev/null 2>&1
-    swapon -p 100 /dev/zram0 >/dev/null 2>&1
-fi
+# Snapshot the first half minute of syslog. The ring buffer wraps within hours,
+# so boot problems are unreadable by the time anyone looks.
+(sleep 30; logread > /tmp/boot.log) &
 
 # Start AirPlay metadata and artwork collector
 [ -x /usr/share/audiopro/meta_airplay.sh ] && /usr/share/audiopro/meta_airplay.sh &

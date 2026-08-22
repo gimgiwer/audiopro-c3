@@ -1,10 +1,4 @@
 #!/bin/sh
-play_file() {  # $1=file $2=alsa slot; mp3 через mpg123, остальное через aplay
-    case "$1" in
-        *.mp3|*.MP3) mpg123 -q -a "$2" -- "$1" 2>/dev/null ;;
-        *) aplay -q -D "$2" -- "$1" 2>/dev/null ;;
-    esac
-}
 # Audio Pro C3 - Smart Alarm Engine
 # Fully customizable autonomous alarm with sharp/gentle modes, sound selectors, hard ducking, Snooze & Web REST API
 
@@ -26,7 +20,6 @@ duck_restore() {
     amixer -q -c 0 sset Spotify 50% 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 50% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 50% 2>/dev/null || true
-    usleep 50000
     amixer -q -c 0 sset Music 100% 2>/dev/null || true
     amixer -q -c 0 sset Spotify 100% 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 100% 2>/dev/null || true
@@ -111,7 +104,7 @@ do_start() {
     local target_vol=$(uci -q get mcud.alarm.target_volume || echo "60")
     local alarm_mode=$(uci -q get mcud.alarm.alarm_mode || echo "gentle")
     local sound_type=$(uci -q get mcud.alarm.sound_type || echo "chime")
-    local sound_file=$(uci -q get mcud.alarm.sound_file || echo "/usr/share/sounds/alarm_wake_up.mp3")
+    local sound_file=$(uci -q get mcud.alarm.sound_file || echo "/usr/share/sounds/alarm_wake_up.wav")
     local stream_url=$(uci -q get mcud.alarm.stream_url || echo "http://icecast.vrtcdn.be/klara-high.mp3")
     local fade_sec=$(uci -q get mcud.alarm.fade_sec || echo "0")
     local duration_min=$(uci -q get mcud.alarm.duration_min || echo "30")
@@ -157,15 +150,15 @@ do_start() {
             local repeats=0
             while [ $(date +%s) -lt "$end_time" ] && [ -f "$PID_FILE" ]; do
                 if [ -f "$sound_file" ]; then
-                    play_file "$sound_file" alarm_in || true
+                    aplay -q -D alarm_in "$sound_file" 2>/dev/null || aplay -q "$sound_file" 2>/dev/null || true
                 else
-                    play_file /usr/share/sounds/bell.mp3 alarm_in || true
+                    aplay -q -D alarm_in /usr/share/sounds/bell.wav 2>/dev/null || true
                 fi
                 repeats=$((repeats + 1))
                 if [ "$sound_type" = "chime_then_stream" ] && [ "$repeats" -ge 3 ]; then
                     break
                 fi
-                sleep 0.5
+                sleep 1
             done
         fi
 
@@ -182,7 +175,7 @@ do_start() {
             /usr/bin/player_control.sh resume spotify >/dev/null 2>&1 || true
             
             # Short intro gong while Spotify connects
-            play_file /usr/share/sounds/bell.mp3 alarm_in || true
+            aplay -q -D alarm_in /usr/share/sounds/bell.wav 2>/dev/null || true
 
             local waited=0
             local is_playing=0
@@ -199,11 +192,11 @@ do_start() {
             if [ "$is_playing" -eq 0 ] && [ -f "$PID_FILE" ]; then
                 while [ $(date +%s) -lt "$end_time" ] && [ -f "$PID_FILE" ]; do
                     if [ -f "$sound_file" ]; then
-                        play_file "$sound_file" alarm_in || play_file /usr/share/sounds/alarm_sharp.mp3 alarm_in || true
+                        aplay -q -D alarm_in "$sound_file" 2>/dev/null || aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
                     else
-                        play_file /usr/share/sounds/alarm_sharp.mp3 alarm_in || true
+                        aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
                     fi
-                    sleep 0.5
+                    sleep 1
                 done
             fi
         fi

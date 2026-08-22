@@ -19,3 +19,7 @@ config options 'options'
 	option priority '0'
 	option dsd_over_pcm '0'
 	option ircontrol '0'
+	# Bigger than the 200/400 KB default: this radio link drops packets and a
+	# rebuffer mid-track is worse than 512 KB of RAM on a 56 MB box.
+	option stream_bufsiz '512'
+	option out_bufsiz '1024'

@@ -28,6 +28,7 @@ start_service() {
     config_get dither main dither 'none'
     config_get format main format 'S32'
     config_get syscache main system_cache ''
+    config_get_bool debug main debug 0
 
     local args="--backend alsa --device $device --bitrate $bitrate --name \"$name\" --volume-ctrl $vol_ctrl --device-type $dev_type --onevent /usr/bin/spotify_event_handler.sh --dither $dither --format $format"
 
@@ -65,6 +66,10 @@ start_service() {
     else
         logger -t librespot "binary has no --control-fifo, local transport control disabled"
     fi
+
+    # procd already pipes stdout/stderr into syslog, so this is the cheap way to
+    # get timestamped state/volume traces when connect feels sluggish
+    [ "$debug" -eq 1 ] && args="$args --verbose"
 
     procd_open_instance
     procd_set_param command /bin/sh -c "exec $PROG $args"

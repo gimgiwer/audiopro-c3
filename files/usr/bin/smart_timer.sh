@@ -1,16 +1,11 @@
 #!/bin/sh
-play_file() {  # $1=file $2=alsa slot; mp3 через mpg123, остальное через aplay
-    case "$1" in
-        *.mp3|*.MP3) mpg123 -q -a "$2" -- "$1" 2>/dev/null ;;
-        *) aplay -q -D "$2" -- "$1" 2>/dev/null ;;
-    esac
-}
 # Audio Pro C3 - Smart Countdown Timer Engine
 # Handles background countdowns, MQTT state broadcasting, and ALSA alarm chime on completion
 
 STATE_FILE="/tmp/timer_state.json"
 PID_FILE="/tmp/timer.pid"
 RING_PID_FILE="/tmp/timer_ring.pid"
+PREV_VOL_FILE="/tmp/timer_prev_vol"
 
 mqtt_pub() {
     local topic=$1
@@ -42,7 +37,7 @@ do_stop_ringing() {
             [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
         done
     fi
-    local extra_pids=$(pgrep -f "mpg123.*timer_in|aplay.*timer_in" 2>/dev/null)
+    local extra_pids=$(pgrep -f "aplay.*timer_in" 2>/dev/null)
     if [ -n "$extra_pids" ]; then
         for ep in $extra_pids; do
             kill -9 "$ep" 2>/dev/null || true
@@ -50,6 +45,11 @@ do_stop_ringing() {
     fi
     # Restore Alarm volume if Alarm was playing
     amixer -q -c 0 sset Alarm 100% 2>/dev/null || true
+    # ringing raises the master volume, so hand it back to whatever it was
+    if [ -s "$PREV_VOL_FILE" ] && [ -p /tmp/mcu_cmd_fifo ]; then
+        printf "AXX+VOL+%03d\n" "$(cat "$PREV_VOL_FILE")" > /tmp/mcu_cmd_fifo 2>/dev/null || true
+    fi
+    rm -f "$PREV_VOL_FILE"
     # Only resume background players if alarm is not actively ringing
     if [ ! -f /tmp/alarm.pid ]; then
         /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
@@ -82,6 +82,7 @@ do_ring() {
 
     # Pause active music streams and set volume
     /usr/bin/player_control.sh pause all >/dev/null 2>&1 || true
+    ubus call mcud status 2>/dev/null | grep -o '"volume"[^,]*' | tr -dc 0-9 > "$PREV_VOL_FILE"
     if [ -p /tmp/mcu_cmd_fifo ]; then
         printf "AXX+VOL+%03d\n" "$volume" > /tmp/mcu_cmd_fifo 2>/dev/null || true
     fi
@@ -95,11 +96,11 @@ do_ring() {
     local end_ring=$(($(date +%s) + ring_duration))
     while [ $(date +%s) -lt "$end_ring" ] && [ -f "$RING_PID_FILE" ]; do
         if [ -f "$sound_file" ]; then
-            play_file "$sound_file" timer_in || play_file /usr/share/sounds/timer_sharp.mp3 timer_in || true
+            aplay -q -D timer_in "$sound_file" 2>/dev/null || aplay -q -D timer_in /usr/share/sounds/timer_sharp.wav 2>/dev/null || true
         else
-            play_file /usr/share/sounds/timer_sharp.mp3 timer_in || true
+            aplay -q -D timer_in /usr/share/sounds/timer_sharp.wav 2>/dev/null || true
         fi
-        sleep 0.4
+        sleep 1
     done
 
     do_stop_ringing
@@ -108,7 +109,7 @@ do_ring() {
 do_start() {
     local total_sec=${1:-300}
     local name=${2:-"Timer"}
-    local sound_file=${3:-"/usr/share/sounds/timer_sharp.mp3"}
+    local sound_file=${3:-"/usr/share/sounds/timer_sharp.wav"}
     local volume=${4:-70}
 
     [ "$total_sec" -le 0 ] && exit 0
@@ -134,9 +135,12 @@ do_start() {
         sleep 1
     done
 
-    rm -f "$PID_FILE"
-    TIMER_NAME="$name"
-    do_ring "$sound_file" "$volume"
+    # cancel yanks the pid file, so ring only when the countdown really ran out
+    if [ -f "$PID_FILE" ]; then
+        rm -f "$PID_FILE"
+        TIMER_NAME="$name"
+        do_ring "$sound_file" "$volume"
+    fi
 }
 
 case "$1" in
