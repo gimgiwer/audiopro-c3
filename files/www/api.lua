@@ -676,12 +676,19 @@ function handle_request(env)
 
     elseif action == "get_config" then
         local ap_ssid = uci_get_val("wireless", "ap_iface", "ssid", "AudioPro-C3-Setup")
-        local ap_key = uci_get_val("wireless", "ap_iface", "key", "")
+        -- the ui only prefills the ap password field for a logged in user;
+        -- anyone else just gets to know whether a key exists at all
+        local ap_key_real = uci_get_val("wireless", "ap_iface", "key", "")
+        local ap_key_set = (ap_key_real ~= "")
+        local ap_key = is_authenticated and ap_key_real or ""
         local ap_chan = uci_get_val("wireless", "radio0", "channel", "auto")
         local ap_dis = (uci_get_val("wireless", "ap_iface", "disabled", "0") == "1")
 
         local sta_ssid = uci_get_val("wireless", "sta_iface", "ssid", "")
-        local sta_key = uci_get_val("wireless", "sta_iface", "key", "")
+        -- the station psk is the user's home wifi password and nothing in the
+        -- ui reads it back, so it never leaves the box. auth_enabled is off by
+        -- default, which made this endpoint a plain-text leak to the whole lan.
+        local sta_key_set = (uci_get_val("wireless", "sta_iface", "key", "") ~= "")
         local sta_dis = (uci_get_val("wireless", "sta_iface", "disabled", "1") == "1")
 
         local def_vol = tonumber(uci_get_val("mcud", "main", "default_volume", "25")) or 25
@@ -697,9 +704,10 @@ function handle_request(env)
 
         local hostname = uci_get_val("system", "@system[0]", "hostname", "AudioPro-C3")
 
-        local resp = string.format('{"status":"ok","ap_ssid":"%s","ap_key":"%s","ap_channel":"%s","ap_disabled":%s,"sta_ssid":"%s","sta_key":"%s","sta_disabled":%s,"default_volume":%d,"auto_sleep_min":%d,"sleep_in_aux":%s,"sleep_in_bt":%s,"mqtt_enabled":%s,"mqtt_host":"%s","mqtt_port":%d,"mqtt_prefix":"%s","mqtt_user":"%s","hostname":"%s"}',
-            json_escape(ap_ssid), json_escape(ap_key), json_escape(ap_chan), tostring(ap_dis),
-            json_escape(sta_ssid), json_escape(sta_key), tostring(sta_dis),
+        local resp = string.format('{"status":"ok","ap_ssid":"%s","ap_key":"%s","ap_key_set":%s,"ap_channel":"%s","ap_disabled":%s,"sta_ssid":"%s","sta_key_set":%s,"sta_disabled":%s,"default_volume":%d,"auto_sleep_min":%d,"sleep_in_aux":%s,"sleep_in_bt":%s,"mqtt_enabled":%s,"mqtt_host":"%s","mqtt_port":%d,"mqtt_prefix":"%s","mqtt_user":"%s","hostname":"%s"}',
+            json_escape(ap_ssid), json_escape(ap_key), tostring(ap_key_set),
+            json_escape(ap_chan), tostring(ap_dis),
+            json_escape(sta_ssid), tostring(sta_key_set), tostring(sta_dis),
             def_vol, auto_sleep, tostring(slp_aux), tostring(slp_bt),
             tostring(mqtt_en), json_escape(mqtt_host), mqtt_port, json_escape(mqtt_pre), json_escape(mqtt_user), json_escape(hostname))
         uhttpd.send(resp)
@@ -746,6 +754,9 @@ function handle_request(env)
     elseif action == "save_ap" then
         local ssid = params.ap_ssid or ""
         local key = params.ap_key or ""
+        -- get_config no longer hands the key to an unauthenticated ui, so an
+        -- empty field means "unchanged", not "wipe it"
+        if key == "" then key = uci_get_val("wireless", "ap_iface", "key", "") end
         local chan = params.ap_channel or "auto"
         local dis = (params.ap_disabled == "1" or params.ap_disabled == "true") and "1" or "0"
 
