@@ -1,0 +1,98 @@
+Cubic volume mapping as PulseAudio and PipeWire define it.
+
+Upstream's CubicMapping is a port of alsamixer's variant: it offsets the
+slider fraction by min_norm = 10^(-db_range/60) before cubing, so the curve
+bottoms out at exactly -db_range instead of running off to -inf. Every
+desktop mixer the user actually has does the plain cube - amplitude is the
+fraction cubed, so dB = 60*log10(fraction). The offset makes the same number
+on the dial about 7 dB louder here than on the same number in PipeWire, and
+on a speaker whose whole point is that its dial should feel like the dial
+next to it, that is the wrong curve.
+
+Checked against a live pipewire 1.6.8 sink rather than from memory: it
+reported 9830 / 15% / -49.44 dB, and 60*log10(0.15) is -49.44.
+
+The second hunk is the consequence. On a control with a finite range the
+plain cube legitimately asks for less than the floor - 5% of a 60 dB
+control wants -78 dB - and the raw index comes out negative. set_volume
+fed that straight into an .expect(), which panics and takes librespot with
+it. Clamped to the control's own range instead; alsa's softvol turns index
+0 into real digital silence, which is what a hardware mixer with the same
+range would do anyway.
+
+---
+diff --git a/playback/src/mixer/alsamixer.rs b/playback/src/mixer/alsamixer.rs
+index 90daaf1..2c8b743 100644
+--- a/playback/src/mixer/alsamixer.rs
++++ b/playback/src/mixer/alsamixer.rs
+@@ -267,7 +267,11 @@ impl Mixer for AlsaMixer {
+         }
+ 
+         if self.is_softvol {
+-            let scaled_volume = (self.min as f64 + mapped_volume * self.range as f64) as i64;
++            // Clamp: the cubic curve legitimately maps the bottom of the slider
++            // below this control's floor, and a negative index would come back
++            // as an error that the .expect() below turns into a panic.
++            let scaled_volume = (self.min as f64 + mapped_volume * self.range as f64)
++                .clamp(self.min as f64, self.max as f64) as i64;
+             debug!("Setting Alsa raw volume to {}", scaled_volume);
+             simple_element
+                 .set_playback_volume_all(scaled_volume)
+diff --git a/playback/src/mixer/mappings.rs b/playback/src/mixer/mappings.rs
+index cb238a2..62b489e 100644
+--- a/playback/src/mixer/mappings.rs
++++ b/playback/src/mixer/mappings.rs
+@@ -123,35 +123,29 @@ impl LogMapping {
+     }
+ }
+ 
+-// Ported from: https://github.com/alsa-project/alsa-utils/blob/master/alsamixer/volume_mapping.c
+-// which in turn was inspired by: https://www.robotplanet.dk/audio/audio_gui_design/
++// The cube that PulseAudio and PipeWire put behind every desktop volume slider:
++// amplitude is the slider fraction cubed, so dB = 60 * log10(fraction). Measured
++// against a real pipewire 1.6.8 sink to be sure - it reported 9830 / 15% /
++// -49.44 dB, and 60 * log10(0.15) is -49.44.
+ //
+-// Though this mapping is computationally less expensive than the logarithmic
+-// mapping, it really does not matter as librespot memoizes the mapped value.
+-// Use this mapping if you have some reason to mimic Alsa's native mixer or
+-// prefer a more granular control in the upper volume range.
++// Upstream ported alsamixer's variant instead, which offsets the fraction by
++// min_norm = 10^(-db_range/60) so the curve bottoms out at exactly -db_range
++// rather than -inf. That offset is why 25% landed on -29.3 dB here where every
++// desktop puts -36.1, and the whole point on this device is that the speaker's
++// dial should feel like the dial the user already has. Dropped, along with
++// min_norm.
+ //
+-// Note: https://www.dr-lex.be/info-stuff/volumecontrols.html#ideal3 shows
+-// better approximations to the logarithmic curve but because we only intend
+-// to mimic Alsa here, we do not implement them. If your desire is to use a
+-// logarithmic mapping, then use that volume control.
++// Consequence to keep in mind: on a control with a finite range this really does
++// run off the bottom. Below 10% of a 60 dB control the mapped value is under the
++// floor, so it mutes - which is what the maths says and what a hardware mixer
++// with the same range would do.
+ pub struct CubicMapping {}
+ impl VolumeMapping for CubicMapping {
+-    fn linear_to_mapped(normalized_volume: f64, db_range: f64) -> f64 {
+-        let min_norm = Self::min_norm(db_range);
+-        f64::powi(normalized_volume * (1.0 - min_norm) + min_norm, 3)
++    fn linear_to_mapped(normalized_volume: f64, _db_range: f64) -> f64 {
++        f64::powi(normalized_volume, 3)
+     }
+ 
+-    fn mapped_to_linear(mapped_volume: f64, db_range: f64) -> f64 {
+-        let min_norm = Self::min_norm(db_range);
+-        (mapped_volume.powf(1.0 / 3.0) - min_norm) / (1.0 - min_norm)
+-    }
+-}
+-
+-impl CubicMapping {
+-    fn min_norm(db_range: f64) -> f64 {
+-        // Note that this 60.0 is unrelated to DEFAULT_DB_RANGE.
+-        // Instead, it's the cubic voltage to dB ratio.
+-        f64::powf(10.0, -db_range / 60.0)
++    fn mapped_to_linear(mapped_volume: f64, _db_range: f64) -> f64 {
++        mapped_volume.powf(1.0 / 3.0)
+     }
+ }
