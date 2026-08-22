@@ -35,7 +35,7 @@ index 71df187..cee5bf3 100644
 +panic = "abort"
 +strip = true
 diff --git a/connect/src/spirc.rs b/connect/src/spirc.rs
-index fec6057..12b2ad2 100644
+index fec6057..4d738d7 100644
 --- a/connect/src/spirc.rs
 +++ b/connect/src/spirc.rs
 @@ -42,7 +42,10 @@ use std::{
@@ -50,19 +50,25 @@ index fec6057..12b2ad2 100644
  
  #[derive(Debug, Error)]
  enum SpircError {
-@@ -144,6 +147,11 @@ const CONTEXT_FETCH_THRESHOLD: usize = 2;
- const VOLUME_UPDATE_DELAY: Duration = Duration::from_millis(500);
+@@ -141,9 +144,15 @@ enum SpircCommand {
+ const CONTEXT_FETCH_THRESHOLD: usize = 2;
+ 
+ // delay to update volume after a certain amount of time, instead on each update request
+-const VOLUME_UPDATE_DELAY: Duration = Duration::from_millis(500);
++const VOLUME_UPDATE_DELAY: Duration = Duration::from_millis(150);
  // to reduce updates to remote, we group some request by waiting for a set amount of time
- const UPDATE_STATE_DELAY: Duration = Duration::from_millis(200);
+-const UPDATE_STATE_DELAY: Duration = Duration::from_millis(200);
++const UPDATE_STATE_DELAY: Duration = Duration::from_millis(60);
 +// the alsa control we drive is shared with the speaker's own volume buttons and with
-+// ha ducking, and librespot only reads it back in handle_play(), so poll it
-+const MIXER_POLL_INTERVAL: Duration = Duration::from_millis(1000);
++// ha ducking, and librespot only reads it back in handle_play(), so poll it. only
++// while we are the active device, otherwise it is a mixer open every tick forever
++const MIXER_POLL_INTERVAL: Duration = Duration::from_millis(250);
 +// one step of a 100-step control, so the mixer's own rounding isn't seen as a move
 +const MIXER_POLL_TOLERANCE: u16 = u16::MAX / 100;
  
  /// The spotify connect handle
  pub struct Spirc {
-@@ -463,6 +471,9 @@ impl SpircTask {
+@@ -463,6 +472,9 @@ impl SpircTask {
              return;
          }
  
@@ -72,12 +78,12 @@ index fec6057..12b2ad2 100644
          while !self.session.is_invalid() && !self.shutdown {
              let commands = self.commands.as_mut();
              let player_events = self.player_events.as_mut();
-@@ -537,6 +548,15 @@ impl SpircTask {
+@@ -537,6 +549,15 @@ impl SpircTask {
                          error!("could not dispatch player event: {e}");
                      }
                  },
 +                // someone else moved the mixer - the volume buttons go straight to alsa
-+                _ = mixer_poll.tick(), if !self.update_volume => {
++                _ = mixer_poll.tick(), if !self.update_volume && self.connect_state.is_active() => {
 +                    let hw_volume = self.mixer.volume();
 +                    let known = self.connect_state.device_info().volume as u16;
 +                    if hw_volume.abs_diff(known) > MIXER_POLL_TOLERANCE {
@@ -88,7 +94,7 @@ index fec6057..12b2ad2 100644
                  _ = async { sleep(UPDATE_STATE_DELAY).await }, if self.update_state => {
                      self.update_state = false;
  
-@@ -1151,6 +1171,13 @@ impl SpircTask {
+@@ -1151,6 +1172,13 @@ impl SpircTask {
                  if let Some(shuffle) = shuffle {
                      self.handle_shuffle(shuffle)?;
                  }
@@ -102,7 +108,7 @@ index fec6057..12b2ad2 100644
              }
              SkipNext(skip_next) => self.handle_next(skip_next.track.map(|t| t.uri))?,
              SkipPrev(_) => self.handle_prev()?,
-@@ -1871,6 +1898,8 @@ impl SpircTask {
+@@ -1871,6 +1899,8 @@ impl SpircTask {
      }
  
      fn load_track(&mut self, start_playing: bool, position_ms: u32) -> Result<(), Error> {

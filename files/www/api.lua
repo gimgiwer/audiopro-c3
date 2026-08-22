@@ -102,11 +102,11 @@ end
 -- Strips all control characters (\r, \n, \0, ASCII 1-31, 127) and escapes single quotes
 local function sanitize_shell(s)
     if not s then return "" end
-    local ok, res = pcall(function()
-        local clean = string.gsub(tostring(s), "[\r\n\0\x01-\x1f\x7f]", "")
-        return string.gsub(clean, "'", "'\\''")
-    end)
-    return ok and res or ""
+    -- %c covers the same control chars as an explicit \0..\x1f class, but a
+    -- literal NUL in the pattern made gsub throw here, and the pcall around it
+    -- swallowed that into "" - every quoted shell arg came out empty
+    local clean = string.gsub(tostring(s), "%c", "")
+    return (string.gsub(clean, "'", "'\\''"))
 end
 
 
@@ -167,6 +167,14 @@ local function uci_get_val(config, section, option, default_val)
 end
 
 local SEC_HEADERS = "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: strict-origin-when-cross-origin\r\nContent-Security-Policy: default-src 'self' 'unsafe-inline' data: blob:; img-src 'self' data: blob: http: https:;\r\n"
+
+local function daemon_pid(name)
+    local f = io.popen("pidof " .. name .. " 2>/dev/null", "r")
+    if not f then return 0 end
+    local out = f:read("*l") or ""
+    f:close()
+    return tonumber(string.match(out, "^(%d+)") or "0") or 0
+end
 
 local function verify_system_password(username, password)
     if not username or username == "" or not password or password == "" then return false end
@@ -427,6 +435,19 @@ function handle_request(env)
         local mut_str = read_file("/tmp/current_mute")
         if mut_str and string.match(mut_str, "1") then mut = true end
 
+        -- those /tmp caches only ever hold what the api itself last wrote, and
+        -- librespot, shairport and the panel buttons all move the mixer behind
+        -- our back. mcud owns the mixer and the mcu link, so prefer its view.
+        local mp = io.popen("ubus call mcud status 2>/dev/null", "r")
+        local mstat = mp and mp:read("*a") or ""
+        if mp then mp:close() end
+        bat = tonumber(string.match(mstat, '"battery"%s*:%s*(%d+)')) or bat
+        vol = tonumber(string.match(mstat, '"volume"%s*:%s*(%d+)')) or vol
+        src = string.match(mstat, '"source"%s*:%s*"([^"]*)"') or src
+        if string.find(mstat, '"mute"') then
+            mut = string.find(mstat, '"mute"%s*:%s*true') ~= nil
+        end
+
         local uptime = 120
         local up_str = read_file("/proc/uptime")
         if up_str then uptime = math.floor(tonumber(string.match(up_str, "^(%d+%.?%d*)") or "120")) end
@@ -442,16 +463,26 @@ function handle_request(env)
             if avail then mem_free = string.format("%.1f", tonumber(avail)/1024) end
         end
 
-        local airplay_act = (read_file("/tmp/shairport-sync-meta") ~= nil)
-        local spotify_act = (read_file("/tmp/audiopro_meta.json") ~= nil)
+        -- meta cache tells us who played last. never probe the shairport fifo
+        -- here: opening it blocks until a writer shows up and hangs the request
+        local meta_raw = read_file("/tmp/audiopro_meta.json") or ""
+        local airplay_act = string.find(meta_raw, '"source"%s*:%s*"airplay"') ~= nil
+        local spotify_act = string.find(meta_raw, '"source"%s*:%s*"spotify"') ~= nil
 
-        local now_playing = read_file("/tmp/audiopro_meta.json") or '{"active":false}'
+        -- the flags above only say "something played once", so hand out live
+        -- daemon state too
+        local daemons = string.format('{"spotify":%s,"airplay":%s,"squeeze":%s}',
+            tostring(daemon_pid("librespot") > 0),
+            tostring(daemon_pid("shairport-sync") > 0),
+            tostring(daemon_pid("squeezelite") > 0))
+
+        local now_playing = meta_raw
         if now_playing == "" then now_playing = '{"active":false}' end
 
         local hostname = uci_get_val("system", "@system[0]", "hostname", "AudioPro-C3")
 
-        local resp = string.format('{"status":"ok","battery":%d,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"now_playing":%s}',
-            bat, json_escape(src), vol, tostring(mut), client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), now_playing)
+        local resp = string.format('{"status":"ok","battery":%d,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"daemons":%s,"now_playing":%s}',
+            bat, json_escape(src), vol, tostring(mut), client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), daemons, now_playing)
         uhttpd.send(resp)
 
     elseif action == "volume" then
@@ -510,6 +541,33 @@ function handle_request(env)
         send_mcu("AXX+TRK+000\n")
         os.execute("/usr/bin/player_control.sh prev >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","action":"prev"}')
+
+    elseif action == "spotify" or action == "spotify_service" then
+        local verb = string.lower(params.val or params.cmd or "status")
+        if verb ~= "start" and verb ~= "stop" and verb ~= "restart" and verb ~= "status" then
+            uhttpd.send('{"status":"error","message":"val must be start, stop, restart or status"}')
+        else
+            -- keep the uci gate in step with the daemon, otherwise a stop is
+            -- undone by the next reboot
+            if verb == "start" or verb == "stop" then
+                local en = (verb == "start") and "1" or "0"
+                if uci_ctx then
+                    uci_ctx:set("librespot", "main", "enabled", en)
+                    uci_ctx:commit("librespot")
+                else
+                    os.execute(string.format("uci set librespot.main.enabled='%s'; uci commit librespot 2>/dev/null", en))
+                end
+            end
+            if verb ~= "status" then
+                os.execute("/etc/init.d/librespot " .. verb .. " >/dev/null 2>&1")
+                -- procd forks, so give it a moment before reporting the pid back
+                if verb ~= "stop" then os.execute("sleep 1") end
+            end
+            local pid = daemon_pid("librespot")
+            local en = uci_get_val("librespot", "main", "enabled", "1")
+            uhttpd.send(string.format('{"status":"ok","service":"spotify","command":"%s","running":%s,"pid":%d,"enabled":%s}',
+                verb, tostring(pid > 0), pid, tostring(en ~= "0")))
+        end
 
     elseif action == "trigger_preset" or action == "preset" then
         local pid = tonumber(params.id or params.preset or "1") or 1
@@ -838,7 +896,7 @@ function handle_request(env)
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d updated"}', pid))
 
     elseif action == "list_alarm_sounds" then
-        local p = io.popen("ls /usr/share/sounds/*.mp3 /usr/share/sounds/*.wav 2>/dev/null", "r")
+        local p = io.popen("ls /usr/share/sounds/*.wav 2>/dev/null", "r")
         local sounds = {}
         if p then
             for line in p:lines() do
@@ -856,7 +914,7 @@ function handle_request(env)
         local a_vol = tonumber(uci_get_val("mcud", "alarm", "target_volume", "60")) or 60
         local a_mode = uci_get_val("mcud", "alarm", "alarm_mode", "sharp")
         local a_stype = uci_get_val("mcud", "alarm", "sound_type", "chime")
-        local a_sfile = uci_get_val("mcud", "alarm", "sound_file", "/usr/share/sounds/alarm_sharp.mp3")
+        local a_sfile = uci_get_val("mcud", "alarm", "sound_file", "/usr/share/sounds/alarm_sharp.wav")
         local a_url = uci_get_val("mcud", "alarm", "stream_url", "http://icecast.vrtcdn.be/klara-high.mp3")
         local a_suri = uci_get_val("mcud", "alarm", "spotify_uri", "spotify:track:4cOdK2wGLETKBW3PvgPWqT")
         local a_fade = tonumber(uci_get_val("mcud", "alarm", "fade_sec", "0")) or 0
@@ -877,7 +935,7 @@ function handle_request(env)
         local a_vol = tonumber(params.target_volume or "60") or 60
         local a_mode = (params.alarm_mode == "gentle") and "gentle" or "sharp"
         local a_stype = params.sound_type or "chime"
-        local a_sfile = params.sound_file or "/usr/share/sounds/alarm_sharp.mp3"
+        local a_sfile = params.sound_file or "/usr/share/sounds/alarm_sharp.wav"
         local a_url = params.stream_url or "http://icecast.vrtcdn.be/klara-high.mp3"
         local a_suri = params.spotify_uri or "spotify:track:4cOdK2wGLETKBW3PvgPWqT"
         local a_fade = tonumber(params.fade_sec or "0") or 0
@@ -926,7 +984,7 @@ function handle_request(env)
             sec = min * 60
         end
         local name = params.name or "Timer"
-        local sound = params.sound or "/usr/share/sounds/alarm_sharp.mp3"
+        local sound = params.sound or "/usr/share/sounds/alarm_sharp.wav"
         local vol = tonumber(params.volume or "70") or 70
         if sec > 0 then
             os.execute(string.format("/usr/bin/smart_timer.sh start %d '%s' '%s' %d >/dev/null 2>&1 &",

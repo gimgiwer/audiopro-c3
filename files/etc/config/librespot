@@ -4,10 +4,14 @@ config librespot 'main'
 	option name 'Audio Pro C3'
 	option device 'spotify_in'
 	option bitrate '320'
-	# log, not linear: on a softvol librespot forces its antilog mapping, which
-	# turns "log" into a straight index = 10 * percent - the same dB scale the
-	# panel buttons and shairport-sync use. linear would make 25% mean -12 dB.
-	option volume_ctrl 'log'
+	# On a softvol librespot always applies its antilog correction
+	# (is_some_linear() is `is_softvol || use_linear_in_db`), so the curve you
+	# pick is the curve you get. Measured raw index on the -60..0 dB Master at
+	# 25%: log 250 = -45 dB, cubic 511 = -29 dB, linear 799 = -12 dB. Stock's
+	# law was gain = vol/100, i.e. exactly linear, but that crams everything
+	# usable into the bottom fifth of the dial. cubic puts a comfortable
+	# -20 dB at 40%, which is why it wins here.
+	option volume_ctrl 'cubic'
 	# Name it, don't leave it out: 0.8.0 has no "keep current volume" default, it
 	# falls back to u16::MAX/2 and writes 50% to Master on every connect.
 	option initial_volume '25'
@@ -26,3 +30,6 @@ config librespot 'main'
 	# and then hands the DAC white noise (see the dmixer comment in asound.conf).
 	# Matches spotify_in/Master/dmix, so no conversion happens on the way down.
 	option format 'S16'
+	# 1 makes librespot log the volume mapping ("Input volume N mapped to X%",
+	# "Setting Alsa raw volume to N") - the only way to see the curve on device.
+	option debug '0'

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Recovery path behind the web ui's "reset wifi" button: puts the setup AP back
+# on the air (10.10.10.254) when the home network is gone. The sta section is
+# left alone on purpose - no reason to throw away a link that might still work.
+
+AP_SSID=$(uci -q get wireless.ap_iface.ssid || echo "AudioPro-C3-Setup")
+AP_KEY=$(uci -q get wireless.ap_iface.key)
+
+uci -q delete wireless.ap_iface
+uci set wireless.ap_iface=wifi-iface
+uci set wireless.ap_iface.device='radio0'
+uci set wireless.ap_iface.network='ap'
+uci set wireless.ap_iface.mode='ap'
+uci set wireless.ap_iface.ssid="$AP_SSID"
+if [ -n "$AP_KEY" ]; then
+	uci set wireless.ap_iface.encryption='psk2'
+	uci set wireless.ap_iface.key="$AP_KEY"
+else
+	uci set wireless.ap_iface.encryption='none'
+fi
+uci set wireless.ap_iface.isolate='1'
+uci set wireless.ap_iface.disabled='0'
+uci commit wireless
+
+wifi reload

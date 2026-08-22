@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob:; img-src 'self' data: blob: https:;">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -3362,10 +3362,11 @@
 
       // Artwork rendering
       const trackKey = `${np.source}_${np.title}_${np.artist}`;
-      if (np.artwork) {
+      if (np.artwork || np.artwork_url) {
         if (state.lastTrackKey !== trackKey) {
           state.lastTrackKey = trackKey;
-          el.npArtworkImg.src = `/api?action=get_artwork&t=${np.updated || Date.now()}`;
+          // spotify hands us a cdn url, airplay pushes the jpg to the device
+          el.npArtworkImg.src = np.artwork_url || `/api?action=get_artwork&t=${np.updated || Date.now()}`;
           el.npArtworkImg.style.display = 'block';
           if (el.npFallbackIcon) el.npFallbackIcon.style.display = 'none';
         }
