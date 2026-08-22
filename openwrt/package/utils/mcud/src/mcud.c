@@ -13,6 +13,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/wait.h>
 #include <alsa/asoundlib.h>
 #include <mosquitto.h>
@@ -214,6 +215,9 @@ static void spawn_async(const char *cmd) {
             dup2(devnull, STDERR_FILENO);
             close(devnull);
         }
+        /* SIG_IGN survives execve, and a shell that cannot reap its own
+         * children leaves zombies behind for every command it runs */
+        signal(SIGCHLD, SIG_DFL);
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
         _exit(1);
     }
@@ -435,8 +439,9 @@ static void ubus_notify_source(const char *src_name) {
 static void graceful_shutdown(void) {
     LOG_INFO("Initiating graceful shutdown of audio services and system...");
 
-    /* Stop streaming processes first */
-    spawn_async("killall -TERM librespot shairport-sync squeezelite");
+    /* Stop streaming processes first - blocking on purpose: ordering matters
+     * here and the event loop is done once we decided to power off. */
+    system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
     usleep(200000);
 
     /* Hardware Mute amplifier */
@@ -456,7 +461,7 @@ static void graceful_shutdown(void) {
     }
 
     sync();
-    spawn_async("/sbin/poweroff");
+    system("/sbin/poweroff");
 }
 
 /* Percent is the unit everyone here speaks - the MCU bookkeeps it, MQTT and the
@@ -614,10 +619,47 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
     LOG_INFO("Master volume changed externally: %d%%", g_user_vol);
 }
 
+/* Per-app softvol stages - they exist only for ha_ducking to pull down. */
+static const char *k_duck_controls[] = {"Spotify", "AirPlay", "Music", "TTS", "VoIP", "Alarm", "Timer", "Squeeze", NULL};
+
+/* ha_ducking.sh holds an flock on this file for its whole run, so the lock
+ * frees itself no matter how the script dies. A control sitting below max
+ * with no live holder means a duck was abandoned - restore it, or that one
+ * source stays quieter than the others forever (bit us as "MA is quieter
+ * than Spotify"). */
+#define DUCK_LOCK_FILE "/tmp/ha_ducking.lock"
+
+static int duck_lock_held(void) {
+    int fd = open(DUCK_LOCK_FILE, O_RDWR);
+    if (fd < 0) return 0;
+    int got_it = (flock(fd, LOCK_EX | LOCK_NB) == 0);
+    close(fd);
+    return !got_it;
+}
+
+static void check_duck_controls(void) {
+    if (duck_lock_held()) return;
+
+    snd_mixer_selem_id_t *sid;
+    snd_mixer_selem_id_alloca(&sid);
+    for (int i = 0; k_duck_controls[i]; i++) {
+        snd_mixer_selem_id_set_name(sid, k_duck_controls[i]);
+        snd_mixer_elem_t *elem = snd_mixer_find_selem(g_mixer, sid);
+        if (!elem) continue;
+        long min = 0, max = 100, cur = 0;
+        snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
+        snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_LEFT, &cur);
+        if (cur < max) {
+            snd_mixer_selem_set_playback_volume_all(elem, max);
+            LOG_WARN("%s softvol left ducked at %ld/%ld with no active ha_ducking - restored",
+                     k_duck_controls[i], cur, max);
+        }
+    }
+}
+
 /* softvol controls are created when the PCM is first opened and don't survive a
  * reboot, so open "master" once just to make the control exist. */
-static void alsa_probe_master_pcm(void) {
-    snd_pcm_t *pcm = NULL;
+static void alsa_probe_master_pcm(void) {    snd_pcm_t *pcm = NULL;
     int err = snd_pcm_open(&pcm, "master", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
     if (err < 0) {
         LOG_WARN("Cannot open ALSA 'master' (%s) - volume control will be unavailable", snd_strerror(err));
@@ -644,9 +686,8 @@ static void alsa_init(void) {
 
     /* Per-app stages exist only for ducking - park them at 0 dB so they are a
      * plain memcpy until ha_ducking.sh pulls one down. */
-    const char *names[] = {"Spotify", "AirPlay", "Music", "TTS", "VoIP", "Alarm", "Timer", "Squeeze", NULL};
-    for (int i = 0; names[i]; i++) {
-        snd_mixer_selem_id_set_name(sid, names[i]);
+    for (int i = 0; k_duck_controls[i]; i++) {
+        snd_mixer_selem_id_set_name(sid, k_duck_controls[i]);
         snd_mixer_elem_t *elem = snd_mixer_find_selem(g_mixer, sid);
         if (elem) {
             long min = 0, max = 100;
@@ -1725,6 +1766,7 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
     }
 
     check_stream_stall(now);
+    check_duck_controls();
 
     /* Pending rate-limited volume MQTT flush */
     if (g_pending_vol_pub >= 0 && (now - g_last_vol_pub_sec) >= 1) {
