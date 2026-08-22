@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# Nothing before S90 needs any of these, and netifd does need the cpu: measured
+# on hardware, netifd started at t+26 and only got round to enabling interfaces
+# at t+35 because crond, uhttpd, dbus and avahi were starting on top of it. The
+# speaker is judged on how fast Spotify Connect appears, so the audio path goes
+# first and the housekeeping follows. avahi still lands before shairport-sync
+# (S99), which is the only thing that needs it.
+for entry in odhcpd:91 dbus:91 avahi-daemon:92 cron:93 uhttpd:94; do
+	name=${entry%:*}
+	new=${entry#*:}
+	script=/etc/init.d/$name
+	[ -x "$script" ] || continue
+	"$script" disable 2>/dev/null
+	sed -i "s/^START=.*/START=$new/" "$script"
+	"$script" enable
+done
+
+# PPPoE on a speaker. Both modules load at every boot with nothing referencing
+# them; the kmods stay installed, they just stop being loaded.
+rm -f /etc/modules.d/ppp /etc/modules.d/pppoe
+
+# Related, and done by files/etc/modules.d/ rather than here: 30-sound-core and
+# 90-sound-mt7620 are trimmed to what the card actually uses. Dropped are the OSS
+# compat layer, rawmidi, hwdep, the compressed-audio api and snd-soc-wm8960 -
+# that last one is a codec we do not have, the dac is a PCM5102A. All of them
+# showed usecount 0 on a running speaker, so nothing referenced them. No comment
+# lines in those files: kmodloader treats every token as a module name.
+
+exit 0
