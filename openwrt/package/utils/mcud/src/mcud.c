@@ -197,6 +197,28 @@ static void play_sound(const char *path) {
     }
 }
 
+/* system() waits for the child, and callers here run inside the uloop: a slow
+ * /etc/init.d restart would leave the MCU poll unanswered and starve the
+ * watchdog for its whole duration. SIGCHLD is SIG_IGN (see main), so the child
+ * is reaped by the kernel and never zombies. */
+static void spawn_async(const char *cmd) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        LOG_WARN("fork for '%s' failed: %s", cmd, strerror(errno));
+        return;
+    }
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(1);
+    }
+}
+
 static void watchdog_ping(void) {
     if (g_wdt_fd < 0) {
         g_wdt_fd = open("/dev/watchdog", O_WRONLY | O_NONBLOCK);
@@ -278,13 +300,33 @@ static int read_stream_pos(unsigned long long *hw_ptr, char *tstamp, size_t ts_l
     return 1;
 }
 
-static const char *stall_service_for_pid(int pid) {
-    if (pid <= 0) return NULL;
-    char path[64], comm[64];
-    snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+/* owner_pid in the substream status is a TID, not the process pid, and threads
+ * carry their own names - librespot runs tokio-runtime-w threads. Match the
+ * whitelist against the process: Tgid from /proc/<tid>/status, then the
+ * process's own comm. */
+static const char *stall_service_for_pid(int tid, int *out_tgid) {
+    *out_tgid = 0;
+    if (tid <= 0) return NULL;
+
+    char path[64], buf[512];
+    snprintf(path, sizeof(path), "/proc/%d/status", tid);
     int fd = open(path, O_RDONLY);
     if (fd < 0) return NULL;
-    ssize_t n = read(fd, comm, sizeof(comm) - 1);
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return NULL;
+    buf[n] = '\0';
+
+    char *p = strstr(buf, "\nTgid:");
+    if (!p) return NULL;
+    int tgid = atoi(p + 6);
+    if (tgid <= 0) return NULL;
+
+    snprintf(path, sizeof(path), "/proc/%d/comm", tgid);
+    fd = open(path, O_RDONLY);
+    if (fd < 0) return NULL;
+    char comm[64];
+    n = read(fd, comm, sizeof(comm) - 1);
     close(fd);
     if (n <= 0) return NULL;
     comm[n] = '\0';
@@ -293,10 +335,12 @@ static const char *stall_service_for_pid(int pid) {
 
     /* only things we ship as procd services - anything else gets logged and left
      * alone, because restarting a stranger is worse than a silent speaker */
-    if (!strcmp(comm, "squeezelite"))    return "squeezelite";
-    if (!strcmp(comm, "shairport-sync")) return "shairport-sync";
-    if (!strcmp(comm, "librespot"))      return "librespot";
-    return NULL;
+    const char *svc = NULL;
+    if (!strcmp(comm, "squeezelite"))         svc = "squeezelite";
+    else if (!strcmp(comm, "shairport-sync")) svc = "shairport-sync";
+    else if (!strcmp(comm, "librespot"))      svc = "librespot";
+    if (svc) *out_tgid = tgid;
+    return svc;
 }
 
 static void check_stream_stall(time_t now) {
@@ -336,13 +380,19 @@ static void check_stream_stall(time_t now) {
     if (ticks < STALL_TICKS) return;
     if (now - last_action < STALL_COOLDOWN_SEC) return;
 
-    const char *svc = stall_service_for_pid(pid);
-    LOG_WARN("stream stalled: RUNNING but hw_ptr %llu and tstamp %s frozen for %d s, owner pid %d (%s)",
-             hw, ts, ticks * (SLEEP_CHECK_MS / 1000), pid, svc ? svc : "unknown");
+    int owner = 0;
+    const char *svc = stall_service_for_pid(pid, &owner);
+    LOG_WARN("stream stalled: RUNNING but hw_ptr %llu and tstamp %s frozen for %d s, owner tid %d, process %d (%s)",
+             hw, ts, ticks * (SLEEP_CHECK_MS / 1000), pid, owner, svc ? svc : "unknown");
     if (svc) {
+        /* if the owner sits in SIGSTOP it can never take TERM and procd will
+         * escalate to KILL - and a killed alsa client wedges dmix for everyone,
+         * i.e. the cure becomes the disease. wake it up first; player_control.sh
+         * does the same dance before poking the players. */
+        if (owner > 0) kill(owner, SIGCONT);
         char cmd[96];
-        snprintf(cmd, sizeof(cmd), "/etc/init.d/%s restart >/dev/null 2>&1", svc);
-        system(cmd);
+        snprintf(cmd, sizeof(cmd), "/etc/init.d/%s restart", svc);
+        spawn_async(cmd);
         LOG_INFO("restarted %s to clear the stalled substream", svc);
     }
     last_action = now;
@@ -386,7 +436,7 @@ static void graceful_shutdown(void) {
     LOG_INFO("Initiating graceful shutdown of audio services and system...");
 
     /* Stop streaming processes first */
-    system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
+    spawn_async("killall -TERM librespot shairport-sync squeezelite");
     usleep(200000);
 
     /* Hardware Mute amplifier */
@@ -406,7 +456,7 @@ static void graceful_shutdown(void) {
     }
 
     sync();
-    system("/sbin/poweroff");
+    spawn_async("/sbin/poweroff");
 }
 
 /* Percent is the unit everyone here speaks - the MCU bookkeeps it, MQTT and the
@@ -763,7 +813,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
         } else if (strcasecmp(payload, "PAUSE") == 0 || strcasecmp(payload, "STOP") == 0 || strcasecmp(payload, "MUTE") == 0) {
             set_hardware_mute(1);
         } else if (strcasecmp(payload, "TOGGLE") == 0) {
-            system("/usr/bin/player_control.sh toggle >/dev/null 2>&1 &");
+            spawn_async("/usr/bin/player_control.sh toggle");
         }
     } else if (strcmp(msg->topic, vol_topic) == 0) {
         g_last_activity_time = time(NULL);
@@ -1147,7 +1197,7 @@ static void process_mcu_command(const char *cmd) {
         ubus_notify_button("play_pause");
         /* O_CREAT on /tmp/player_cmd just made a plain file nothing ever read,
          * so this key did nothing at all until now */
-        system("/usr/bin/player_control.sh toggle >/dev/null 2>&1 &");
+        spawn_async("/usr/bin/player_control.sh toggle");
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);
@@ -1158,8 +1208,8 @@ static void process_mcu_command(const char *cmd) {
             ubus_notify_button(pstr);
             play_sound(SOUND_PRESET);
             char hcmd[64];
-            snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", preset);
-            system(hcmd);
+            snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %d", preset);
+            spawn_async(hcmd);
         }
     } else if (strstr(cmd, "MCU+KEY+SRC")) {
         mqtt_send_button("source");
