@@ -25,7 +25,11 @@ stop_airplay() {
     /etc/init.d/shairport-sync restart >/dev/null 2>&1
 }
 stop_webradio() {
-    killall -9 mpg123 madplay >/dev/null 2>&1
+    # -9 on an alsa client wedges the dmix segment for everyone, see kill_audio
+    # in smart_alarm.sh - same reason player_control.sh stop does it this way.
+    killall -TERM mpg123 madplay >/dev/null 2>&1
+    sleep 1
+    killall -KILL mpg123 madplay >/dev/null 2>&1
 }
 stop_squeeze() {
     /etc/init.d/squeezelite restart >/dev/null 2>&1

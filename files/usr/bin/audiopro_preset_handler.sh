@@ -14,7 +14,11 @@ CMD=$(uci -q get audiopro_presets."$PRESET".command 2>/dev/null || echo "")
 case "$MODE" in
     radio|stream)
         # Kill any active standalone stream players
-        killall -9 mpg123 madplay 2>/dev/null || true
+        # TERM, not -9: a hard-killed alsa client leaves the dmix segment in a
+        # state where every later open on default blocks forever.
+        killall -TERM mpg123 madplay 2>/dev/null || true
+        sleep 1
+        killall -KILL mpg123 madplay 2>/dev/null || true
         
         if [ -n "$URL" ]; then
             # Validate URL protocol scheme

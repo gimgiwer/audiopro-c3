@@ -29,20 +29,34 @@ create_pid_file() {
     mv -f "$tmp" "$PID_FILE" 2>/dev/null || true
 }
 
+# A dmix client taken out with -9 leaves its slot in the mixer's shared segment,
+# and from then on every open on default blocks forever - measured on hardware:
+# aplay -d 2 still hanging after 5 s with the hardware substream already free and
+# the shm gone only once the last attached process had exited. TERM first, one
+# second of grace (no usleep and no fractional sleep in this busybox), -9 only
+# for whatever is still standing.
+kill_audio() {
+	local p left=""
+	for p in "$@"; do
+		[ "$p" = "$$" ] && continue
+		kill -TERM "$p" 2>/dev/null
+		left="$left $p"
+	done
+	[ -n "$left" ] || return 0
+	sleep 1
+	for p in $left; do
+		kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
+	done
+}
+
 do_stop_ringing() {
     if [ -f "$RING_PID_FILE" ]; then
         local pids=$(cat "$RING_PID_FILE" 2>/dev/null)
         rm -f "$RING_PID_FILE"
-        for p in $pids; do
-            [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
-        done
+        kill_audio $pids
     fi
     local extra_pids=$(pgrep -f "aplay.*timer_in" 2>/dev/null)
-    if [ -n "$extra_pids" ]; then
-        for ep in $extra_pids; do
-            kill -9 "$ep" 2>/dev/null || true
-        done
-    fi
+    [ -n "$extra_pids" ] && kill_audio $extra_pids
     # Restore Alarm volume if Alarm was playing
     amixer -q -c 0 sset Alarm 100% 2>/dev/null || true
     # ringing raises the master volume, so hand it back to whatever it was
@@ -62,9 +76,7 @@ do_cancel() {
     if [ -f "$PID_FILE" ]; then
         local pids=$(cat "$PID_FILE" 2>/dev/null)
         rm -f "$PID_FILE"
-        for p in $pids; do
-            [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
-        done
+        kill_audio $pids
     fi
     do_stop_ringing
 }
