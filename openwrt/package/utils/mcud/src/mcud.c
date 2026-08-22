@@ -243,6 +243,104 @@ static int is_audio_active(void) {
     return 0;
 }
 
+#define STALL_TICKS   6   /* 6 * SLEEP_CHECK_MS = 30 s of a frozen ring */
+#define STALL_COOLDOWN_SEC 60
+
+/* A substream can sit in RUNNING with hw_ptr and tstamp both frozen - measured
+ * 258 s of it after a dmix client was SIGKILLed. A stream that is merely starved
+ * goes to XRUN instead, so both fields standing still is the pathological case
+ * and not a pause. */
+static int read_stream_pos(unsigned long long *hw_ptr, char *tstamp, size_t ts_len,
+                           int *running, int *owner_pid) {
+    int fd = open("/proc/asound/card0/pcm0p/sub0/status", O_RDONLY | O_NONBLOCK);
+    if (fd < 0) return 0;
+    char buf[1024];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    *running = (strstr(buf, "RUNNING") != NULL);
+    *hw_ptr = 0; *owner_pid = 0; tstamp[0] = '\0';
+
+    char *p = strstr(buf, "hw_ptr");
+    if (p && (p = strchr(p, ':'))) *hw_ptr = strtoull(p + 1, NULL, 10);
+    p = strstr(buf, "owner_pid");
+    if (p && (p = strchr(p, ':'))) *owner_pid = (int)strtol(p + 1, NULL, 10);
+    p = strstr(buf, "tstamp");
+    if (p && (p = strchr(p, ':'))) {
+        p++;
+        while (*p == ' ') p++;
+        size_t i = 0;
+        while (i < ts_len - 1 && *p && *p != '\n') tstamp[i++] = *p++;
+        tstamp[i] = '\0';
+    }
+    return 1;
+}
+
+static const char *stall_service_for_pid(int pid) {
+    if (pid <= 0) return NULL;
+    char path[64], comm[64];
+    snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return NULL;
+    ssize_t n = read(fd, comm, sizeof(comm) - 1);
+    close(fd);
+    if (n <= 0) return NULL;
+    comm[n] = '\0';
+    char *nl = strchr(comm, '\n');
+    if (nl) *nl = '\0';
+
+    /* only things we ship as procd services - anything else gets logged and left
+     * alone, because restarting a stranger is worse than a silent speaker */
+    if (!strcmp(comm, "squeezelite"))    return "squeezelite";
+    if (!strcmp(comm, "shairport-sync")) return "shairport-sync";
+    if (!strcmp(comm, "librespot"))      return "librespot";
+    return NULL;
+}
+
+static void check_stream_stall(time_t now) {
+    static unsigned long long last_hw = 0;
+    static char last_ts[48] = "";
+    static int ticks = 0;
+    static time_t last_action = 0;
+
+    unsigned long long hw = 0;
+    char ts[48];
+    int running = 0, pid = 0;
+
+    if (!read_stream_pos(&hw, ts, sizeof(ts), &running, &pid) || !running) {
+        ticks = 0;
+        last_hw = 0;
+        last_ts[0] = '\0';
+        return;
+    }
+
+    if (hw == last_hw && !strcmp(ts, last_ts)) {
+        ticks++;
+    } else {
+        ticks = 0;
+        last_hw = hw;
+        snprintf(last_ts, sizeof(last_ts), "%s", ts);
+        return;
+    }
+
+    if (ticks < STALL_TICKS) return;
+    if (now - last_action < STALL_COOLDOWN_SEC) return;
+
+    const char *svc = stall_service_for_pid(pid);
+    LOG_WARN("stream stalled: RUNNING but hw_ptr %llu and tstamp %s frozen for %d s, owner pid %d (%s)",
+             hw, ts, ticks * (SLEEP_CHECK_MS / 1000), pid, svc ? svc : "unknown");
+    if (svc) {
+        char cmd[96];
+        snprintf(cmd, sizeof(cmd), "/etc/init.d/%s restart >/dev/null 2>&1", svc);
+        system(cmd);
+        LOG_INFO("restarted %s to clear the stalled substream", svc);
+    }
+    last_action = now;
+    ticks = 0;
+}
+
 static void ubus_publish_event(const char *event_name, struct blob_attr *msg) {
     if (!g_ubus_ctx) return;
     ubus_send_event(g_ubus_ctx, event_name, msg);
@@ -1567,6 +1665,8 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
             uart_send(CMD_PLAY_STOP);
         }
     }
+
+    check_stream_stall(now);
 
     /* Pending rate-limited volume MQTT flush */
     if (g_pending_vol_pub >= 0 && (now - g_last_vol_pub_sec) >= 1) {
