@@ -250,8 +250,7 @@ static int is_audio_active(void) {
  * 258 s of it after a dmix client was SIGKILLed. A stream that is merely starved
  * goes to XRUN instead, so both fields standing still is the pathological case
  * and not a pause. */
-static int read_stream_pos(unsigned long long *hw_ptr, unsigned long long *appl_ptr,
-                           char *tstamp, size_t ts_len,
+static int read_stream_pos(unsigned long long *hw_ptr, char *tstamp, size_t ts_len,
                            int *running, int *owner_pid) {
     int fd = open("/proc/asound/card0/pcm0p/sub0/status", O_RDONLY | O_NONBLOCK);
     if (fd < 0) return 0;
@@ -262,12 +261,10 @@ static int read_stream_pos(unsigned long long *hw_ptr, unsigned long long *appl_
     buf[n] = '\0';
 
     *running = (strstr(buf, "RUNNING") != NULL);
-    *hw_ptr = 0; *appl_ptr = 0; *owner_pid = 0; tstamp[0] = '\0';
+    *hw_ptr = 0; *owner_pid = 0; tstamp[0] = '\0';
 
     char *p = strstr(buf, "hw_ptr");
     if (p && (p = strchr(p, ':'))) *hw_ptr = strtoull(p + 1, NULL, 10);
-    p = strstr(buf, "appl_ptr");
-    if (p && (p = strchr(p, ':'))) *appl_ptr = strtoull(p + 1, NULL, 10);
     p = strstr(buf, "owner_pid");
     if (p && (p = strchr(p, ':'))) *owner_pid = (int)strtol(p + 1, NULL, 10);
     p = strstr(buf, "tstamp");
@@ -308,16 +305,19 @@ static void check_stream_stall(time_t now) {
     static int ticks = 0;
     static time_t last_action = 0;
 
-    unsigned long long hw = 0, appl = 0;
+    unsigned long long hw = 0;
     char ts[48];
     int running = 0, pid = 0;
 
-    /* hw_ptr 0 with appl_ptr 0 is squeezelite sitting on an open substream it has
-     * never written to - it holds sub0 from boot and reports RUNNING the whole
-     * time, so treating that as a stall restarts it once a minute forever. A ring
-     * that never advanced was never playing, and there is nothing to unwedge. */
-    if (!read_stream_pos(&hw, &appl, ts, sizeof(ts), &running, &pid) ||
-        !running || hw == 0 || appl == 0) {
+    /* hw_ptr 0 with tstamp 0.000000000 is a substream that is RUNNING but whose
+     * dma was never triggered - squeezelite parks sub0 like that from boot, and
+     * reading it as a stall restarts squeezelite once a minute forever. A ring
+     * that never advanced was never playing, so there is nothing to unwedge.
+     * appl_ptr is no help here: dmix writes straight into the shared buffer and
+     * leaves the slave's appl_ptr at 0 even mid-track (measured over 8 s of real
+     * playback), so gating on it would disable the detector outright. */
+    if (!read_stream_pos(&hw, ts, sizeof(ts), &running, &pid) ||
+        !running || hw == 0 || !strcmp(ts, "0.000000000")) {
         ticks = 0;
         last_hw = 0;
         last_ts[0] = '\0';
