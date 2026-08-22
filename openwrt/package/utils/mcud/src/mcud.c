@@ -27,7 +27,7 @@
 #define BAUD_RATE            B57600
 #define WATCHDOG_CHECK_MS    5000
 #define SLEEP_CHECK_MS       5000
-#define VOL_STEP_PERCENT     5
+#define VOL_STEP_DB          3   /* per key press, see adjust_user_volume */
 #define MCU_VOL_TOLERANCE    2   /* MCU rounds our 0..100 onto its own scale */
 #define MAX_LINE_LEN         128
 #define READ_BUF_SIZE        256
@@ -303,6 +303,55 @@ static void graceful_shutdown(void) {
     system("/sbin/poweroff");
 }
 
+/* Percent is the unit everyone here speaks - the MCU bookkeeps it, MQTT and the
+ * ubus api report it - but the Master softvol is dB-linear: raw 0..1000 spans
+ * -60..0 dB. Mapping percent straight onto raw made the dial a pure dB ladder
+ * where 25% sat at -45 dB, which is why the bottom half sounded dead. librespot
+ * maps its own slider with CubicMapping plus alsa's antilog correction, so both
+ * ends have to agree on one law or they disagree about what the level is: raw
+ * 513 read back through the old (v-min)*100/(max-min) came out as 51% while
+ * Spotify was showing 25%, and that wrong number went to the MCU, to MQTT and
+ * into /etc/mcud.volume.
+ *
+ * Table is 1000 * (1 + ln((0.009*pct + 0.1)^3) / ln(1000)), i.e. exactly
+ * librespot's cubic over a 60 dB range, precomputed so this stays integer-only
+ * and mcud does not have to pull in libm. */
+static const unsigned short vol_curve[101] = {
+	   0,   37,   72,  104,  134,  161,  188,  212,
+	 236,  258,  279,  299,  318,  336,  354,  371,
+	 387,  403,  418,  433,  447,  461,  474,  487,
+	 500,  512,  524,  535,  547,  558,  568,  579,
+	 589,  599,  609,  618,  627,  636,  645,  654,
+	 663,  671,  679,  688,  695,  703,  711,  719,
+	 726,  733,  740,  747,  754,  761,  768,  775,
+	 781,  787,  794,  800,  806,  812,  818,  824,
+	 830,  836,  841,  847,  852,  858,  863,  869,
+	 874,  879,  884,  889,  894,  899,  904,  909,
+	 914,  919,  923,  928,  932,  937,  942,  946,
+	 950,  955,  959,  963,  968,  972,  976,  980,
+	 984,  988,  992,  996, 1000
+};
+
+static long vol_pct_to_raw(int pct, long min, long max) {
+	if (pct < 0) pct = 0;
+	if (pct > 100) pct = 100;
+	return min + ((long)vol_curve[pct] * (max - min) + 500) / 1000;
+}
+
+/* Nearest percent rather than a truncation: librespot writes whatever its own
+ * rounding produced, which lands a point or two off our grid. */
+static int vol_raw_to_pct(long v, long min, long max) {
+	if (max <= min) return -1;
+	long permille = ((v - min) * 1000 + (max - min) / 2) / (max - min);
+	int lo = 0, hi = 100;
+	while (lo < hi) {
+		int mid = (lo + hi) / 2;
+		if (vol_curve[mid] < permille) lo = mid + 1; else hi = mid;
+	}
+	if (lo > 0 && permille - vol_curve[lo - 1] < vol_curve[lo] - permille) lo--;
+	return lo;
+}
+
 /* Attenuation is software-only here: the PCM5102A has no volume register and the
  * TPA3116 gain is pin-strapped, so the ALSA "Master" softvol is the only thing
  * that can change the level. Stock did the same, just inside its own writei
@@ -311,7 +360,7 @@ static void alsa_set_master(int vol) {
     if (!g_master_elem) return;
     long min = 0, max = 100;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return;
-    long v = min + ((long)vol * (max - min) + 50) / 100;
+    long v = vol_pct_to_raw(vol, min, max);
     if (snd_mixer_selem_set_playback_volume_all(g_master_elem, v) < 0)
         LOG_WARN("Failed to set ALSA Master to %d%%", vol);
 }
@@ -359,7 +408,7 @@ static void alsa_ramp_master(int vol) {
         alsa_set_master(vol);
         return;
     }
-    long target = min + ((long)vol * (max - min) + 50) / 100;
+    long target = vol_pct_to_raw(vol, min, max);
     long delta = target - cur;
     if (!delta) {
         g_ramp_target = -1;
@@ -377,8 +426,7 @@ static int alsa_get_master(void) {
     long min = 0, max = 100, v = 0;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return -1;
     if (snd_mixer_selem_get_playback_volume(g_master_elem, SND_MIXER_SCHN_FRONT_LEFT, &v) < 0) return -1;
-    if (max == min) return -1;
-    return (int)(((v - min) * 100 + (max - min) / 2) / (max - min));
+    return vol_raw_to_pct(v, min, max);
 }
 
 /* Someone else moved the control - librespot's alsa mixer, amixer, ha_ducking.
@@ -465,7 +513,7 @@ static void alsa_init(void) {
             }
         }
     }
-    LOG_INFO("ALSA Master volume control ready (0..100%% = -60..0 dB, 0 = mute)");
+    LOG_INFO("ALSA Master volume control ready (cubic, 25%% = -29.3 dB, 0 = mute)");
 }
 
 static void mqtt_publish_volume(int vol) {
@@ -539,13 +587,32 @@ static void set_user_volume(int vol) {
     vol_touch();
     if (g_user_vol == 0)
         LOG_INFO("Master volume: 0%% (muted)");
-    else
-        LOG_INFO("Master volume: %d%% (%d.%d dB)", g_user_vol,
-                 (g_user_vol * 6 - 600) / 10, (600 - g_user_vol * 6) % 10);
+    else {
+        int dbt = (vol_curve[g_user_vol] * 6) / 10 - 600;   /* tenths of a dB */
+        LOG_INFO("Master volume: %d%% (%d.%d dB)", g_user_vol, dbt / 10, (-dbt) % 10);
+    }
 }
 
+/* A key press has to move a fixed number of dB, not a fixed percent: on the
+ * cubic curve 0->5% is nearly 10 dB while 95->100% is barely one. raw is
+ * dB-linear, so step there and convert back to the percent everyone reports.
+ * Only the sign of delta matters now. */
 static void adjust_user_volume(int delta) {
-    set_user_volume(g_user_vol + delta);
+    long min = 0, max = 100;
+    if (!g_master_elem ||
+        snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) {
+        set_user_volume(g_user_vol + (delta > 0 ? VOL_STEP_DB : -VOL_STEP_DB));
+        return;
+    }
+    long step = ((long)VOL_STEP_DB * (max - min)) / 60;
+    long raw = vol_pct_to_raw(g_user_vol, min, max) + (delta > 0 ? step : -step);
+    if (raw < min) raw = min;
+    if (raw > max) raw = max;
+    int pct = vol_raw_to_pct(raw, min, max);
+    /* the curve is coarse down low, so a 3 dB step can round back onto the
+     * percent we started from - nudge past it or the key would do nothing */
+    if (pct == g_user_vol) pct += (delta > 0 ? 1 : -1);
+    set_user_volume(pct);
 }
 
 static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct mosquitto_message *msg) {
@@ -946,10 +1013,10 @@ static void process_mcu_command(const char *cmd) {
     }
 
     if (strstr(cmd, "MCU+KEY+VOL+")) {
-        adjust_user_volume(VOL_STEP_PERCENT);
+        adjust_user_volume(+1);
         ubus_notify_button("vol_up");
     } else if (strstr(cmd, "MCU+KEY+VOL-")) {
-        adjust_user_volume(-VOL_STEP_PERCENT);
+        adjust_user_volume(-1);
         ubus_notify_button("vol_down");
     } else if (strstr(cmd, "MCU+KEY+PLPA")) {
         mqtt_send_button("play_pause");
