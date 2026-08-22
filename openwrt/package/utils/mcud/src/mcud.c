@@ -307,29 +307,38 @@ static void graceful_shutdown(void) {
  * ubus api report it - but the Master softvol is dB-linear: raw 0..1000 spans
  * -60..0 dB. Mapping percent straight onto raw made the dial a pure dB ladder
  * where 25% sat at -45 dB, which is why the bottom half sounded dead. librespot
- * maps its own slider with CubicMapping plus alsa's antilog correction, so both
- * ends have to agree on one law or they disagree about what the level is: raw
- * 513 read back through the old (v-min)*100/(max-min) came out as 51% while
- * Spotify was showing 25%, and that wrong number went to the MCU, to MQTT and
- * into /etc/mcud.volume.
+ * maps its own slider through the same law, so both ends have to agree or they
+ * disagree about what the level is: raw 513 read back through the old
+ * (v-min)*100/(max-min) came out as 51% while Spotify was showing 25%, and that
+ * wrong number went to the MCU, to MQTT and into /etc/mcud.volume.
  *
- * Table is 1000 * (1 + ln((0.009*pct + 0.1)^3) / ln(1000)), i.e. exactly
- * librespot's cubic over a 60 dB range, precomputed so this stays integer-only
- * and mcud does not have to pull in libm. */
+ * The law is the one PulseAudio and PipeWire put behind every desktop slider:
+ * amplitude = (pct/100)^3, so dB = 60*log10(pct/100) and raw = 1000 * (1 +
+ * log10(pct/100)) on this control. Checked against a live pipewire 1.6.8 sink,
+ * which reported 9830 / 15% / -49.44 dB, and 60*log10(0.15) is -49.44.
+ * Precomputed so this stays integer-only and mcud does not pull in libm.
+ *
+ * The cube runs below this control's floor under 10% (5% would want -78 dB), so
+ * the bottom tenth of the dial is 0 - and softvol treats raw 0 as real digital
+ * silence rather than -60 dB (pcm_softvol.c: cur_vol[0] == 0 -> areas_silence),
+ * so it mutes cleanly. Nothing is lost: -60 dB on this amp is already inaudible
+ * across a room. The top end is free too - max_dB is 0.0, which makes
+ * softvol's zero_dB_val the last index, and raw 1000 is a straight areas_copy
+ * with no multiply at all. */
 static const unsigned short vol_curve[101] = {
-	   0,   37,   72,  104,  134,  161,  188,  212,
-	 236,  258,  279,  299,  318,  336,  354,  371,
-	 387,  403,  418,  433,  447,  461,  474,  487,
-	 500,  512,  524,  535,  547,  558,  568,  579,
-	 589,  599,  609,  618,  627,  636,  645,  654,
-	 663,  671,  679,  688,  695,  703,  711,  719,
-	 726,  733,  740,  747,  754,  761,  768,  775,
-	 781,  787,  794,  800,  806,  812,  818,  824,
-	 830,  836,  841,  847,  852,  858,  863,  869,
-	 874,  879,  884,  889,  894,  899,  904,  909,
-	 914,  919,  923,  928,  932,  937,  942,  946,
-	 950,  955,  959,  963,  968,  972,  976,  980,
-	 984,  988,  992,  996, 1000
+	   0,    0,    0,    0,    0,    0,    0,    0,
+	   0,    0,    0,   41,   79,  114,  146,  176,
+	 204,  230,  255,  279,  301,  322,  342,  362,
+	 380,  398,  415,  431,  447,  462,  477,  491,
+	 505,  519,  531,  544,  556,  568,  580,  591,
+	 602,  613,  623,  633,  643,  653,  663,  672,
+	 681,  690,  699,  708,  716,  724,  732,  740,
+	 748,  756,  763,  771,  778,  785,  792,  799,
+	 806,  813,  820,  826,  833,  839,  845,  851,
+	 857,  863,  869,  875,  881,  886,  892,  898,
+	 903,  908,  914,  919,  924,  929,  934,  940,
+	 944,  949,  954,  959,  964,  968,  973,  978,
+	 982,  987,  991,  996, 1000
 };
 
 static long vol_pct_to_raw(int pct, long min, long max) {
@@ -585,8 +594,8 @@ static void set_user_volume(int vol) {
     mcu_report_state("VOL", g_user_vol);
     mqtt_publish_volume(g_user_vol);
     vol_touch();
-    if (g_user_vol == 0)
-        LOG_INFO("Master volume: 0%% (muted)");
+    if (vol_curve[g_user_vol] == 0)
+        LOG_INFO("Master volume: %d%% (muted)", g_user_vol);
     else {
         int dbt = (vol_curve[g_user_vol] * 6) / 10 - 600;   /* tenths of a dB */
         LOG_INFO("Master volume: %d%% (%d.%d dB)", g_user_vol, dbt / 10, (-dbt) % 10);

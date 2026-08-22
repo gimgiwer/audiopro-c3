@@ -6,11 +6,17 @@ config librespot 'main'
 	option bitrate '320'
 	# On a softvol librespot always applies its antilog correction
 	# (is_some_linear() is `is_softvol || use_linear_in_db`), so the curve you
-	# pick is the curve you get. Measured raw index on the -60..0 dB Master at
-	# 25%: log 250 = -45 dB, cubic 511 = -29 dB, linear 799 = -12 dB. Stock's
-	# law was gain = vol/100, i.e. exactly linear, but that crams everything
-	# usable into the bottom fifth of the dial. cubic puts a comfortable
-	# -20 dB at 40%, which is why it wins here.
+	# pick is the curve you get. cubic is patched here to the law PulseAudio and
+	# PipeWire use - amplitude = (pct/100)^3, so dB = 60*log10(pct/100) - rather
+	# than upstream's alsamixer variant, which offsets the fraction and lands
+	# 7 dB louder at the same number. Measured raw index on the -60..0 dB Master
+	# at 25%: log 250 = -45 dB, cubic 398 = -36 dB, linear 799 = -12 dB. Stock's
+	# law was gain = vol/100, i.e. exactly linear; switch to that if the dial
+	# should feel like the factory firmware again.
+	# Side effect worth knowing: the cube wants -78 dB at 5%, which this control
+	# cannot hold, so the bottom tenth of the slider clamps to raw 0 - and
+	# softvol turns raw 0 into real digital silence. -60 dB is inaudible here
+	# anyway, so nothing usable is lost.
 	option volume_ctrl 'cubic'
 	# Name it, don't leave it out: 0.8.0 has no "keep current volume" default, it
 	# falls back to u16::MAX/2 and writes 50% to Master on every connect.
