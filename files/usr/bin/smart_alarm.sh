@@ -61,25 +61,7 @@ create_pid_file() {
     mv -f "$tmp" "$PID_FILE" 2>/dev/null || true
 }
 
-# A dmix client taken out with -9 leaves its slot in the mixer's shared segment,
-# and from then on every open on default blocks forever - measured on hardware:
-# aplay -d 2 still hanging after 5 s with the hardware substream already free and
-# the shm gone only once the last attached process had exited. TERM first, one
-# second of grace (no usleep and no fractional sleep in this busybox), -9 only
-# for whatever is still standing.
-kill_audio() {
-	local p left=""
-	for p in "$@"; do
-		[ "$p" = "$$" ] && continue
-		kill -TERM "$p" 2>/dev/null
-		left="$left $p"
-	done
-	[ -n "$left" ] || return 0
-	sleep 1
-	for p in $left; do
-		kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
-	done
-}
+. /usr/lib/audiopro/kill_audio.sh
 
 do_stop() {
     if [ -f "$PID_FILE" ]; then

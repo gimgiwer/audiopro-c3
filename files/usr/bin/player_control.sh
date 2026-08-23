@@ -8,6 +8,8 @@ SAVED_STATE="/tmp/paused_players.state"
 LR_FIFO="/tmp/librespot_cmd"
 LEVEL_DIR="/tmp"
 
+. /usr/lib/audiopro/kill_audio.sh
+
 # Real Spotify Connect commands, so the phone's ui and the track position stay
 # in sync -- muting the softvol instead would keep the stream running and lose
 # your place. librespot holds the fifo open read+write, so the write cannot
@@ -126,15 +128,7 @@ case "$ACTION" in
 		spotify_cmd "$ACTION"
 		;;
 	stop)
-		# TERM first: a -9'd alsa client leaves the dmix slave holding its slot,
-		# and this busybox has neither usleep nor fractional sleep to shorten
-		# the grace period.
-		if pgrep mpg123 >/dev/null 2>&1; then
-			killall -CONT mpg123 2>/dev/null
-			killall -TERM mpg123 2>/dev/null
-			sleep 1
-			killall -KILL mpg123 2>/dev/null
-		fi
+		kill_audio_names mpg123
 		do_pause_all
 		;;
 	*)

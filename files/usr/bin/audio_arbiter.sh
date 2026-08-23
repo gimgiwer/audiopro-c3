@@ -3,6 +3,8 @@
 # Usage: audio_arbiter.sh <new_source>
 # Sources: spotify, airplay, webradio, squeeze
 
+. /usr/lib/audiopro/kill_audio.sh
+
 NEW_SOURCE=$1
 [ -z "$NEW_SOURCE" ] && exit 0
 
@@ -25,11 +27,7 @@ stop_airplay() {
     /etc/init.d/shairport-sync restart >/dev/null 2>&1
 }
 stop_webradio() {
-    # -9 on an alsa client wedges the dmix segment for everyone, see kill_audio
-    # in smart_alarm.sh - same reason player_control.sh stop does it this way.
-    killall -TERM mpg123 madplay >/dev/null 2>&1
-    sleep 1
-    killall -KILL mpg123 madplay >/dev/null 2>&1
+    kill_audio_names mpg123 madplay
 }
 stop_squeeze() {
     /etc/init.d/squeezelite restart >/dev/null 2>&1

@@ -3,6 +3,8 @@
 PRESET="$1"
 [ -z "$PRESET" ] && exit 0
 
+. /usr/lib/audiopro/kill_audio.sh
+
 CFG_FILE="/etc/config/audiopro_presets"
 [ ! -f "$CFG_FILE" ] && exit 0
 
@@ -14,11 +16,7 @@ CMD=$(uci -q get audiopro_presets."$PRESET".command 2>/dev/null || echo "")
 case "$MODE" in
     radio|stream)
         # Kill any active standalone stream players
-        # TERM, not -9: a hard-killed alsa client leaves the dmix segment in a
-        # state where every later open on default blocks forever.
-        killall -TERM mpg123 madplay 2>/dev/null || true
-        sleep 1
-        killall -KILL mpg123 madplay 2>/dev/null || true
+        kill_audio_names mpg123 madplay
         
         if [ -n "$URL" ]; then
             # Validate URL protocol scheme
