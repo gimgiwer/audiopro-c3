@@ -785,6 +785,7 @@ static void set_hardware_mute(int mute) {
  * level back to default_volume. Debounced because this is NOR flash - a volume
  * ramp must not turn into one jffs2 node per step. */
 #define VOL_STATE_FILE  "/etc/mcud.volume"
+#define BAT_STATE_FILE  "/tmp/battery_status"
 #define VOL_PERSIST_MS  10000
 
 static struct uloop_timeout g_vol_persist;
@@ -796,6 +797,21 @@ static int vol_load(void) {
     if (fscanf(f, "%d", &v) != 1 || v < 0 || v > 100) v = -1;
     fclose(f);
     return v;
+}
+
+/* mcud gets restarted while the speaker runs on battery, and the MCU only
+ * volunteers a level when it changes - so a fresh process would report the 100%
+ * default to HA and hold it there until the charge actually moved. The file is
+ * our own last observation, rewritten on every MCU+BAT+. */
+static void bat_load(void) {
+    FILE *f = fopen(BAT_STATE_FILE, "r");
+    if (!f) return;
+    int v = -1;
+    if (fscanf(f, "MCU+BAT+%d", &v) == 1 && v >= 0 && v <= 100) {
+        g_battery_pct = v;
+        g_last_bat = v;
+    }
+    fclose(f);
 }
 
 static void vol_persist_cb(struct uloop_timeout *t) {
@@ -897,6 +913,7 @@ static void mqtt_on_disconnect(struct mosquitto *mosq, void *userdata, int rc) {
 }
 
 static void mqtt_send_discovery(void);
+static void mqtt_send_sensor(const char *sensor, const char *val);
 
 /* Discovery has to go out from here, not from mqtt_setup(): connect_async() returns
  * before the socket is up, so publishing there hit MOSQ_ERR_NO_CONN and Home Assistant
@@ -913,6 +930,16 @@ static void mqtt_on_connect(struct mosquitto *mosq, void *userdata, int rc) {
     mqtt_send_discovery();
 }
 
+/* One device block for every entity, because HA merges them per identifier and
+ * the last payload published wins - the sensors carried a shorter block and kept
+ * stripping the model and manufacturer back off the device again. */
+#define HA_DEV \
+    "\"device\":{\"identifiers\":[\"audiopro_c3\"]," \
+    "\"name\":\"Audio Pro C3\"," \
+    "\"manufacturer\":\"Audio Pro\"," \
+    "\"model\":\"Addon C3 (Linkplay A28)\"," \
+    "\"sw_version\":\"OpenWrt 23.05.5\"}"
+
 static void mqtt_send_discovery(void) {
     if (!g_mosq || !g_mqtt_enabled) return;
 
@@ -922,7 +949,7 @@ static void mqtt_send_discovery(void) {
     };
 
     for (int i = 0; i < 7; i++) {
-        char topic[256], payload[512];
+        char topic[256], payload[768];
         snprintf(topic, sizeof(topic), "homeassistant/device_automation/audiopro_c3/%s/config", buttons[i]);
         snprintf(payload, sizeof(payload),
             "{\"automation_type\":\"trigger\","
@@ -930,61 +957,84 @@ static void mqtt_send_discovery(void) {
             "\"subtype\":\"%s\","
             "\"topic\":\"%s/button/%s\","
             "\"payload\":\"pressed\","
-            "\"device\":{\"identifiers\":[\"audiopro_c3\"],"
-            "\"name\":\"Audio Pro C3\","
-            "\"manufacturer\":\"Audio Pro\","
-            "\"model\":\"Addon C3 (Linkplay A28)\","
-            "\"sw_version\":\"OpenWrt 23.05.5\"}}",
+            HA_DEV "}",
             buttons[i], g_topic_prefix, buttons[i]);
         mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
     }
 
     {
-        char topic[256], payload[512];
+        char topic[256], payload[768];
         snprintf(topic, sizeof(topic), "homeassistant/sensor/audiopro_c3/battery/config");
         snprintf(payload, sizeof(payload),
-            "{\"name\":\"Audio Pro C3 Battery\","
+            "{\"name\":\"Battery\","
             "\"device_class\":\"battery\","
             "\"state_class\":\"measurement\","
             "\"unit_of_measurement\":\"%%\","
             "\"state_topic\":\"%s/sensor/battery\","
             "\"availability_topic\":\"%s/status\","
             "\"unique_id\":\"audiopro_c3_battery\","
-            "\"device\":{\"identifiers\":[\"audiopro_c3\"],"
-            "\"name\":\"Audio Pro C3\"}}",
+            HA_DEV "}",
             g_topic_prefix, g_topic_prefix);
         mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
     }
 
     {
-        char topic[256], payload[512];
+        char topic[256], payload[768];
         snprintf(topic, sizeof(topic), "homeassistant/sensor/audiopro_c3/source/config");
         snprintf(payload, sizeof(payload),
-            "{\"name\":\"Audio Pro C3 Source\","
+            "{\"name\":\"Source\","
             "\"icon\":\"mdi:volume-source\","
             "\"state_topic\":\"%s/sensor/source\","
             "\"availability_topic\":\"%s/status\","
             "\"unique_id\":\"audiopro_c3_source\","
-            "\"device\":{\"identifiers\":[\"audiopro_c3\"],"
-            "\"name\":\"Audio Pro C3\"}}",
+            HA_DEV "}",
             g_topic_prefix, g_topic_prefix);
         mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
     }
 
     {
-        char topic[256], payload[512];
+        char topic[256], payload[768];
         snprintf(topic, sizeof(topic), "homeassistant/number/audiopro_c3/volume/config");
         snprintf(payload, sizeof(payload),
-            "{\"name\":\"Audio Pro C3 Volume\","
+            "{\"name\":\"Volume\","
             "\"icon\":\"mdi:volume-high\","
             "\"state_topic\":\"%s/player/volume\","
             "\"command_topic\":\"%s/player/volume/set\","
             "\"availability_topic\":\"%s/status\","
             "\"min\":0,\"max\":100,\"step\":1,\"unit_of_measurement\":\"%%\","
             "\"unique_id\":\"audiopro_c3_volume\","
-            "\"device\":{\"identifiers\":[\"audiopro_c3\"],"
-            "\"name\":\"Audio Pro C3\"}}",
+            HA_DEV "}",
             g_topic_prefix, g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+    }
+
+    {
+        char topic[256], payload[768];
+        snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/audiopro_c3/charging/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Charging\","
+            "\"device_class\":\"battery_charging\","
+            "\"state_topic\":\"%s/sensor/charging\","
+            "\"payload_on\":\"true\",\"payload_off\":\"false\","
+            "\"availability_topic\":\"%s/status\","
+            "\"unique_id\":\"audiopro_c3_charging\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+    }
+
+    {
+        char topic[256], payload[768];
+        snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/audiopro_c3/battery_low/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Battery low\","
+            "\"device_class\":\"battery\","
+            "\"state_topic\":\"%s/sensor/battery_alert\","
+            "\"payload_on\":\"low\",\"payload_off\":\"normal\","
+            "\"availability_topic\":\"%s/status\","
+            "\"unique_id\":\"audiopro_c3_battery_low\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix);
         mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
     }
 
@@ -997,6 +1047,18 @@ static void mqtt_send_discovery(void) {
     char status_topic[128];
     snprintf(status_topic, sizeof(status_topic), "%s/status", g_topic_prefix);
     mosquitto_publish(g_mosq, NULL, status_topic, 6, "online", 0, true);
+
+    /* HA leaves a discovered entity unknown until something lands on its state
+     * topic, and source/battery/charging only publish when they change - so
+     * after every reconnect the panel sat half empty until the user pressed a
+     * button. Retained, so a broker restart does not blank it either. */
+    char bat[16];
+    snprintf(bat, sizeof(bat), "%d", g_battery_pct);
+    mqtt_send_sensor("battery", bat);
+    mqtt_send_sensor("charging", g_is_charging ? "true" : "false");
+    mqtt_send_sensor("battery_alert", g_battery_pct <= 15 ? "low" : "normal");
+    mqtt_send_sensor("source", get_source_name(g_current_source));
+    mqtt_publish_volume(g_user_vol);
 
     LOG_INFO("MQTT Home Assistant discovery published, %s/player/# subscribed", g_topic_prefix);
 }
@@ -1318,7 +1380,7 @@ static void process_mcu_command(const char *cmd) {
         LOG_INFO("Battery Fully Charged (MCU+CHA+FULL)");
         g_is_charging = 1;
         g_battery_pct = 100;
-        mqtt_send_sensor("charging", "full");
+        mqtt_send_sensor("charging", "true");
         ubus_notify_battery(g_battery_pct, g_is_charging);
     } else if (strstr(cmd, "MCU+BAT+OFF")) {
         LOG_WARN("Critical battery undervoltage (MCU+BAT+OFF). Emergency shutdown!");
@@ -1345,7 +1407,7 @@ static void process_mcu_command(const char *cmd) {
             mqtt_send_sensor("battery_alert", "normal");
         }
         g_last_bat = bat;
-        int fd = open("/tmp/battery_status", O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
+        int fd = open(BAT_STATE_FILE, O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
         if (fd >= 0) {
             write(fd, cmd, strlen(cmd));
             write(fd, "\n", 1);
@@ -1882,6 +1944,7 @@ int main(int argc, char *argv[]) {
                  saved_vol, g_user_vol);
         g_user_vol = saved_vol;
     }
+    bat_load();
 
     uloop_init();
 
