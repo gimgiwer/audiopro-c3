@@ -637,13 +637,36 @@ static int duck_lock_held(void) {
     return !got_it;
 }
 
+/* player_control.sh parks Squeeze/AirPlay at 0% while they are paused, and
+ * says so in this file - restoring those would unpause them. */
+static int player_paused(const char *word) {
+    char buf[128];
+    int fd = open("/tmp/paused_players.state", O_RDONLY);
+    if (fd < 0) return 0;
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+    /* echo ends the file with \n, which would break the word matching below */
+    for (ssize_t i = 0; i < n; i++)
+        if (buf[i] == '\n' || buf[i] == '\r' || buf[i] == '\t') buf[i] = ' ';
+    char pat[32];
+    snprintf(pat, sizeof(pat), " %s ", word);
+    char *sp = alloca(n + 3);
+    snprintf(sp, n + 3, " %s ", buf);
+    return (strstr(sp, pat) != NULL);
+}
+
 static void check_duck_controls(void) {
     if (duck_lock_held()) return;
 
     snd_mixer_selem_id_t *sid;
     snd_mixer_selem_id_alloca(&sid);
     for (int i = 0; k_duck_controls[i]; i++) {
-        snd_mixer_selem_id_set_name(sid, k_duck_controls[i]);
+        const char *name = k_duck_controls[i];
+        if (!strcmp(name, "Squeeze") && player_paused("squeeze")) continue;
+        if (!strcmp(name, "AirPlay") && player_paused("airplay")) continue;
+        snd_mixer_selem_id_set_name(sid, name);
         snd_mixer_elem_t *elem = snd_mixer_find_selem(g_mixer, sid);
         if (!elem) continue;
         long min = 0, max = 100, cur = 0;
