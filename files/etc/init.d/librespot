@@ -8,7 +8,7 @@ PROG=/usr/bin/librespot
 
 start_service() {
     local enabled name device bitrate volume vol_ctrl dev_type disable_cache
-    local mixer mixer_dev mixer_ctl dither format syscache
+    local mixer mixer_dev mixer_ctl dither format syscache saved_vol
     local fifo=/tmp/librespot_cmd
 
     config_load librespot
@@ -36,6 +36,15 @@ start_service() {
     # ends with unwrap_or(ConnectConfig::default()), i.e. u16::MAX/2, and Spirc::new
     # writes it to Master. Leaving this empty means every start (and every zeroconf
     # handover) silently jumps the speaker to 50%. Name the number we want instead.
+    #
+    # Prefer the level mcud persisted over the one in uci: both are the same
+    # perceptual percentage (mcud's user volume and librespot's cubic scale agree -
+    # Master raw 400 is amixer's 40%, -36 dB, and 25% on both of ours), so a
+    # librespot restart puts the speaker back where the user left it instead of
+    # yanking it to a number that was frozen at flash time.
+    [ -r /etc/mcud.volume ] && read -r saved_vol < /etc/mcud.volume
+    case "$saved_vol" in ''|*[!0-9]*) saved_vol="" ;; esac
+    [ -n "$saved_vol" ] && [ "$saved_vol" -ge 1 ] && [ "$saved_vol" -le 100 ] && volume="$saved_vol"
     [ -n "$volume" ] && args="$args --initial-volume $volume"
     [ "$disable_cache" -eq 1 ] && args="$args --disable-audio-cache"
 
