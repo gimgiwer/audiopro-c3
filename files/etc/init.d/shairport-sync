@@ -136,6 +136,10 @@ start_instance() {
 	# renice does not exist in this busybox, so procd is the only place a
 	# priority can be set at all - see the dilation table in the librespot init
 	procd_set_param nice -12
+	# procd's default stop is TERM then KILL after 5 s, and a -9'd alsa client
+	# wedges dmix for everyone until the speaker is power-cycled. Give it room:
+	# a slow exit costs seconds, a killed one costs the whole card.
+	procd_set_param term_timeout 15
 	procd_close_instance
 }
 

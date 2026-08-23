@@ -103,6 +103,10 @@ start_service() {
     # deliberately avoided -- a busy-looping RT decoder on one core starves procd's
     # 30s watchdog and reboots the speaker.
     procd_set_param nice -12
+    # procd's default stop is TERM then KILL after 5 s, and a -9'd alsa client
+    # wedges dmix for everyone until the speaker is power-cycled. Give it room:
+    # a slow exit costs seconds, a killed one costs the whole card.
+    procd_set_param term_timeout 15
     procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
     procd_set_param stderr 1
