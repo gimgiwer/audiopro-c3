@@ -16,10 +16,11 @@ mqtt_pub() {
         local port=$(uci -q get mcud.main.mqtt_port || echo "1883")
         local user=$(uci -q get mcud.main.mqtt_user || echo "")
         local pass=$(uci -q get mcud.main.mqtt_password || echo "")
-        local args="-h $host -p $port -t ${prefix}/${topic} -m $payload"
+        # -m must stay one word even for JSON payloads with spaces
+        local args="-h $host -p $port -t ${prefix}/${topic}"
         [ -n "$user" ] && args="$args -u $user"
         [ -n "$pass" ] && args="$args -P $pass"
-        mosquitto_pub $args 2>/dev/null || true
+        mosquitto_pub $args -m "$payload" 2>/dev/null || true
     fi
 }
 

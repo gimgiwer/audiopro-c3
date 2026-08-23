@@ -47,10 +47,11 @@ mqtt_pub() {
         local port=$(uci -q get mcud.main.mqtt_port || echo "1883")
         local user=$(uci -q get mcud.main.mqtt_user || echo "")
         local pass=$(uci -q get mcud.main.mqtt_password || echo "")
-        local args="-h $host -p $port -t ${prefix}/${topic} -m $payload"
+        # -m must stay one word even for JSON payloads with spaces
+        local args="-h $host -p $port -t ${prefix}/${topic}"
         [ -n "$user" ] && args="$args -u $user"
         [ -n "$pass" ] && args="$args -P $pass"
-        mosquitto_pub $args 2>/dev/null || true
+        mosquitto_pub $args -m "$payload" 2>/dev/null || true
     fi
 }
 
@@ -226,10 +227,10 @@ do_sync_cron() {
 
     local hour=$(echo "$time_str" | cut -d: -f1)
     local min=$(echo "$time_str" | cut -d: -f2)
+    # busybox ash cannot parse 10#NN (measured: "arithmetic syntax error"),
+    # and crond reads the field literally anyway, so keep the raw digits
     hour=${hour:-07}
     min=${min:-00}
-    hour=$((10#$hour))
-    min=$((10#$min))
 
     mkdir -p /etc/crontabs
     touch "$CRON_FILE"
