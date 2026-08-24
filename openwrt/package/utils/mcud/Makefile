@@ -33,6 +33,10 @@ define Build/Compile
 		$(TARGET_LDFLAGS) -lasound -lmosquitto -lubus -lubox -lblobmsg_json
 endef
 
+# The image's files/etc/init.d/mcud and files/etc/config/mcud are copied over
+# the rootfs after packages are installed, so they win. The copies under
+# ./files here are only for a standalone opkg install - keep them in sync or
+# they drift, which is how the nice -5 line went missing from one of them.
 define Package/mcud/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/mcud $(1)/usr/bin/

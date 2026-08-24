@@ -466,40 +466,46 @@ static void graceful_shutdown(void) {
 
 /* Percent is the unit everyone here speaks - the MCU bookkeeps it, MQTT and the
  * ubus api report it - but the Master softvol is dB-linear: raw 0..1000 spans
- * -60..0 dB. Mapping percent straight onto raw made the dial a pure dB ladder
- * where 25% sat at -45 dB, which is why the bottom half sounded dead. librespot
- * maps its own slider through the same law, so both ends have to agree or they
- * disagree about what the level is: raw 513 read back through the old
- * (v-min)*100/(max-min) came out as 51% while Spotify was showing 25%, and that
- * wrong number went to the MCU, to MQTT and into /etc/mcud.volume.
+ * -60..0 dB. librespot maps its own slider through a law of its own, so both
+ * ends have to agree or they disagree about what the level is: raw 513 read back
+ * through the old (v-min)*100/(max-min) came out as 51% while Spotify was
+ * showing 25%, and that wrong number went to the MCU, to MQTT and into
+ * /etc/mcud.volume.
  *
- * The law is the one PulseAudio and PipeWire put behind every desktop slider:
- * amplitude = (pct/100)^3, so dB = 60*log10(pct/100) and raw = 1000 * (1 +
- * log10(pct/100)) on this control. Checked against a live pipewire 1.6.8 sink,
- * which reported 9830 / 15% / -49.44 dB, and 60*log10(0.15) is -49.44.
- * Precomputed so this stays integer-only and mcud does not pull in libm.
+ * The law is amplitude = pct/100, i.e. a straight amplitude fader, so
+ * dB = 20*log10(pct/100) and raw = 1000 * (1 + log10(pct/100)/3). Same as
+ * librespot's `linear` volume-ctrl, which is what the factory firmware did too
+ * (liblpml_alsa.so: gain_Q16 = vol*65536/100).
  *
- * The cube runs below this control's floor under 10% (5% would want -78 dB), so
- * the bottom tenth of the dial is 0 - and softvol treats raw 0 as real digital
- * silence rather than -60 dB (pcm_softvol.c: cur_vol[0] == 0 -> areas_silence),
- * so it mutes cleanly. Nothing is lost: -60 dB on this amp is already inaudible
- * across a room. The top end is free too - max_dB is 0.0, which makes
- * softvol's zero_dB_val the last index, and raw 1000 is a straight areas_copy
- * with no multiply at all. */
+ * It replaced the (pct/100)^3 cube that PulseAudio and PipeWire use. The cube is
+ * right for a 0..100 dial that spans a whole amp's range, but on this 60 dB
+ * control it put 25% at -36 dB and muted everything under 10% outright, so two
+ * thirds of the dial were unusable - anything below 40% was inaudible in the
+ * room. The fader spreads the quiet end out instead: 1% is -40 dB, 25% is -12 dB,
+ * 50% is -6 dB, and nothing clamps to silence except a real 0. The cost is a
+ * compressed top - 50..100% is only 6 dB - but that half is near max output
+ * anyway, and the physical buttons step in raw (3 dB a press) so their feel does
+ * not change.
+ *
+ * Precomputed so this stays integer-only and mcud does not pull in libm. The top
+ * end is free: max_dB is 0.0, which makes softvol's zero_dB_val the last index,
+ * so raw 1000 is a straight areas_copy with no multiply at all. Index 0 is a
+ * hard 0 because softvol turns raw 0 into real digital silence
+ * (pcm_softvol.c: cur_vol[0] == 0 -> areas_silence). */
 static const unsigned short vol_curve[101] = {
-	   0,    0,    0,    0,    0,    0,    0,    0,
-	   0,    0,    0,   41,   79,  114,  146,  176,
-	 204,  230,  255,  279,  301,  322,  342,  362,
-	 380,  398,  415,  431,  447,  462,  477,  491,
-	 505,  519,  531,  544,  556,  568,  580,  591,
-	 602,  613,  623,  633,  643,  653,  663,  672,
-	 681,  690,  699,  708,  716,  724,  732,  740,
-	 748,  756,  763,  771,  778,  785,  792,  799,
-	 806,  813,  820,  826,  833,  839,  845,  851,
-	 857,  863,  869,  875,  881,  886,  892,  898,
-	 903,  908,  914,  919,  924,  929,  934,  940,
-	 944,  949,  954,  959,  964,  968,  973,  978,
-	 982,  987,  991,  996, 1000
+	   0,  333,  434,  492,  534,  566,  593,  615,
+	 634,  651,  667,  680,  693,  705,  715,  725,
+	 735,  743,  752,  760,  767,  774,  781,  787,
+	 793,  799,  805,  810,  816,  821,  826,  830,
+	 835,  840,  844,  848,  852,  856,  860,  864,
+	 867,  871,  874,  878,  881,  884,  888,  891,
+	 894,  897,  900,  903,  905,  908,  911,  913,
+	 916,  919,  921,  924,  926,  928,  931,  933,
+	 935,  938,  940,  942,  944,  946,  948,  950,
+	 952,  954,  956,  958,  960,  962,  964,  966,
+	 968,  969,  971,  973,  975,  976,  978,  980,
+	 981,  983,  985,  986,  988,  989,  991,  993,
+	 994,  996,  997,  999, 1000
 };
 
 static long vol_pct_to_raw(int pct, long min, long max) {
@@ -749,7 +755,7 @@ static void alsa_init(void) {
         int mute_top = 0;
         while (mute_top < 100 && vol_curve[mute_top + 1] == 0) mute_top++;
         int dbt = (vol_curve[25] * 6) / 10 - 600;
-        LOG_INFO("ALSA Master volume control ready (cubic, 25%% = %d.%d dB, <=%d%% = mute)",
+        LOG_INFO("ALSA Master volume control ready (fader, 25%% = %d.%d dB, <=%d%% = mute)",
                  dbt / 10, (-dbt) % 10, mute_top);
     }
 }
@@ -848,7 +854,7 @@ static void set_user_volume(int vol) {
 }
 
 /* A key press has to move a fixed number of dB, not a fixed percent: on the
- * cubic curve 0->5% is nearly 10 dB while 95->100% is barely one. raw is
+ * fader curve 0->5% is 26 dB while 95->100% is barely half of one. raw is
  * dB-linear, so step there and convert back to the percent everyone reports.
  * Only the sign of delta matters now. */
 static void adjust_user_volume(int delta) {
@@ -1366,26 +1372,29 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+S2M+")) {
         const char *p = strstr(cmd, "MCU+S2M+") + 8;
         LOG_INFO("MCU S2M Event received: [%.3s]", p);
-    } else if (strstr(cmd, "MCU+CHA+ON")) {
-        LOG_INFO("Charger plugged in (MCU+CHA+ON) - Disabling Auto-Sleep timer");
+    /* Charge state comes in on MCU+BAT++ON / MCU+BAT+OFF. There is no MCU+CHA+
+     * family - that string appears in no stock binary, so the handlers that used
+     * to sit here could never fire and g_is_charging stayed 0 forever.
+     * Stock: mv_ioguard maps these in its strncmp chain at 0x4098c8/0x4098e8 to
+     * event 7 and event 8, and ParseCommonMCUEvent dispatches them to
+     * Function_BatteryCharge (0x407e78) and Function_BatteryUncharge (0x407e98).
+     * Both are a handful of instructions that store 1 or 0 into
+     * g_wiimu_shm+0x764 and return. */
+    } else if (strstr(cmd, "MCU+BAT++ON")) {
+        LOG_INFO("Charger connected (MCU+BAT++ON)");
         g_is_charging = 1;
-        mqtt_send_sensor("charging", "true");
-        ubus_notify_battery(g_battery_pct, g_is_charging);
-    } else if (strstr(cmd, "MCU+CHA+OFF")) {
-        LOG_INFO("Charger disconnected (MCU+CHA+OFF) - Running on Battery");
-        g_is_charging = 0;
-        mqtt_send_sensor("charging", "false");
-        ubus_notify_battery(g_battery_pct, g_is_charging);
-    } else if (strstr(cmd, "MCU+CHA+FULL")) {
-        LOG_INFO("Battery Fully Charged (MCU+CHA+FULL)");
-        g_is_charging = 1;
-        g_battery_pct = 100;
         mqtt_send_sensor("charging", "true");
         ubus_notify_battery(g_battery_pct, g_is_charging);
     } else if (strstr(cmd, "MCU+BAT+OFF")) {
-        LOG_WARN("Critical battery undervoltage (MCU+BAT+OFF). Emergency shutdown!");
-        g_running = 0;
-        graceful_shutdown();
+        /* Mains removed, not a dying cell. This arm used to call
+         * graceful_shutdown(), so unplugging the speaker killed it mid-song at 98%
+         * charge about 20 s later. Stock has no host-side undervoltage path at
+         * all - the MCU drops the rail itself when the cell is empty, and the only
+         * thing it tells us on the way down is MCU+BAT+LOW. */
+        LOG_INFO("Charger disconnected (MCU+BAT+OFF) - running on battery");
+        g_is_charging = 0;
+        mqtt_send_sensor("charging", "false");
+        ubus_notify_battery(g_battery_pct, g_is_charging);
     } else if (strstr(cmd, "MCU+BAT+LOW")) {
         LOG_WARN("Low battery alert (MCU+BAT+LOW)");
         play_sound(SOUND_LOW_BAT);

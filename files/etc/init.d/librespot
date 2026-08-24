@@ -9,6 +9,7 @@ PROG=/usr/bin/librespot
 start_service() {
     local enabled name device bitrate volume vol_ctrl dev_type disable_cache
     local mixer mixer_dev mixer_ctl dither format syscache saved_vol
+    local normalise norm_method norm_type norm_pregain
     local fifo=/tmp/librespot_cmd
 
     config_load librespot
@@ -26,9 +27,14 @@ start_service() {
     config_get mixer_dev main mixer_device 'default'
     config_get mixer_ctl main mixer_control 'Master'
     config_get dither main dither 'none'
-    config_get format main format 'S32'
+    config_get format main format 'S16'
     config_get syscache main system_cache ''
+    config_get_bool normalise main normalisation 1
+    config_get norm_method main normalisation_method 'basic'
+    config_get norm_type main normalisation_gain_type 'auto'
+    config_get norm_pregain main normalisation_pregain ''
     config_get_bool debug main debug 0
+    config_get log_filter main log_filter ''
 
     local args="--backend alsa --device $device --bitrate $bitrate --name \"$name\" --volume-ctrl $vol_ctrl --device-type $dev_type --onevent /usr/bin/spotify_event_handler.sh --dither $dither --format $format"
 
@@ -38,15 +44,30 @@ start_service() {
     # handover) silently jumps the speaker to 50%. Name the number we want instead.
     #
     # Prefer the level mcud persisted over the one in uci: both are the same
-    # perceptual percentage (mcud's user volume and librespot's cubic scale agree -
-    # Master raw 400 is amixer's 40%, -36 dB, and 25% on both of ours), so a
-    # librespot restart puts the speaker back where the user left it instead of
-    # yanking it to a number that was frozen at flash time.
+    # perceptual percentage (mcud's vol_curve is generated from librespot's linear
+    # law - Master raw 799 is 25% on both, -12 dB), so a librespot restart puts
+    # the speaker back where the user left it instead of yanking it to a number
+    # that was frozen at flash time.
     [ -r /etc/mcud.volume ] && read -r saved_vol < /etc/mcud.volume
     case "$saved_vol" in ''|*[!0-9]*) saved_vol="" ;; esac
     [ -n "$saved_vol" ] && [ "$saved_vol" -ge 1 ] && [ "$saved_vol" -le 100 ] && volume="$saved_vol"
     [ -n "$volume" ] && args="$args --initial-volume $volume"
     [ "$disable_cache" -eq 1 ] && args="$args --disable-audio-cache"
+
+    # Clip protection. Nothing downstream of librespot can undo a clip: f64_to_s16
+    # quantises with a saturating `as i16` cast, so anything over 0 dBFS becomes a
+    # flat top right there, and the Master softvol attenuates only afterwards -
+    # turning the speaker down does not save it. Spotify masters routinely peak
+    # above 0 dBFS, which librespot itself expects (it carries track_peak for this).
+    # Basic is min(replaygain, 1.0/peak) capped at 1.0: one f64 multiply per sample,
+    # peak-safe by construction. Dynamic is the real feedforward limiter but calls
+    # ratio_to_db() and db_to_ratio() per sample - two soft-float transcendentals
+    # x 88200 samples/s on a core with no FPU, so it stays available but off.
+    if [ "$normalise" -eq 1 ]; then
+        args="$args --enable-volume-normalisation --normalisation-method $norm_method"
+        args="$args --normalisation-gain-type $norm_type"
+        [ -n "$norm_pregain" ] && args="$args --normalisation-pregain $norm_pregain"
+    fi
 
     # Credentials on flash: with them librespot logs into the AP at boot, so tapping
     # the speaker in Spotify is a transfer to a live session instead of a full
@@ -86,6 +107,14 @@ start_service() {
     # get timestamped state/volume traces when connect feels sluggish
     [ "$debug" -eq 1 ] && args="$args --verbose"
 
+    # debug=1 is librespot=trace, which buries the log under a keep-alive ping
+    # every 60 s. log_filter is the surgical version: env_logger filter syntax,
+    # and setup_logging() prefers RUST_LOG over --verbose, so it wins if both are
+    # set. Useful ones: librespot_playback::player=debug for the per-track
+    # normalisation factor, librespot_playback::mixer=debug for the volume law,
+    # librespot_connect::spirc=debug for Connect handovers.
+
+
     # librespot exits when it cannot reach the AP and procd's respawn then reloads
     # 7.35 MB off jffs2 every 5 s. Measured: at S90 it execs at t+28 while dnsmasq
     # gets its first upstream server at t+54, so it burned three instances before
@@ -106,6 +135,7 @@ start_service() {
 
     procd_open_instance
     procd_set_param command /bin/sh -c "$wait_net; exec $PROG $args"
+    [ -n "$log_filter" ] && procd_set_param env RUST_LOG="$log_filter"
     # Single core, and AlsaSink is synchronous so decode and output share this
     # thread. Measured on hardware at 6 competing nice-0 hogs: playback stretches
     # +4.7% without this, +1.6% at -12. Gains flatten past -12, and SCHED_FIFO is

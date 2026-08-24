@@ -64,8 +64,8 @@ resume_webradio() { killall -CONT mpg123 2>/dev/null || true; }
 # exist as a control until something has played through it -- pausing it then
 # fails, and resuming it later would be a no-op on a control nobody touched.
 do_pause_all() {
-	local paused=""
-	if pgrep librespot >/dev/null 2>&1 && pause_spotify; then
+	local paused="" skip="$1"
+	if [ "$skip" != nospotify ] && pgrep librespot >/dev/null 2>&1 && pause_spotify; then
 		paused="$paused spotify"
 	fi
 	if pgrep shairport-sync >/dev/null 2>&1 && pause_airplay; then
@@ -84,11 +84,12 @@ do_pause_all() {
 }
 
 do_resume_all() {
+	local skip="$1"
 	if [ -f "$SAVED_STATE" ]; then
 		local p
 		for p in $(cat "$SAVED_STATE" 2>/dev/null); do
 			case "$p" in
-				spotify)  resume_spotify ;;
+				spotify)  [ "$skip" = nospotify ] || resume_spotify ;;
 				airplay)  resume_airplay ;;
 				squeeze)  resume_squeeze ;;
 				webradio) resume_webradio ;;
@@ -96,7 +97,7 @@ do_resume_all() {
 		done
 		rm -f "$SAVED_STATE"
 	else
-		resume_spotify
+		[ "$skip" = nospotify ] || resume_spotify
 		resume_airplay
 		resume_squeeze
 		resume_webradio
@@ -121,7 +122,25 @@ case "$ACTION" in
 		if [ "$TARGET" = all ]; then do_resume_all; else one_target resume "$TARGET"; fi
 		;;
 	toggle)
-		if [ -f "$SAVED_STATE" ]; then do_resume_all; else do_pause_all; fi
+		# The state file only records what we last did to a player, so anything the
+		# phone does behind our back leaves the key inverted for one press. librespot
+		# knows its own play_status, and the patched fifo takes a stateless toggle
+		# (spirc.play_pause()), so let Spotify answer for itself and keep it out of
+		# the file the muted-only players share. On an idle librespot the command is
+		# a logged no-op ("ignored while Not Active"), so this cannot start Spotify
+		# while something else is playing.
+		case "$TARGET" in
+			spotify)
+				spotify_cmd toggle
+				;;
+			all)
+				spotify_cmd toggle
+				if [ -f "$SAVED_STATE" ]; then do_resume_all nospotify; else do_pause_all nospotify; fi
+				;;
+			*)
+				if [ -f "$SAVED_STATE" ]; then one_target resume "$TARGET"; else one_target pause "$TARGET"; fi
+				;;
+		esac
 		;;
 	next|prev)
 		# Only Spotify has a notion of tracks we can drive from here
