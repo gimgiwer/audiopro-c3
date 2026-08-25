@@ -23,8 +23,8 @@ config options 'options'
 	option volume_control 'Slimproto'
 	# 44.1k only - the i2s block is clocked for it and dmix runs at that rate
 	option max_sr '44100'
-	# hold the device open, reopening dmix mid-queue clicks
-	option close_delay '0'
+	# close device after 5s of idle to eliminate idle CPU load on dmix TPDF dither
+	option close_delay '5'
 	option priority '0'
 	option dsd_over_pcm '0'
 	option ircontrol '0'
