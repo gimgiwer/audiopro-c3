@@ -510,16 +510,19 @@ function handle_request(env)
         local vol = tonumber(params.val or params.volume or "50") or 50
         if vol < 0 then vol = 0 end
         if vol > 100 then vol = 100 end
+        os.execute(string.format("ubus call mcud set_volume '{\"volume\":%d}' >/dev/null 2>&1", vol))
         send_mcu(string.format("AXX+VOL+%03d\n", vol))
         write_file("/tmp/current_volume", tostring(vol))
         uhttpd.send(string.format('{"status":"ok","volume":%d}', vol))
 
     elseif action == "mute" then
+        os.execute("ubus call mcud set_mute '{\"mute\":true}' >/dev/null 2>&1")
         send_mcu("AXX+MUT+001\n")
         write_file("/tmp/current_mute", "1")
         uhttpd.send('{"status":"ok","mute":true}')
 
     elseif action == "unmute" then
+        os.execute("ubus call mcud set_mute '{\"mute\":false}' >/dev/null 2>&1")
         send_mcu("AXX+MUT+000\n")
         write_file("/tmp/current_mute", "0")
         uhttpd.send('{"status":"ok","mute":false}')
