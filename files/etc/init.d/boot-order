@@ -1,0 +1,40 @@
+#!/bin/sh /etc/rc.common
+# Renumber the housekeeping services so the audio path boots first.
+#
+# This used to live in uci-defaults, which is wrong: /etc/init.d/rcS expands
+# /etc/rc.d/S* once, before uci_apply_defaults runs inside S10boot, so anything
+# renumbered from there is invisible for the rest of that boot. The old symlink
+# is gone and the new one is not in the already-expanded list, so on the first
+# boot after every flash odhcpd, dbus, avahi-daemon, cron and uhttpd never
+# started at all - and shairport-sync then died too, because it needs avahi.
+#
+# Doing it at S99 fixes that: the network is up by then, we can start the five
+# ourselves in dependency order, and this sorts before S99shairport-sync. Every
+# later boot finds the symlinks already correct and does nothing.
+START=99
+
+# Nothing before S90 needs any of these, and netifd does need the cpu: measured
+# on hardware, netifd started at t+26 and only got round to enabling interfaces
+# at t+35 because crond, uhttpd, dbus and avahi were starting on top of it. The
+# speaker is judged on how fast Spotify Connect appears, so the audio path goes
+# first and the housekeeping follows. dbus before avahi-daemon, avahi before
+# shairport-sync.
+ORDER="odhcpd:91 dbus:91 avahi-daemon:92 cron:93 uhttpd:94"
+
+start() {
+	for entry in $ORDER; do
+		name=${entry%:*}
+		new=${entry#*:}
+		script=/etc/init.d/$name
+		[ -x "$script" ] || continue
+		[ -e "/etc/rc.d/S$new$name" ] && continue
+		"$script" disable 2>/dev/null
+		sed -i "s/^START=.*/START=$new/" "$script"
+		"$script" enable
+		# On the boot right after a flash the package symlink is still at its
+		# own number, so the service already came up - renumbering it is all
+		# that is needed. Only start it if it really is not running, which is
+		# the case the old uci-defaults version got wrong.
+		"$script" running 2>/dev/null || "$script" start
+	done
+}
