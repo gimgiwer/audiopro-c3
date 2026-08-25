@@ -597,7 +597,8 @@ function handle_request(env)
         local stream_url = params.url or ""
         local stream_name = params.name or "Live Stream"
         if stream_url ~= "" and string.match(stream_url, "^https?://") then
-            os.execute("killall -9 mpg123 madplay 2>/dev/null")
+            -- Safely arbitrate playback and stop competing Spotify/AirPlay/Squeeze daemons
+            os.execute("/usr/bin/audio_arbiter.sh webradio >/dev/null 2>&1")
             local meta = string.format('{"active":true,"source":"webradio","title":"%s","artist":"Web Radio","album":"Direct Stream","playing":true,"artwork":false,"updated":%d}',
                 json_escape(stream_name), os.time())
             write_file("/tmp/audiopro_meta.json", meta)

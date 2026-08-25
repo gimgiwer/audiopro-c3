@@ -3353,7 +3353,8 @@
 
     // --- Now Playing & Media Controls ---
     function renderNowPlaying(np) {
-      if (!np || !np.active) {
+      const isWifi = (state.source === 'wifi' || state.source === 'i2s');
+      if (!np || !np.active || !isWifi) {
         if (el.nowPlayingCard) el.nowPlayingCard.style.display = 'none';
         return;
       }
