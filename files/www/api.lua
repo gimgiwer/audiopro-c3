@@ -581,37 +581,6 @@ function handle_request(env)
         os.execute(string.format("/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", pid))
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d triggered"}', pid))
 
-    elseif action == "get_eq" then
-        local eq = read_file("/tmp/audiopro_eq.json") or '{"status":"ok","preset":"Flat","mode":"hardware","b60":0,"b150":0,"b400":0,"b1k":0,"b2k5":0,"b6k":0,"b14k":0}'
-        uhttpd.send(eq)
-
-    elseif action == "save_eq" then
-        local pre = params.preset or "Flat"
-        local eq_map = {
-            ["flat"] = 0, ["default"] = 0,
-            ["classic"] = 1,
-            ["pop"] = 2,
-            ["jazz"] = 3,
-            ["vocal"] = 4,
-            ["rock"] = 2, -- maps to pop/rock DSP
-            ["night"] = 4 -- maps to vocal/compressed DSP
-        }
-        local eq_code = eq_map[string.lower(pre)] or 0
-        -- Hardware DSP on secondary MCU (STM8S)
-        send_mcu(string.format("AXX+EQS+%03d\n", eq_code))
-
-        local b60 = tonumber(params.b60 or "0") or 0
-        local b150 = tonumber(params.b150 or "0") or 0
-        local b400 = tonumber(params.b400 or "0") or 0
-        local b1k = tonumber(params.b1k or "0") or 0
-        local b2k5 = tonumber(params.b2k5 or "0") or 0
-        local b6k = tonumber(params.b6k or "0") or 0
-        local b14k = tonumber(params.b14k or "0") or 0
-        local eq_json = string.format('{"status":"ok","preset":"%s","hw_code":%d,"b60":%d,"b150":%d,"b400":%d,"b1k":%d,"b2k5":%d,"b6k":%d,"b14k":%d}',
-            json_escape(pre), eq_code, b60, b150, b400, b1k, b2k5, b6k, b14k)
-        write_file("/tmp/audiopro_eq.json", eq_json)
-        uhttpd.send(string.format('{"status":"ok","message":"Equalizer preset set to %s","preset":"%s"}', json_escape(pre), json_escape(pre)))
-
     elseif action == "tts" or action == "tts_duck" then
         local tts_url = params.url or ""
         if tts_url ~= "" and string.match(tts_url, "^https?://") then
