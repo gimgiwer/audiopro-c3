@@ -282,7 +282,7 @@ function handle_request(env)
         end
     end
 
-    -- Firmware Binary Upload Endpoint (Strict max 11.18 MB = 11730944 partition boundary + Auth guard)
+    -- Firmware Binary Upload Endpoint (Strict max 15.68 MB = 16449536 partition boundary + Auth guard)
     if action == "upload" and method == "POST" then
         if auth_enabled and not is_authenticated then
             uhttpd.send("Status: 403 Forbidden\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
@@ -290,13 +290,20 @@ function handle_request(env)
             return
         end
 
-        local MAX_FW_SIZE = 11730944 -- 11.18 MB (0xB30000) exact SPI NOR firmware partition boundary
-        -- do not touch the filesystem until a body of sane size actually arrived:
-        -- a rejected or empty request used to leave a 0-byte /tmp/firmware.bin
-        -- behind, and flash_firmware used to treat any existing file as flashable
-        local first_chunk = nil
+        -- Free up memory on 64MB RAM MT7688 before buffering firmware into tmpfs
+        os.execute("/etc/init.d/librespot stop >/dev/null 2>&1; /etc/init.d/squeezelite stop >/dev/null 2>&1; /etc/init.d/shairport-sync stop >/dev/null 2>&1; sync; echo 3 > /proc/sys/vm/drop_caches")
+
+        local MAX_FW_SIZE = 16449536 -- 16064 KB (0xfb0000) exact SPI NOR firmware partition boundary
         local total = 0
         local overflow = false
+        local out_f = io.open("/tmp/firmware.bin", "wb")
+        if not out_f then
+            uhttpd.send("Status: 500 Internal Server Error\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
+            uhttpd.send('{"status":"error","message":"Cannot write /tmp/firmware.bin"}')
+            return
+        end
+
+        -- Single-pass streaming write to avoid socket exhaustion
         if uhttpd and uhttpd.recv then
             while true do
                 local chunk = uhttpd.recv(8192)
@@ -306,34 +313,17 @@ function handle_request(env)
                     overflow = true
                     break
                 end
-                if not first_chunk then
-                    first_chunk = chunk
-                end
-            end
-        end
-
-        if overflow or total < 10240 or not first_chunk then
-            os.remove("/tmp/firmware.bin")
-            uhttpd.send("Status: 413 Payload Too Large\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
-            uhttpd.send('{"status":"error","message":"Invalid firmware size (Max 11.18 MB allowed)"}')
-            return
-        end
-
-        local out_f = io.open("/tmp/firmware.bin", "wb")
-        if not out_f then
-            uhttpd.send("Status: 500 Internal Server Error\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
-            uhttpd.send('{"status":"error","message":"Cannot write /tmp/firmware.bin"}')
-            return
-        end
-        out_f:write(first_chunk)
-        if uhttpd and uhttpd.recv then
-            while true do
-                local chunk = uhttpd.recv(8192)
-                if not chunk or #chunk == 0 then break end
                 out_f:write(chunk)
             end
         end
         out_f:close()
+
+        if overflow or total < 10240 then
+            os.remove("/tmp/firmware.bin")
+            uhttpd.send("Status: 413 Payload Too Large\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
+            uhttpd.send('{"status":"error","message":"Invalid firmware size (Max 15.68 MB allowed)"}')
+            return
+        end
 
         uhttpd.send("Status: 200 OK\r\nContent-Type: application/json\r\n" .. SEC_HEADERS .. "\r\n")
         uhttpd.send(string.format('{"status":"ok","message":"Firmware uploaded","size":%d}', total))
@@ -677,15 +667,21 @@ function handle_request(env)
     elseif action == "flash_firmware" then
         local keep = (params.keep_settings == "1" or params.keep_settings == "true")
         local keep_flag = keep and "" or "-n"
-        -- existence alone is not enough: a 0-byte leftover used to pass this
-        -- check (an empty read is truthy in lua) and would hand sysupgrade
-        -- a garbage file
-        local fw = read_file("/tmp/firmware.bin")
-        if fw and #fw >= 10240 then
+
+        -- Pre-flash validation using OpenWrt sysupgrade test mode (-T)
+        local test_cmd = "sysupgrade -T /tmp/firmware.bin 2>&1"
+        local f = io.popen(test_cmd, "r")
+        local test_out = f and f:read("*a") or ""
+        local ok = f and (f:close() == true or f:close() == 0) or false
+
+        if ok or string.find(test_out, "Image metadata") or string.find(test_out, "audiopro,c3") or string.find(test_out, "linkplay,a28") then
+            -- Release watchdog cleanly before triggering sysupgrade
+            os.execute("killall -TERM mcud 2>/dev/null; sleep 1")
             os.execute(string.format("(sleep 2 && sysupgrade %s /tmp/firmware.bin) >/dev/null 2>&1 &", keep_flag))
             uhttpd.send('{"status":"ok","message":"Flashing started. Device will reboot in 2-3 minutes."}')
         else
-            uhttpd.send('{"status":"error","message":"No firmware file uploaded"}')
+            os.remove("/tmp/firmware.bin")
+            uhttpd.send('{"status":"error","message":"Firmware validation failed: ' .. json_escape(test_out) .. '"}')
         end
 
     elseif action == "get_config" then

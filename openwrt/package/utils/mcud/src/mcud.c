@@ -28,6 +28,8 @@
 #define BAUD_RATE            B57600
 #define WATCHDOG_CHECK_MS    5000
 #define SLEEP_CHECK_MS       5000
+#define MCU_KEEPALIVE_SEC    60   /* default for -k, see sleep_timer_cb */
+#define KA_FAKE_DUR_MS       600000  /* the track length we claim in the keepalive burst */
 #define VOL_STEP_DB          3   /* per key press, see adjust_user_volume */
 #define MCU_VOL_TOLERANCE    2   /* MCU rounds our 0..100 onto its own scale */
 #define MAX_LINE_LEN         128
@@ -104,6 +106,7 @@ static int  g_current_source = 0;    /* 0: wifi/i2s, 1: bluetooth, 2: aux */
 static int  g_battery_pct = 100;     /* Battery percentage (0..100) */
 static int  g_is_charging = 0;       /* 1 = Charging (AC plugged), 0 = Battery */
 static int  g_auto_sleep_min = 0;    /* 0 = Always-On, >0 = timeout in minutes */
+static int  g_keepalive_sec = MCU_KEEPALIVE_SEC;  /* 0 = let the MCU power us off */
 static int  g_net_state = -1;        /* Cached network state: 0=disconn, 1=conn, 2=connecting, 3=ap, 4=wps */
 /* The MCU keeps four independent state variables and polls us for each one with
  * MCU+<X>+GET. Stock mv_ioguard answers from its own mirror, so we need one too -
@@ -2311,6 +2314,29 @@ static void watchdog_timer_cb(struct uloop_timeout *t) {
 
 static void sleep_timer_cb(struct uloop_timeout *t) {
     time_t now = time(NULL);
+    static time_t last_keepalive = 0;
+
+    /* On battery the MCU pulls the rail ~19 min after power-on and announces it
+     * with MCU+PLY-STP a few seconds ahead. A bare AXX+POW+000 every minute does
+     * not stop it - measured, it died on schedule anyway. The one state where it
+     * never cuts is real playback, and what stock streams while playing is this
+     * report set: PLY+PLA plus an advancing POS/DUR pair. So we claim a track is
+     * running. Only while we have an uplink: with no route out nobody can reach
+     * us anyway, so let the MCU have its power-off. */
+    if (g_keepalive_sec > 0 && now - last_keepalive >= g_keepalive_sec) {
+        static int fake_pos = 0;
+        char kaif[32], buf[32];
+        last_keepalive = now;
+        if (default_route_iface(kaif, sizeof(kaif))) {
+            uart_send(CMD_POWER_ON);
+            uart_send("AXX+PLY+PLA\n");
+            snprintf(buf, sizeof(buf), "AXX+PLY+DUR%d&\n", KA_FAKE_DUR_MS);
+            uart_send(buf);
+            fake_pos = (fake_pos + g_keepalive_sec * 1000) % KA_FAKE_DUR_MS;
+            snprintf(buf, sizeof(buf), "AXX+PLY+POS%d&\n", fake_pos);
+            uart_send(buf);
+        }
+    }
 
     /* Refresh activity timestamp if audio stream is active or external inputs in use */
     if (is_audio_active()) {
@@ -2381,7 +2407,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, sig_handler);
 
     int opt;
-    while ((opt = getopt(argc, argv, "h:p:u:P:t:v:s:l:abm")) != -1) {
+    while ((opt = getopt(argc, argv, "h:p:u:P:t:v:s:l:k:abm")) != -1) {
         switch (opt) {
             case 'l':
                 g_log_level = atoi(optarg);
@@ -2400,6 +2426,10 @@ int main(int argc, char *argv[]) {
             case 's':
                 g_auto_sleep_min = atoi(optarg);
                 if (g_auto_sleep_min < 0) g_auto_sleep_min = 0;
+                break;
+            case 'k':
+                g_keepalive_sec = atoi(optarg);
+                if (g_keepalive_sec < 0) g_keepalive_sec = 0;
                 break;
             case 'h':
                 strncpy(g_mqtt_host, optarg, sizeof(g_mqtt_host) - 1);
@@ -2498,6 +2528,11 @@ int main(int argc, char *argv[]) {
     } else {
         LOG_INFO("Inactivity Auto-Sleep disabled: Always-On mode active (24/7 ready)");
     }
+    if (g_keepalive_sec > 0) {
+        LOG_INFO("MCU keepalive every %d s while an uplink is up", g_keepalive_sec);
+    } else {
+        LOG_INFO("MCU keepalive disabled: the MCU will cut power after ~20 min on battery");
+    }
     play_sound(SOUND_BOOT);
 
     g_last_activity_time = time(NULL);
@@ -2532,7 +2567,11 @@ int main(int argc, char *argv[]) {
         unlink(CMD_FIFO_PATH);
     }
     if (g_uart_fd >= 0) close(g_uart_fd);
-    if (g_wdt_fd >= 0) close(g_wdt_fd);
+    if (g_wdt_fd >= 0) {
+        write(g_wdt_fd, "V", 1); /* Magic Close to safely disarm kernel watchdog */
+        close(g_wdt_fd);
+        g_wdt_fd = -1;
+    }
     for (int i = 0; i < g_mixer_ufd_count; i++) uloop_fd_delete(&g_mixer_ufds[i]);
     free(g_mixer_ufds);
     if (g_mixer) snd_mixer_close(g_mixer);
