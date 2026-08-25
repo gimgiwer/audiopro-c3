@@ -269,8 +269,11 @@ static int is_audio_active(void) {
     return 0;
 }
 
+#define PCM_STATUS_PATH "/proc/asound/card0/pcm0p/sub0/status"
 #define STALL_TICKS   6   /* 6 * SLEEP_CHECK_MS = 30 s of a frozen ring */
-#define STALL_COOLDOWN_SEC 60
+#define STALL_TICKS_ZERO 12  /* hw_ptr still 0 after 60 s - see check_stream_stall */
+#define STALL_COOLDOWN_SEC 120
+#define STALL_MAX_TRIES 3
 
 /* A substream can sit in RUNNING with hw_ptr and tstamp both frozen - measured
  * 258 s of it after a dmix client was SIGKILLed. A stream that is merely starved
@@ -278,7 +281,7 @@ static int is_audio_active(void) {
  * and not a pause. */
 static int read_stream_pos(unsigned long long *hw_ptr, char *tstamp, size_t ts_len,
                            int *running, int *owner_pid) {
-    int fd = open("/proc/asound/card0/pcm0p/sub0/status", O_RDONLY | O_NONBLOCK);
+    int fd = open(PCM_STATUS_PATH, O_RDONLY | O_NONBLOCK);
     if (fd < 0) return 0;
     char buf[1024];
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -351,22 +354,16 @@ static void check_stream_stall(time_t now) {
     static unsigned long long last_hw = 0;
     static char last_ts[48] = "";
     static int ticks = 0;
+    static int tries = 0;
     static time_t last_action = 0;
 
     unsigned long long hw = 0;
     char ts[48];
     int running = 0, pid = 0;
 
-    /* hw_ptr 0 with tstamp 0.000000000 is a substream that is RUNNING but whose
-     * dma was never triggered - squeezelite parks sub0 like that from boot, and
-     * reading it as a stall restarts squeezelite once a minute forever. A ring
-     * that never advanced was never playing, so there is nothing to unwedge.
-     * appl_ptr is no help here: dmix writes straight into the shared buffer and
-     * leaves the slave's appl_ptr at 0 even mid-track (measured over 8 s of real
-     * playback), so gating on it would disable the detector outright. */
-    if (!read_stream_pos(&hw, ts, sizeof(ts), &running, &pid) ||
-        !running || hw == 0 || !strcmp(ts, "0.000000000")) {
+    if (!read_stream_pos(&hw, ts, sizeof(ts), &running, &pid) || !running) {
         ticks = 0;
+        tries = 0;
         last_hw = 0;
         last_ts[0] = '\0';
         return;
@@ -376,16 +373,33 @@ static void check_stream_stall(time_t now) {
         ticks++;
     } else {
         ticks = 0;
+        tries = 0;
         last_hw = hw;
         snprintf(last_ts, sizeof(last_ts), "%s", ts);
         return;
     }
 
-    if (ticks < STALL_TICKS) return;
+    /* hw_ptr 0 needs a longer window than a frozen non-zero one: a fresh open
+     * legitimately reads 0 for a moment. It is not exempt though - measured
+     * 2026-08-24, a connected squeezelite advances hw_ptr at 44100 frames/s
+     * whether or not anything plays, so a zero that stays zero for a minute is
+     * a dead dma, and that is exactly the state the box sat in for 40 minutes
+     * with every new open blocking in poll(). appl_ptr is no help either: dmix
+     * writes into the shared buffer and leaves the slave's appl_ptr at 0 even
+     * mid-track, so gating on it would disable the detector outright. */
+    if (ticks < (hw == 0 ? STALL_TICKS_ZERO : STALL_TICKS)) return;
     if (now - last_action < STALL_COOLDOWN_SEC) return;
 
     int owner = 0;
     const char *svc = stall_service_for_pid(pid, &owner);
+    if (tries >= STALL_MAX_TRIES) {
+        if (tries == STALL_MAX_TRIES) {
+            LOG_WARN("stream still stalled after %d attempts, giving up until it moves again", tries);
+            tries++;
+        }
+        last_action = now;
+        return;
+    }
     LOG_WARN("stream stalled: RUNNING but hw_ptr %llu and tstamp %s frozen for %d s, owner tid %d, process %d (%s)",
              hw, ts, ticks * (SLEEP_CHECK_MS / 1000), pid, owner, svc ? svc : "unknown");
     if (svc) {
@@ -394,10 +408,19 @@ static void check_stream_stall(time_t now) {
          * i.e. the cure becomes the disease. wake it up first; player_control.sh
          * does the same dance before poking the players. */
         if (owner > 0) kill(owner, SIGCONT);
-        char cmd[96];
-        snprintf(cmd, sizeof(cmd), "/etc/init.d/%s restart", svc);
+        /* not "restart": procd's stop returns as soon as it has queued the TERM,
+         * so restart can hand the card to the new instance while the old one
+         * still holds the fd, and the new one then attaches to the stale dmix
+         * shm and never starts the dma at all. Waiting for the substream to read
+         * "closed" is what actually cleared it by hand on 2026-08-24. */
+        char cmd[320];
+        snprintf(cmd, sizeof(cmd),
+                 "/etc/init.d/%s stop; i=0; "
+                 "while [ $i -lt 15 ] && ! grep -q closed %s; do sleep 1; i=$((i+1)); done; "
+                 "/etc/init.d/%s start", svc, PCM_STATUS_PATH, svc);
         spawn_async(cmd);
-        LOG_INFO("restarted %s to clear the stalled substream", svc);
+        tries++;
+        LOG_INFO("stopped and restarted %s to clear the stalled substream (attempt %d)", svc, tries);
     }
     last_action = now;
     ticks = 0;
