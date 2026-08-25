@@ -12,6 +12,7 @@ config dnsmasq
 	option nonwildcard '1'
 	option localservice '1'
 	option ednspacket_max '1232'
+	list address '/setup.audiopro/10.10.10.254'
 
 # Dedicated DHCP server for Wi-Fi AP hotspot (hands out 10.10.10.100 - 10.10.10.200)
 config dhcp 'ap'

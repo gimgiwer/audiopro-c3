@@ -19,6 +19,8 @@ else
 	uci set wireless.ap_iface.encryption='none'
 fi
 uci set wireless.ap_iface.isolate='1'
+uci set wireless.radio0.channel='auto'
+uci set wireless.sta_iface.disabled='1'
 uci set wireless.ap_iface.disabled='0'
 uci commit wireless
 

@@ -630,7 +630,7 @@ function handle_request(env)
         uhttpd.send('{"status":"ok","message":"Streaming stopped"}')
 
     elseif action == "wifi_scan" then
-        local f = io.popen("iwinfo radio0 scan 2>/dev/null || iwinfo wlan0 scan 2>/dev/null | grep 'ESSID:' | awk -F'\"' '{print $2}'", "r")
+        local f = io.popen("timeout -s KILL 5s sh -c '(iwinfo radio0 scan 2>/dev/null || iwinfo wlan0 scan 2>/dev/null)' | grep 'ESSID:' | awk -F'\"' '{print $2}'", "r")
         local networks = {}
         if f then
             for line in f:lines() do
@@ -655,11 +655,13 @@ function handle_request(env)
                 uci_ctx:set("wireless", "sta_iface", "ssid", ssid)
                 uci_ctx:set("wireless", "sta_iface", "key", key)
                 uci_ctx:set("wireless", "sta_iface", "disabled", "0")
+                -- Reset radio0 channel to auto so mac80211 freely tunes to target AP channel
+                uci_ctx:set("wireless", "radio0", "channel", "auto")
                 -- Disable setup AP once connecting to client Wi-Fi network for radio stealth and security
                 uci_ctx:set("wireless", "ap_iface", "disabled", "1")
                 uci_ctx:commit("wireless")
             else
-                os.execute(string.format("uci set wireless.sta_iface.ssid='%s' 2>/dev/null; uci set wireless.sta_iface.key='%s' 2>/dev/null; uci set wireless.sta_iface.disabled='0' 2>/dev/null; uci set wireless.ap_iface.disabled='1' 2>/dev/null; uci commit wireless 2>/dev/null",
+                os.execute(string.format("uci set wireless.sta_iface.ssid='%s' 2>/dev/null; uci set wireless.sta_iface.key='%s' 2>/dev/null; uci set wireless.sta_iface.disabled='0' 2>/dev/null; uci set wireless.radio0.channel='auto' 2>/dev/null; uci set wireless.ap_iface.disabled='1' 2>/dev/null; uci commit wireless 2>/dev/null",
                     sanitize_shell(ssid), sanitize_shell(key)))
             end
             os.execute("(sleep 2 && wifi reload) >/dev/null 2>&1 &")
