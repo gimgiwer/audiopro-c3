@@ -626,7 +626,7 @@ function handle_request(env)
         end
 
     elseif action == "stop_stream" then
-        os.execute("killall -9 mpg123 madplay 2>/dev/null")
+        os.execute(". /usr/lib/audiopro/kill_audio.sh; kill_audio_names mpg123 madplay >/dev/null 2>&1")
         uhttpd.send('{"status":"ok","message":"Streaming stopped"}')
 
     elseif action == "wifi_scan" then

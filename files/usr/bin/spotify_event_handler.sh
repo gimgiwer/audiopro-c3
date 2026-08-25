@@ -35,6 +35,7 @@ case "$PLAYER_EVENT" in
     playing|start)
         ubus call mcud set_source '{"source": "wifi"}' 2>/dev/null || true
         ubus call mcud set_mute '{"mute": 0}' 2>/dev/null || true
+        /usr/bin/audio_arbiter.sh spotify &
         sed -i 's/"playing": false/"playing": true/' "$META" 2>/dev/null || true
         ;;
     paused)
