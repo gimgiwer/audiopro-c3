@@ -480,7 +480,11 @@ static void graceful_shutdown(void) {
         char topic[128];
         snprintf(topic, sizeof(topic), "%s/status", g_topic_prefix);
         mosquitto_publish(g_mosq, NULL, topic, 7, "offline", 0, true);
-        mosquitto_loop_stop(g_mosq, true);
+        /* poweroff follows, so nothing will drive the loop again: push it out by
+         * hand. loop_stop() is not an option any more - with no loop thread it
+         * just returns MOSQ_ERR_INVAL and the publish would die in the queue */
+        mosquitto_disconnect(g_mosq);
+        mosquitto_loop_write(g_mosq, 1);
     }
 
     sync();
@@ -809,15 +813,24 @@ static void mqtt_publish_volume(int vol) {
     g_pending_vol_pub = -1;
 }
 
+static void mqtt_publish_mute(void) {
+    if (!g_mosq || !g_mqtt_enabled) return;
+    char topic[128];
+    snprintf(topic, sizeof(topic), "%s/player/mute", g_topic_prefix);
+    const char *p = g_is_muted ? "ON" : "OFF";
+    mosquitto_publish(g_mosq, NULL, topic, strlen(p), p, 0, true);
+}
+
+/* AXX+MUT is the same family as AXX+VOL, which only mirrors state in the MCU, and
+ * the TPA3116 mute pin is strapped - so the cut has to happen in softvol, where raw
+ * 0 is real digital silence. MUT still goes out so the MCU's bookkeeping matches.
+ * g_user_vol is left alone: that is what unmute ramps back to. */
 static void set_hardware_mute(int mute) {
     g_is_muted = mute ? 1 : 0;
-    if (g_is_muted) {
-        uart_send(CMD_MUTE);
-        LOG_INFO("Master Hardware MUTE engaged");
-    } else {
-        uart_send(CMD_UNMUTE);
-        LOG_INFO("Master Hardware MUTE disengaged");
-    }
+    alsa_ramp_master(g_is_muted ? 0 : g_user_vol);
+    uart_send(g_is_muted ? CMD_MUTE : CMD_UNMUTE);
+    mqtt_publish_mute();
+    LOG_INFO("Master mute %s", g_is_muted ? "engaged" : "released");
 }
 
 /* Stock keeps the volume in nvram; we had nothing, so every restart slammed the
@@ -871,6 +884,13 @@ static void set_user_volume(int vol) {
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
     g_user_vol = vol;
+    /* HA and the keys send a level, never an explicit unmute, so any level means
+     * unmute - otherwise the switch would read ON while sound came back out */
+    if (g_is_muted) {
+        g_is_muted = 0;
+        uart_send(CMD_UNMUTE);
+        mqtt_publish_mute();
+    }
     alsa_ramp_master(g_user_vol);
 
     /* Raw 0..100, exactly as stock sent it. The MCU only bookkeeps the number so
@@ -919,25 +939,48 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
     memcpy(payload, msg->payload, len);
     payload[len] = '\0';
 
-    char cmd_topic[128], vol_topic[128];
+    char cmd_topic[128], vol_topic[128], src_topic[128], mute_topic[128];
     snprintf(cmd_topic, sizeof(cmd_topic), "%s/player/command", g_topic_prefix);
     snprintf(vol_topic, sizeof(vol_topic), "%s/player/volume/set", g_topic_prefix);
+    snprintf(src_topic, sizeof(src_topic), "%s/player/source/set", g_topic_prefix);
+    snprintf(mute_topic, sizeof(mute_topic), "%s/player/mute/set", g_topic_prefix);
 
     if (strcmp(msg->topic, cmd_topic) == 0) {
         LOG_INFO("MQTT Command received: [%s]", payload);
         g_last_activity_time = time(NULL);
-        if (strcasecmp(payload, "PLAY") == 0 || strcasecmp(payload, "UNMUTE") == 0) {
-            uart_send(CMD_MODE_WIFI);
+        if (strcasecmp(payload, "UNMUTE") == 0) {
             set_hardware_mute(0);
-        } else if (strcasecmp(payload, "PAUSE") == 0 || strcasecmp(payload, "STOP") == 0 || strcasecmp(payload, "MUTE") == 0) {
+        } else if (strcasecmp(payload, "MUTE") == 0) {
             set_hardware_mute(1);
-        } else if (strcasecmp(payload, "TOGGLE") == 0) {
-            spawn_async("/usr/bin/player_control.sh toggle");
+        } else {
+            /* Transport goes through the one script that knows how to reach each
+             * player - librespot over its fifo, the others by ducking their own
+             * softvol. Muting Master instead would leave the sender running. */
+            const char *act = NULL;
+            if (strcasecmp(payload, "PLAY") == 0)        act = "play";
+            else if (strcasecmp(payload, "PAUSE") == 0)  act = "pause";
+            else if (strcasecmp(payload, "TOGGLE") == 0) act = "toggle";
+            else if (strcasecmp(payload, "NEXT") == 0)   act = "next";
+            else if (strcasecmp(payload, "PREV") == 0)   act = "prev";
+            else if (strcasecmp(payload, "STOP") == 0)   act = "stop";
+            if (!act) { LOG_WARN("MQTT unknown command [%s]", payload); return; }
+            char cmd[64];
+            snprintf(cmd, sizeof(cmd), "/usr/bin/player_control.sh %s", act);
+            spawn_async(cmd);
         }
     } else if (strcmp(msg->topic, vol_topic) == 0) {
         g_last_activity_time = time(NULL);
         int vol = atoi(payload);
         set_user_volume(vol);
+    } else if (strcmp(msg->topic, src_topic) == 0) {
+        g_last_activity_time = time(NULL);
+        if (strcasecmp(payload, "wifi") == 0)           set_audio_source(0);
+        else if (strcasecmp(payload, "bluetooth") == 0) set_audio_source(1);
+        else if (strcasecmp(payload, "aux") == 0)       set_audio_source(2);
+        else LOG_WARN("MQTT unknown source [%s]", payload);
+    } else if (strcmp(msg->topic, mute_topic) == 0) {
+        g_last_activity_time = time(NULL);
+        set_hardware_mute(strcasecmp(payload, "ON") == 0);
     }
 }
 
@@ -967,6 +1010,17 @@ static void mqtt_on_connect(struct mosquitto *mosq, void *userdata, int rc) {
     }
     LOG_INFO("MQTT connected to %s:%d", g_mqtt_host, g_mqtt_port);
     mqtt_send_discovery();
+}
+
+/* Which leg carries the default route, for HA. Both are up here (eth metric 700,
+ * wifi 600), so this is "where the audio actually goes", not "what is plugged in".
+ * -1 means the probe in main() has not run yet, and that is not the same as being
+ * offline: mqtt_setup() runs before it, and the first discovery burst used to
+ * announce a freshly booted, perfectly online speaker as uplink=offline. */
+static const char *uplink_name(void) {
+    if (g_net_state < 0) return "unknown";
+    if (g_net_state != 1) return "offline";
+    return g_eth ? "eth" : "wifi";
 }
 
 /* One device block for every entity, because HA merges them per identifier and
@@ -1018,16 +1072,25 @@ static void mqtt_send_discovery(void) {
     }
 
     {
+        /* Source used to be a read-only sensor. A select carries the same state and
+         * adds the way to change it, so HA can switch Wi-Fi / BT / AUX with nothing
+         * playing. The empty retained payload on the old sensor topic deletes that
+         * entity - leave it out and HA keeps a second, permanently stale copy. */
         char topic[256], payload[768];
         snprintf(topic, sizeof(topic), "homeassistant/sensor/audiopro_c3/source/config");
+        mosquitto_publish(g_mosq, NULL, topic, 0, "", 0, true);
+
+        snprintf(topic, sizeof(topic), "homeassistant/select/audiopro_c3/input/config");
         snprintf(payload, sizeof(payload),
-            "{\"name\":\"Source\","
-            "\"icon\":\"mdi:volume-source\","
+            "{\"name\":\"Input\","
+            "\"icon\":\"mdi:audio-input-stereo-minijack\","
             "\"state_topic\":\"%s/sensor/source\","
+            "\"command_topic\":\"%s/player/source/set\","
             "\"availability_topic\":\"%s/status\","
-            "\"unique_id\":\"audiopro_c3_source\","
+            "\"options\":[\"wifi\",\"bluetooth\",\"aux\"],"
+            "\"unique_id\":\"audiopro_c3_input\","
             HA_DEV "}",
-            g_topic_prefix, g_topic_prefix);
+            g_topic_prefix, g_topic_prefix, g_topic_prefix);
         mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
     }
 
@@ -1077,11 +1140,82 @@ static void mqtt_send_discovery(void) {
         mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
     }
 
-    char sub_cmd[128], sub_vol[128];
+    {
+        char topic[256], payload[768];
+        snprintf(topic, sizeof(topic), "homeassistant/sensor/audiopro_c3/uplink/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Uplink\","
+            "\"icon\":\"mdi:lan-connect\","
+            "\"state_topic\":\"%s/sensor/uplink\","
+            "\"availability_topic\":\"%s/status\","
+            "\"unique_id\":\"audiopro_c3_uplink\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+
+        snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/audiopro_c3/playing/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Playing\","
+            "\"icon\":\"mdi:music-note\","
+            "\"state_topic\":\"%s/sensor/playing\","
+            "\"payload_on\":\"true\",\"payload_off\":\"false\","
+            "\"availability_topic\":\"%s/status\","
+            "\"unique_id\":\"audiopro_c3_playing\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+    }
+
+    {
+        char topic[256], payload[768];
+        snprintf(topic, sizeof(topic), "homeassistant/switch/audiopro_c3/mute/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Mute\","
+            "\"icon\":\"mdi:volume-off\","
+            "\"state_topic\":\"%s/player/mute\","
+            "\"command_topic\":\"%s/player/mute/set\","
+            "\"availability_topic\":\"%s/status\","
+            "\"unique_id\":\"audiopro_c3_mute\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+    }
+
+    /* Transport as plain buttons: MQTT discovery has no media_player platform, and
+     * the Music Assistant entity disappears from the dashboard the moment MA is not
+     * the one playing. These reach the players directly and work either way. */
+    {
+        static const struct { const char *id, *name, *icon, *press; } btns[] = {
+            { "play_pause", "Play/pause",     "mdi:play-pause",    "TOGGLE" },
+            { "next",       "Next track",     "mdi:skip-next",     "NEXT"   },
+            { "previous",   "Previous track", "mdi:skip-previous", "PREV"   },
+        };
+        for (size_t i = 0; i < sizeof(btns) / sizeof(btns[0]); i++) {
+            char topic[256], payload[768];
+            snprintf(topic, sizeof(topic),
+                     "homeassistant/button/audiopro_c3/%s/config", btns[i].id);
+            snprintf(payload, sizeof(payload),
+                "{\"name\":\"%s\",\"icon\":\"%s\","
+                "\"command_topic\":\"%s/player/command\","
+                "\"payload_press\":\"%s\","
+                "\"availability_topic\":\"%s/status\","
+                "\"unique_id\":\"audiopro_c3_btn_%s\","
+                HA_DEV "}",
+                btns[i].name, btns[i].icon, g_topic_prefix, btns[i].press,
+                g_topic_prefix, btns[i].id);
+            mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+        }
+    }
+
+    char sub_cmd[128], sub_vol[128], sub_src[128], sub_mute[128];
     snprintf(sub_cmd, sizeof(sub_cmd), "%s/player/command", g_topic_prefix);
     snprintf(sub_vol, sizeof(sub_vol), "%s/player/volume/set", g_topic_prefix);
+    snprintf(sub_src, sizeof(sub_src), "%s/player/source/set", g_topic_prefix);
+    snprintf(sub_mute, sizeof(sub_mute), "%s/player/mute/set", g_topic_prefix);
     mosquitto_subscribe(g_mosq, NULL, sub_cmd, 0);
     mosquitto_subscribe(g_mosq, NULL, sub_vol, 0);
+    mosquitto_subscribe(g_mosq, NULL, sub_src, 0);
+    mosquitto_subscribe(g_mosq, NULL, sub_mute, 0);
 
     char status_topic[128];
     snprintf(status_topic, sizeof(status_topic), "%s/status", g_topic_prefix);
@@ -1097,6 +1231,9 @@ static void mqtt_send_discovery(void) {
     mqtt_send_sensor("charging", g_is_charging ? "true" : "false");
     mqtt_send_sensor("battery_alert", g_battery_pct <= 15 ? "low" : "normal");
     mqtt_send_sensor("source", get_source_name(g_current_source));
+    mqtt_send_sensor("playing", g_is_playing ? "true" : "false");
+    mqtt_send_sensor("uplink", uplink_name());
+    mqtt_publish_mute();
     mqtt_publish_volume(g_user_vol);
 
     LOG_INFO("MQTT Home Assistant discovery published, %s/player/# subscribed", g_topic_prefix);
@@ -1114,6 +1251,94 @@ static void mqtt_send_sensor(const char *sensor, const char *val) {
     char topic[128];
     snprintf(topic, sizeof(topic), "%s/sensor/%s", g_topic_prefix, sensor);
     mosquitto_publish(g_mosq, NULL, topic, strlen(val), val, 0, true);
+}
+
+/* libmosquitto's own loop_start() thread is unusable here. Its callbacks run on
+ * whichever thread drives the loop, and mqtt_on_message() reaches set_audio_source()
+ * -> ubus_notify_source() -> ubus_send_event(), which is synchronous: libubus parks in
+ * poll(ubus_fd, POLLIN|POLLERR, -1) until the reply arrives, and uloop on the main
+ * thread owns that fd and consumes it first. Measured 2026-08-25 with the first HA
+ * command ever sent: thread "mosquitto loop" stuck in exactly that poll, no PINGREQ
+ * after it, broker logged "exceeded timeout" 96 s later, and mcud still thought it was
+ * connected - socket in CLOSE_WAIT with 71 bytes unread and every command topic dead.
+ * Running the protocol from uloop keeps every callback on the thread that owns ubus,
+ * the mixer and the UART, which is also the only thread that may touch them. */
+static struct uloop_fd g_mqtt_ufd;
+static struct uloop_timeout g_mqtt_timer;
+static unsigned int g_mqtt_armed;   /* flags g_mqtt_ufd is currently in uloop with */
+static int g_mqtt_retry;            /* ticks to wait before the next connect attempt */
+static int g_mqtt_backoff = 2;      /* seconds, doubling to 60 as libmosquitto did */
+
+static void mqtt_unarm(void) {
+    if (g_mqtt_ufd.registered) uloop_fd_delete(&g_mqtt_ufd);
+    g_mqtt_armed = 0;
+}
+
+/* ULOOP_WRITE only while something is actually queued: the socket is writable
+ * almost always, so a permanent POLLOUT would spin uloop at 100% */
+static void mqtt_arm(void) {
+    int fd = mosquitto_socket(g_mosq);
+    unsigned int flags;
+    if (fd < 0) { mqtt_unarm(); return; }
+    flags = ULOOP_READ | (mosquitto_want_write(g_mosq) ? ULOOP_WRITE : 0);
+    if (g_mqtt_ufd.registered && g_mqtt_ufd.fd == fd && flags == g_mqtt_armed) return;
+    if (g_mqtt_ufd.registered && g_mqtt_ufd.fd != fd) mqtt_unarm();
+    g_mqtt_ufd.fd = fd;
+    g_mqtt_armed = flags;
+    uloop_fd_add(&g_mqtt_ufd, flags);
+}
+
+static void mqtt_fd_cb(struct uloop_fd *u, unsigned int events) {
+    int rc = MOSQ_ERR_SUCCESS;
+    (void)u;
+    /* write first: connect_async() hands back a socket still in the TCP handshake
+     * with CONNECT sitting in the out queue, and this is what flushes it */
+    if (events & ULOOP_WRITE) rc = mosquitto_loop_write(g_mosq, 1);
+    if (rc == MOSQ_ERR_SUCCESS && (events & ULOOP_READ)) rc = mosquitto_loop_read(g_mosq, 1);
+    if (rc != MOSQ_ERR_SUCCESS && rc != MOSQ_ERR_CONN_LOST)
+        LOG_WARN("MQTT loop: %s", mosquitto_strerror(rc));
+    /* both close the socket themselves on error and fire on_disconnect, so this
+     * either re-arms with fresh flags or takes the dead fd back out of uloop */
+    mqtt_arm();
+}
+
+static void mqtt_connect_start(void) {
+    /* 20 s keepalive, not the usual 60. When the eth cable is pulled mid-track the
+     * socket stays ESTABLISHED on a source address that no longer exists, and this
+     * timer is the only thing that ever notices: at 60 s it took 2m49s (measured
+     * 2026-08-25, 14:51:05 link down -> 14:53:54 rc=19), and Home Assistant showed
+     * a stale player all that time. A PINGREQ every 20 s costs nothing here.
+     * The players are re-dialled by hotplug.d/iface/40-rebind-players instead;
+     * restarting mcud would reload the volume onto Master and that is audible. */
+    int rc = mosquitto_connect_async(g_mosq, g_mqtt_host, g_mqtt_port, 20);
+    mqtt_unarm();
+    /* CONN_PENDING is the normal answer - the connect is still in flight */
+    if (rc != MOSQ_ERR_SUCCESS && rc != MOSQ_ERR_CONN_PENDING) {
+        LOG_WARN("MQTT connect to %s:%d failed (%s), retrying in %d s",
+                 g_mqtt_host, g_mqtt_port, mosquitto_strerror(rc), g_mqtt_backoff);
+        return;
+    }
+    mqtt_arm();
+}
+
+static void mqtt_timer_cb(struct uloop_timeout *t) {
+    int rc;
+    uloop_timeout_set(t, 1000);
+    if (!g_mosq) return;
+    if (mosquitto_socket(g_mosq) < 0) {
+        if (g_mqtt_retry-- > 0) return;
+        g_mqtt_retry = g_mqtt_backoff;
+        if (g_mqtt_backoff < 60) g_mqtt_backoff *= 2;
+        mqtt_connect_start();
+        return;
+    }
+    g_mqtt_backoff = 2;
+    /* keepalive lives here: loop_misc sends the PINGREQ and is what notices a
+     * broker that stopped answering one */
+    rc = mosquitto_loop_misc(g_mosq);
+    if (rc != MOSQ_ERR_SUCCESS && rc != MOSQ_ERR_NO_CONN)
+        LOG_WARN("MQTT keepalive: %s", mosquitto_strerror(rc));
+    mqtt_arm();
 }
 
 static int mqtt_setup(void) {
@@ -1141,21 +1366,12 @@ static int mqtt_setup(void) {
         snprintf(will_topic, sizeof(will_topic), "%s/status", g_topic_prefix);
         mosquitto_will_set(g_mosq, will_topic, 7, "offline", 0, true);
     }
-    /* without this libmosquitto retries once a second forever - pointless on a box
-     * where CPU is the scarce resource and the broker may simply not exist */
-    mosquitto_reconnect_delay_set(g_mosq, 2, 60, true);
-    /* 20 s keepalive, not the usual 60. When the eth cable is pulled mid-track the
-     * socket stays ESTABLISHED on a source address that no longer exists, and this
-     * timer is the only thing that ever notices: at 60 s it took 2m49s (measured
-     * 2026-08-25, 14:51:05 link down -> 14:53:54 rc=19), and Home Assistant showed
-     * a stale player all that time. A PINGREQ every 20 s costs nothing here.
-     * The players are re-dialled by hotplug.d/iface/40-rebind-players instead;
-     * restarting mcud would reload the volume onto Master and that is audible. */
-    int rc = mosquitto_connect_async(g_mosq, g_mqtt_host, g_mqtt_port, 20);
-    if (rc != MOSQ_ERR_SUCCESS)
-        LOG_WARN("MQTT initial connect to %s:%d failed (%s), retrying in background",
-                 g_mqtt_host, g_mqtt_port, mosquitto_strerror(rc));
-    mosquitto_loop_start(g_mosq);
+    /* reconnect_delay_set() is deliberately not called: it only steers
+     * loop_forever()'s own retry, and the backoff now lives in mqtt_timer_cb */
+    g_mqtt_ufd.cb = mqtt_fd_cb;
+    g_mqtt_timer.cb = mqtt_timer_cb;
+    uloop_timeout_set(&g_mqtt_timer, 1000);
+    mqtt_connect_start();
     return 0;
 }
 
@@ -1684,6 +1900,10 @@ static int mcud_ubus_set_network_state(struct ubus_context *ctx, struct ubus_obj
         mcu_report_state("ETH", g_eth);
     }
 
+    /* Which leg is actually carrying traffic, for HA. This unit's cable flaps, so
+     * knowing eth vs wifi from the outside is worth one retained string. */
+    mqtt_send_sensor("uplink", uplink_name());
+
     /* One-shot failure codes. Stock resets STA to 0 first, then reports the
      * reason, so the MCU shows a steady error instead of a stale "connecting". */
     if (err) {
@@ -1891,11 +2111,13 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
         if (!g_is_playing) {
             g_is_playing = 1;
             uart_send(CMD_PLAY_START);
+            mqtt_send_sensor("playing", "true");
         }
     } else {
         if (g_is_playing) {
             g_is_playing = 0;
             uart_send(CMD_PLAY_STOP);
+            mqtt_send_sensor("playing", "false");
         }
     }
 
@@ -2093,7 +2315,9 @@ int main(int argc, char *argv[]) {
     free(g_mixer_ufds);
     if (g_mixer) snd_mixer_close(g_mixer);
     if (g_mosq) {
-        mosquitto_loop_stop(g_mosq, true);
+        mqtt_unarm();
+        mosquitto_disconnect(g_mosq);
+        mosquitto_loop_write(g_mosq, 1);
         mosquitto_destroy(g_mosq);
         mosquitto_lib_cleanup();
     }
