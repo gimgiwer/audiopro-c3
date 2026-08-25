@@ -131,7 +131,11 @@ start_instance() {
 	procd_append_param command -c "$conf_file"
 
 	config_get_bool aux "$cfg" 'respawn' '0'
-	[ "$aux" = 1 ] && procd_set_param respawn
+	# A bare procd_set_param respawn means retry 5, and procd then gives up for
+	# good - which is what happened on the first boot after a flash: avahi was
+	# missing, shairport exited 1 six times and AirPlay stayed dead until a
+	# reboot. Never give up instead, same as librespot, mcud and squeezelite.
+	[ "$aux" = 1 ] && procd_set_param respawn 3600 5 0
 
 	# renice does not exist in this busybox, so procd is the only place a
 	# priority can be set at all - see the dilation table in the librespot init

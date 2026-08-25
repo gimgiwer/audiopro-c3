@@ -1,0 +1,51 @@
+#!/bin/sh
+# Re-dial the players whose TCP sessions died with a link.
+#
+# eth0 and the wifi station get two different DHCP leases (10.0.100.4 and
+# 10.0.100.3 here), so when the cable is pulled netifd moves the default route to
+# wifi in about a second - but every socket already established is pinned to the
+# eth source address, and TCP cannot change it. The kernel leaves those sockets
+# ESTABLISHED forever and nothing above notices:
+#
+#   measured 2026-08-25, cable pulled mid-track: squeezelite's slimproto control
+#   socket did reconnect on wifi, but its audio stream socket stayed as
+#   10.0.100.4:35720 -> 10.0.1.6:8097 ESTABLISHED with the address gone from the
+#   box. squeezelite reads the stream with no timeout, so the music simply stopped
+#   and Music Assistant kept thinking it was playing.
+#
+# The test below is deliberately narrow: restart a player only if it holds an
+# ESTABLISHED socket whose local address is no longer configured anywhere. A cable
+# that comes back does not invalidate the wifi sockets the player re-dialled in the
+# meantime, so a flapping cable (16 events in 2h45m on this unit) bounces nothing.
+#
+# mcud is not in the list on purpose. It would recover the same way, but a restart
+# reloads /etc/mcud.volume onto Master and that is audible mid-track; its MQTT
+# keepalive was lowered instead so it notices on its own.
+
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifdown ] || exit 0
+
+case "$INTERFACE" in
+	lan|lan6|wan|wan6|wwan|wwan6) ;;
+	*) exit 0 ;;
+esac
+
+# netifd fires the event around the address change, not after it
+sleep 2
+
+live=$(ip -4 addr 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | tr '\n' ' ')
+# no addresses at all means the box is mid-reconfigure, not that every socket is
+# stale - do nothing rather than restart everything
+[ -n "${live#127.0.0.1 }" ] || exit 0
+
+for svc in squeezelite librespot shairport-sync; do
+	stale=$(netstat -tnp 2>/dev/null | awk -v svc="$svc" -v live=" $live" '
+		/ESTABLISHED/ && $NF ~ "/" svc "$" {
+			split($4, a, ":")
+			if (index(live, " " a[1] " ") == 0) { print a[1]; exit }
+		}')
+	[ -n "$stale" ] || continue
+	logger -t rebind-players "$svc still bound to $stale which is gone - restarting"
+	/etc/init.d/"$svc" restart
+done
+
+exit 0

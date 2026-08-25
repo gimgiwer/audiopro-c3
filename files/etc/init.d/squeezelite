@@ -136,6 +136,14 @@ start_service() {
 	# wedges dmix for everyone until the speaker is power-cycled. Give it room:
 	# a slow exit costs seconds, a killed one costs the whole card.
 	procd_set_param term_timeout 15
+	# Without this a single failed start left the service down until the next
+	# reboot - measured on both first boots after a flash, where squeezelite came
+	# up exit_code 1 while everything else was fine. Same values as librespot and
+	# mcud: count crashes over an hour, wait 5 s, never give up.
+	procd_set_param respawn 3600 5 0
+	# So the exit reason lands in syslog instead of nowhere. squeezelite is quiet
+	# unless it is failing.
+	procd_set_param stderr 1
 	procd_close_instance
 }
 

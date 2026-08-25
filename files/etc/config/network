@@ -5,10 +5,18 @@ config interface 'loopback'
 	option netmask '255.0.0.0'
 
 # Ethernet: Client mode (automatic DHCP from home router)
+# Metric 700, so the cable is NOT the default route - the wifi station is, even
+# when both are up. The two links get two different leases (10.0.100.4 vs
+# 10.0.100.3) and TCP cannot move a session between source addresses, so whichever
+# link the players dial out over, losing it costs a reconnect. Pulling the cable
+# mid-track used to kill playback for minutes; with the audio path permanently on
+# wifi, unplugging it now changes nothing at all. It also sidesteps this unit's
+# flapping cable (16 link events in 2h45m). eth stays fully up and addressed - it
+# is the maintenance and breed-recovery path, and it still answers on its own IP.
 config interface 'lan'
 	option device 'eth0'
 	option proto 'dhcp'
-	option metric '100'
+	option metric '700'
 
 # Wi-Fi AP Hotspot: Standalone setup mode (dedicated 10.10.10.254/24 subnet with DHCP server)
 config interface 'ap'
@@ -29,7 +37,7 @@ config interface 'lan6'
 	option proto 'dhcpv6'
 	option reqaddress 'try'
 	option reqprefix 'no'
-	option metric '100'
+	option metric '700'
 
 config interface 'wwan6'
 	option device '@wwan'

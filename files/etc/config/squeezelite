@@ -9,17 +9,18 @@ config options 'options'
 	option device 'squeeze_in'
 	# -O/-V hand volume to an alsa control instead of squeezelite's own software
 	# gain, which keeps our dithered and ramped softvol in charge of the multiply.
-	# It has to be the per-source control, NOT Master: squeezelite pushes the
+	# It has to be a per-source control, NOT Master: squeezelite pushes the
 	# server's cached level onto the control every time it (re)connects, and with
 	# Master that fought the physical keys - press DOWN and the level climbs back
 	# on its own, 4 points at a time. One owner per control, so Master belongs to
-	# the panel/HA and Squeeze belongs to the server. Two gains in series is fine,
-	# that is just a channel fader under a master fader.
+	# the panel/HA, Squeeze to ha_ducking and Slimproto to the server. See the
+	# two-stage squeeze_in chain in asound.conf for why this is not "Squeeze".
 	# A control that does not exist yet is not fatal either - squeezelite logs
 	# "Initialization of mixer failed, reverting to software volume" and runs, and
-	# softvol controls only appear once their pcm has been opened.
+	# softvol controls only appear once their pcm has been opened. mcud opens the
+	# chain at startup so both exist before this service starts.
 	option mixer_device 'default'
-	option volume_control 'Squeeze'
+	option volume_control 'Slimproto'
 	# 44.1k only - the i2s block is clocked for it and dmix runs at that rate
 	option max_sr '44100'
 	# hold the device open, reopening dmix mid-queue clicks

@@ -710,7 +710,12 @@ static void check_duck_controls(void) {
 }
 
 /* softvol controls are created when the PCM is first opened and don't survive a
- * reboot, so open "master" once just to make the control exist. */
+ * reboot, so open "master" once just to make the control exist. squeeze_in gets
+ * the same treatment because squeezelite reads its -V control before it opens the
+ * pcm: without this it finds no "Slimproto", falls back to its own software gain
+ * and Music Assistant's slider stops touching our dithered softvol. Opening
+ * squeeze_in creates Squeeze and Slimproto both, and it slaves to master so one
+ * open would have been enough - keep both, the second is free. */
 static void alsa_probe_master_pcm(void) {    snd_pcm_t *pcm = NULL;
     int err = snd_pcm_open(&pcm, "master", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
     if (err < 0) {
@@ -718,6 +723,11 @@ static void alsa_probe_master_pcm(void) {    snd_pcm_t *pcm = NULL;
         return;
     }
     snd_pcm_close(pcm);
+
+    if (snd_pcm_open(&pcm, "squeeze_in", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) < 0)
+        LOG_WARN("Cannot open ALSA 'squeeze_in' - the Slimproto fader will be missing");
+    else
+        snd_pcm_close(pcm);
 }
 
 static void alsa_init(void) {
@@ -1134,7 +1144,14 @@ static int mqtt_setup(void) {
     /* without this libmosquitto retries once a second forever - pointless on a box
      * where CPU is the scarce resource and the broker may simply not exist */
     mosquitto_reconnect_delay_set(g_mosq, 2, 60, true);
-    int rc = mosquitto_connect_async(g_mosq, g_mqtt_host, g_mqtt_port, 60);
+    /* 20 s keepalive, not the usual 60. When the eth cable is pulled mid-track the
+     * socket stays ESTABLISHED on a source address that no longer exists, and this
+     * timer is the only thing that ever notices: at 60 s it took 2m49s (measured
+     * 2026-08-25, 14:51:05 link down -> 14:53:54 rc=19), and Home Assistant showed
+     * a stale player all that time. A PINGREQ every 20 s costs nothing here.
+     * The players are re-dialled by hotplug.d/iface/40-rebind-players instead;
+     * restarting mcud would reload the volume onto Master and that is audible. */
+    int rc = mosquitto_connect_async(g_mosq, g_mqtt_host, g_mqtt_port, 20);
     if (rc != MOSQ_ERR_SUCCESS)
         LOG_WARN("MQTT initial connect to %s:%d failed (%s), retrying in background",
                  g_mqtt_host, g_mqtt_port, mosquitto_strerror(rc));
