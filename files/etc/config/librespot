@@ -20,8 +20,10 @@ config librespot 'main'
 	# asound.conf silently skews this curve.
 	option volume_ctrl 'linear'
 	# Name it, don't leave it out: 0.8.0 has no "keep current volume" default, it
-	# falls back to u16::MAX/2 and writes 50% to Master on every connect.
-	option initial_volume '25'
+	# falls back to u16::MAX/2 and writes 50% to whatever control it owns on every
+	# connect. 100 = raw max = a plain memcpy, so Spotify's own slider is the only
+	# thing that ever attenuates this stage - same deal as Slimproto for MA.
+	option initial_volume '100'
 	option device_type 'speaker'
 	option disable_audio_cache '1'
 	# Credentials on flash, so a tap in Spotify is a transfer to an already
@@ -29,7 +31,17 @@ config librespot 'main'
 	option system_cache '/root/.cache/librespot'
 	option mixer 'alsa'
 	option mixer_device 'default'
-	option mixer_control 'Master'
+	# Its own softvol stage, NOT Master. librespot re-asserts the volume it thinks
+	# it has every time the Spotify session reconnects (spirc restart after a
+	# dropped dealer websocket, which this wifi does a few times an hour) and it
+	# never reads the control back, so on Master it randomly yanked the speaker to
+	# whatever it last knew - measured live: 25% -> 100% at 17:08:58 on a bare
+	# reconnect. Master now belongs to mcud alone (front panel keys, HA, MQTT) and
+	# Spotify's slider trims only the Spotify path, exactly like MA's fader does.
+	# Note the stage spans -51..0 dB while linear hardcodes 60 dB, so the bottom of
+	# the phone's slider lands on -51 dB instead of -60. Nobody can hear that, and
+	# -51/255 is the one span that survives the TLV step rounding intact.
+	option mixer_control 'Spotify'
 	# f64->S16 dither costs a multiply, an add and an RNG draw per sample on a
 	# CPU with no FPU, and buys nothing while the ALSA mixer does the attenuation
 	option dither 'none'

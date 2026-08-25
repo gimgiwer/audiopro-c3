@@ -8,7 +8,7 @@ PROG=/usr/bin/librespot
 
 start_service() {
     local enabled name device bitrate volume vol_ctrl dev_type disable_cache
-    local mixer mixer_dev mixer_ctl dither format syscache saved_vol
+    local mixer mixer_dev mixer_ctl dither format syscache
     local normalise norm_method norm_type norm_pregain
     local fifo=/tmp/librespot_cmd
 
@@ -40,17 +40,11 @@ start_service() {
 
     # 0.8.0 does NOT fall back to "the current volume" with --mixer alsa: main.rs
     # ends with unwrap_or(ConnectConfig::default()), i.e. u16::MAX/2, and Spirc::new
-    # writes it to Master. Leaving this empty means every start (and every zeroconf
-    # handover) silently jumps the speaker to 50%. Name the number we want instead.
-    #
-    # Prefer the level mcud persisted over the one in uci: both are the same
-    # perceptual percentage (mcud's vol_curve is generated from librespot's linear
-    # law - Master raw 799 is 25% on both, -12 dB), so a librespot restart puts
-    # the speaker back where the user left it instead of yanking it to a number
-    # that was frozen at flash time.
-    [ -r /etc/mcud.volume ] && read -r saved_vol < /etc/mcud.volume
-    case "$saved_vol" in ''|*[!0-9]*) saved_vol="" ;; esac
-    [ -n "$saved_vol" ] && [ "$saved_vol" -ge 1 ] && [ "$saved_vol" -le 100 ] && volume="$saved_vol"
+    # writes it to the control it owns. Leaving this empty means every start (and
+    # every zeroconf handover) silently drops the Spotify stage to 50%, i.e. -25 dB
+    # under everything else. uci names 100 instead, so the stage is transparent
+    # until the phone's slider moves it. Master is mcud's, not librespot's - see
+    # mixer_control in /etc/config/librespot.
     [ -n "$volume" ] && args="$args --initial-volume $volume"
     [ "$disable_cache" -eq 1 ] && args="$args --disable-audio-cache"
 
@@ -80,8 +74,9 @@ start_service() {
         args="$args --system-cache $syscache"
     fi
 
-    # Drive the shared Master softvol instead of librespot's own attenuation,
-    # otherwise the Spotify slider and the panel buttons fight each other.
+    # Attenuate in the softvol stage named by uci, not in librespot's own float
+    # multiply: the stage dithers the 16-bit product and sits in the same chain
+    # everything else uses.
     args="$args --mixer $mixer"
     [ "$mixer" = "alsa" ] && args="$args --alsa-mixer-device $mixer_dev --alsa-mixer-control \"$mixer_ctl\""
 

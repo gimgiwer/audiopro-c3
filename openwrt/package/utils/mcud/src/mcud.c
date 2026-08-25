@@ -128,6 +128,13 @@ static time_t g_last_vol_pub_sec = 0;
 static int    g_pending_vol_pub = -1;
 static int    g_last_bat = 100;
 
+/* squeezelite's volume_control, i.e. the fader Music Assistant drives. It sits
+ * before Master in the squeeze_in chain, so the two multiply. */
+#define MA_VOL_CTL "Slimproto"
+static int  g_ma_vol = -1;            /* last seen MA fader level, -1 = never read */
+static time_t g_sleep_deadline = 0;   /* MQTT sleep timer, 0 = disarmed */
+static int  g_sleep_left_pub = -1;    /* last minutes-left value published */
+
 #define LOG_ERROR(fmt, ...) do { if (g_log_level >= LOG_LEVEL_ERROR) fprintf(stderr, "[mcud ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
 #define LOG_WARN(fmt, ...)  do { if (g_log_level >= LOG_LEVEL_WARN)  fprintf(stderr, "[mcud WARN] " fmt "\n", ##__VA_ARGS__); } while(0)
 #define LOG_INFO(fmt, ...)  do { if (g_log_level >= LOG_LEVEL_INFO)  fprintf(stdout, "[mcud INFO] " fmt "\n", ##__VA_ARGS__); } while(0)
@@ -138,6 +145,8 @@ static void graceful_shutdown(void);
 static void set_audio_source(int source);
 static void set_user_volume(int vol);
 static void mqtt_publish_volume(int vol);
+static void mqtt_publish_ma_volume(int vol);
+static void mqtt_publish_sleep(int minutes);
 static void adjust_user_volume(int delta);
 static void set_hardware_mute(int mute);
 static const char *get_source_name(int source);
@@ -632,6 +641,37 @@ static int alsa_get_master(void) {
     return vol_raw_to_pct(v, min, max);
 }
 
+/* Any softvol by name. The per-app stages span -51..0 dB over their raw range
+ * and raw is dB-linear, so plain percent-of-range is exactly the number Music
+ * Assistant shows on its slider - vol_curve is Master's law and only Master's. */
+static snd_mixer_elem_t *alsa_find_elem(const char *name) {
+    snd_mixer_selem_id_t *sid;
+    if (!g_mixer) return NULL;
+    snd_mixer_selem_id_alloca(&sid);
+    snd_mixer_selem_id_set_name(sid, name);
+    return snd_mixer_find_selem(g_mixer, sid);
+}
+
+static int alsa_get_pct(const char *name) {
+    snd_mixer_elem_t *e = alsa_find_elem(name);
+    long min = 0, max = 0, v = 0;
+    if (!e) return -1;
+    if (snd_mixer_selem_get_playback_volume_range(e, &min, &max) < 0) return -1;
+    if (snd_mixer_selem_get_playback_volume(e, SND_MIXER_SCHN_FRONT_LEFT, &v) < 0) return -1;
+    if (max <= min) return -1;
+    return (int)(((v - min) * 100 + (max - min) / 2) / (max - min));
+}
+
+static int alsa_set_pct(const char *name, int pct) {
+    snd_mixer_elem_t *e = alsa_find_elem(name);
+    long min = 0, max = 0;
+    if (!e) return -1;
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    if (snd_mixer_selem_get_playback_volume_range(e, &min, &max) < 0) return -1;
+    return snd_mixer_selem_set_playback_volume_all(e, min + (max - min) * pct / 100);
+}
+
 /* Someone else moved the control - librespot's alsa mixer, amixer, ha_ducking.
  * Follow it so the MCU and MQTT stay in sync. Our own writes land here too, but
  * the value already matches g_user_vol by then so they stop right here. */
@@ -640,20 +680,38 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
     (void)events;
     if (!g_mixer) return;
     snd_mixer_handle_events(g_mixer);
-    if (g_ramp_target >= 0) return;   /* mid-ramp, this is our own write */
 
-    int vol = alsa_get_master();
-    if (vol < 0 || vol == g_user_vol) return;
+    if (g_ramp_target < 0) {          /* mid-ramp events are our own writes */
+        int vol = alsa_get_master();
+        if (vol >= 0 && vol != g_user_vol) {
+            g_user_vol = vol;
+            mcu_report_state("VOL", g_user_vol);
+            mqtt_publish_volume(g_user_vol);
+            vol_touch();
+            LOG_INFO("Master volume changed externally: %d%%", g_user_vol);
+        }
+    }
 
-    g_user_vol = vol;
-    mcu_report_state("VOL", g_user_vol);
-    mqtt_publish_volume(g_user_vol);
-    vol_touch();
-    LOG_INFO("Master volume changed externally: %d%%", g_user_vol);
+    /* Music Assistant lands here: squeezelite converts the server's gain to dB
+     * and writes this control on every volume change and every reconnect, and it
+     * never reads it back - mirroring it out is the only way HA gets to see the
+     * level MA is really using. Master * this is the real output level, which is
+     * why two faders at 25% and 37% sound like -44 dB and neither UI admits it. */
+    {
+        int ma = alsa_get_pct(MA_VOL_CTL);
+        if (ma >= 0 && ma != g_ma_vol) {
+            g_ma_vol = ma;
+            mqtt_publish_ma_volume(ma);
+            LOG_INFO("Music Assistant level changed externally: %d%%", ma);
+        }
+    }
 }
 
-/* Per-app softvol stages - they exist only for ha_ducking to pull down. */
-static const char *k_duck_controls[] = {"Spotify", "AirPlay", "Music", "TTS", "VoIP", "Alarm", "Timer", "Squeeze", NULL};
+/* Per-app softvol stages - they exist only for ha_ducking to pull down. Spotify
+ * is not in here on purpose: librespot owns that control now and would fight
+ * both the park-at-max on startup and the abandoned-duck sweep below. VoIP went
+ * with voip_in when it was cut from asound.conf. */
+static const char *k_duck_controls[] = {"AirPlay", "Music", "TTS", "Alarm", "Timer", "Squeeze", NULL};
 
 /* ha_ducking.sh holds an flock on this file for its whole run, so the lock
  * frees itself no matter how the script dies. A control sitting below max
@@ -730,6 +788,14 @@ static void alsa_probe_master_pcm(void) {    snd_pcm_t *pcm = NULL;
 
     if (snd_pcm_open(&pcm, "squeeze_in", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) < 0)
         LOG_WARN("Cannot open ALSA 'squeeze_in' - the Slimproto fader will be missing");
+    else
+        snd_pcm_close(pcm);
+
+    /* librespot owns the Spotify stage and opens its mixer control before it ever
+     * opens a pcm, so without this it starts before the control exists, errors out
+     * and procd respawns it forever. We start at 15, it starts at 90. */
+    if (snd_pcm_open(&pcm, "spotify_in", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) < 0)
+        LOG_WARN("Cannot open ALSA 'spotify_in' - librespot will not find its mixer control");
     else
         snd_pcm_close(pcm);
 }
@@ -819,6 +885,39 @@ static void mqtt_publish_mute(void) {
     snprintf(topic, sizeof(topic), "%s/player/mute", g_topic_prefix);
     const char *p = g_is_muted ? "ON" : "OFF";
     mosquitto_publish(g_mosq, NULL, topic, strlen(p), p, 0, true);
+}
+
+static void mqtt_publish_ma_volume(int vol) {
+    if (!g_mosq || !g_mqtt_enabled) return;
+    char topic[128], payload[16];
+    snprintf(topic, sizeof(topic), "%s/player/ma_volume", g_topic_prefix);
+    snprintf(payload, sizeof(payload), "%d", vol);
+    mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+}
+
+static void mqtt_publish_sleep(int minutes) {
+    if (!g_mosq || !g_mqtt_enabled) return;
+    char topic[128], payload[16];
+    snprintf(topic, sizeof(topic), "%s/player/sleep", g_topic_prefix);
+    snprintf(payload, sizeof(payload), "%d", minutes);
+    mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+    g_sleep_left_pub = minutes;
+}
+
+/* MQTT sleep timer: an absolute deadline, unlike -s which watches for silence.
+ * Deliberately not gated on charging - "power off in 30 min" has to work while
+ * the speaker is plugged in and playing, which is exactly when it is asked for. */
+static void sleep_timer_arm(int minutes) {
+    if (minutes <= 0) {
+        g_sleep_deadline = 0;
+        mqtt_publish_sleep(0);
+        LOG_INFO("Sleep timer cancelled");
+        return;
+    }
+    if (minutes > 240) minutes = 240;
+    g_sleep_deadline = time(NULL) + (time_t)minutes * 60;
+    mqtt_publish_sleep(minutes);
+    LOG_INFO("Sleep timer armed: %d min", minutes);
 }
 
 /* AXX+MUT is the same family as AXX+VOL, which only mirrors state in the MCU, and
@@ -940,10 +1039,13 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
     payload[len] = '\0';
 
     char cmd_topic[128], vol_topic[128], src_topic[128], mute_topic[128];
+    char ma_topic[128], sleep_topic[128];
     snprintf(cmd_topic, sizeof(cmd_topic), "%s/player/command", g_topic_prefix);
     snprintf(vol_topic, sizeof(vol_topic), "%s/player/volume/set", g_topic_prefix);
     snprintf(src_topic, sizeof(src_topic), "%s/player/source/set", g_topic_prefix);
     snprintf(mute_topic, sizeof(mute_topic), "%s/player/mute/set", g_topic_prefix);
+    snprintf(ma_topic, sizeof(ma_topic), "%s/player/ma_volume/set", g_topic_prefix);
+    snprintf(sleep_topic, sizeof(sleep_topic), "%s/player/sleep/set", g_topic_prefix);
 
     if (strcmp(msg->topic, cmd_topic) == 0) {
         LOG_INFO("MQTT Command received: [%s]", payload);
@@ -952,6 +1054,18 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             set_hardware_mute(0);
         } else if (strcasecmp(payload, "MUTE") == 0) {
             set_hardware_mute(1);
+        } else if (strcasecmp(payload, "VOLUP") == 0) {
+            adjust_user_volume(1);
+        } else if (strcasecmp(payload, "VOLDOWN") == 0) {
+            adjust_user_volume(-1);
+        } else if (strcasecmp(payload, "REBOOT") == 0) {
+            /* async: procd stops us as part of the reboot, and blocking here
+             * would hold the loop while the broker waits for our PUBACK */
+            spawn_async("/sbin/reboot");
+        } else if (strcasecmp(payload, "POWEROFF") == 0) {
+            LOG_INFO("Power off requested over MQTT");
+            uloop_end();
+            graceful_shutdown();
         } else {
             /* Transport goes through the one script that knows how to reach each
              * player - librespot over its fifo, the others by ducking their own
@@ -981,6 +1095,17 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
     } else if (strcmp(msg->topic, mute_topic) == 0) {
         g_last_activity_time = time(NULL);
         set_hardware_mute(strcasecmp(payload, "ON") == 0);
+    } else if (strcmp(msg->topic, ma_topic) == 0) {
+        int v = atoi(payload);
+        g_last_activity_time = time(NULL);
+        if (alsa_set_pct(MA_VOL_CTL, v) < 0) {
+            LOG_WARN("No %s control - is squeezelite running?", MA_VOL_CTL);
+            return;
+        }
+        /* the mixer event this write raises publishes the state, so no echo here */
+        LOG_INFO("Music Assistant level set to %d%% over MQTT", v);
+    } else if (strcmp(msg->topic, sleep_topic) == 0) {
+        sleep_timer_arm(atoi(payload));
     }
 }
 
@@ -1186,9 +1311,13 @@ static void mqtt_send_discovery(void) {
      * the one playing. These reach the players directly and work either way. */
     {
         static const struct { const char *id, *name, *icon, *press; } btns[] = {
-            { "play_pause", "Play/pause",     "mdi:play-pause",    "TOGGLE" },
-            { "next",       "Next track",     "mdi:skip-next",     "NEXT"   },
-            { "previous",   "Previous track", "mdi:skip-previous", "PREV"   },
+            { "play_pause", "Play/pause",     "mdi:play-pause",    "TOGGLE"  },
+            { "next",       "Next track",     "mdi:skip-next",     "NEXT"    },
+            { "previous",   "Previous track", "mdi:skip-previous", "PREV"    },
+            /* one press = VOL_STEP_DB, the same step the panel keys take, so a
+             * HA button and the physical key move the level by the same amount */
+            { "volume_up",  "Volume up",      "mdi:volume-plus",   "VOLUP"   },
+            { "volume_down","Volume down",    "mdi:volume-minus",  "VOLDOWN" },
         };
         for (size_t i = 0; i < sizeof(btns) / sizeof(btns[0]); i++) {
             char topic[256], payload[768];
@@ -1207,15 +1336,84 @@ static void mqtt_send_discovery(void) {
         }
     }
 
+    /* Power controls. Restart comes back on its own; the off button does not -
+     * the MCU cuts the amp rail and only the front panel key wakes it again,
+     * which is exactly what the stock speaker does. */
+    {
+        char topic[256], payload[768];
+        snprintf(topic, sizeof(topic), "homeassistant/button/audiopro_c3/restart/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Restart\",\"device_class\":\"restart\","
+            "\"entity_category\":\"config\","
+            "\"command_topic\":\"%s/player/command\","
+            "\"payload_press\":\"REBOOT\","
+            "\"availability_topic\":\"%s/status\","
+            "\"unique_id\":\"audiopro_c3_restart\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+
+        snprintf(topic, sizeof(topic), "homeassistant/button/audiopro_c3/power_off/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Power off\",\"icon\":\"mdi:power\","
+            "\"entity_category\":\"config\","
+            "\"command_topic\":\"%s/player/command\","
+            "\"payload_press\":\"POWEROFF\","
+            "\"availability_topic\":\"%s/status\","
+            "\"unique_id\":\"audiopro_c3_power_off\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+    }
+
+    /* The fader Music Assistant drives. It is a second attenuator in series with
+     * Volume, so a low value here is the "MA sounds quieter than Spotify" bug -
+     * park it at 100% and let Volume be the only level in the house. */
+    {
+        char topic[256], payload[768];
+        snprintf(topic, sizeof(topic), "homeassistant/number/audiopro_c3/ma_volume/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Music Assistant level\","
+            "\"icon\":\"mdi:tune-variant\","
+            "\"entity_category\":\"config\","
+            "\"state_topic\":\"%s/player/ma_volume\","
+            "\"command_topic\":\"%s/player/ma_volume/set\","
+            "\"availability_topic\":\"%s/status\","
+            "\"min\":0,\"max\":100,\"step\":1,\"unit_of_measurement\":\"%%\","
+            "\"unique_id\":\"audiopro_c3_ma_volume\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+
+        snprintf(topic, sizeof(topic), "homeassistant/number/audiopro_c3/sleep/config");
+        snprintf(payload, sizeof(payload),
+            "{\"name\":\"Sleep timer\","
+            "\"icon\":\"mdi:timer-outline\","
+            "\"state_topic\":\"%s/player/sleep\","
+            "\"command_topic\":\"%s/player/sleep/set\","
+            "\"availability_topic\":\"%s/status\","
+            "\"min\":0,\"max\":240,\"step\":5,\"unit_of_measurement\":\"min\","
+            "\"mode\":\"box\","
+            "\"unique_id\":\"audiopro_c3_sleep\","
+            HA_DEV "}",
+            g_topic_prefix, g_topic_prefix, g_topic_prefix);
+        mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
+    }
+
     char sub_cmd[128], sub_vol[128], sub_src[128], sub_mute[128];
+    char sub_ma[128], sub_sleep[128];
     snprintf(sub_cmd, sizeof(sub_cmd), "%s/player/command", g_topic_prefix);
     snprintf(sub_vol, sizeof(sub_vol), "%s/player/volume/set", g_topic_prefix);
     snprintf(sub_src, sizeof(sub_src), "%s/player/source/set", g_topic_prefix);
     snprintf(sub_mute, sizeof(sub_mute), "%s/player/mute/set", g_topic_prefix);
+    snprintf(sub_ma, sizeof(sub_ma), "%s/player/ma_volume/set", g_topic_prefix);
+    snprintf(sub_sleep, sizeof(sub_sleep), "%s/player/sleep/set", g_topic_prefix);
     mosquitto_subscribe(g_mosq, NULL, sub_cmd, 0);
     mosquitto_subscribe(g_mosq, NULL, sub_vol, 0);
     mosquitto_subscribe(g_mosq, NULL, sub_src, 0);
     mosquitto_subscribe(g_mosq, NULL, sub_mute, 0);
+    mosquitto_subscribe(g_mosq, NULL, sub_ma, 0);
+    mosquitto_subscribe(g_mosq, NULL, sub_sleep, 0);
 
     char status_topic[128];
     snprintf(status_topic, sizeof(status_topic), "%s/status", g_topic_prefix);
@@ -1235,6 +1433,15 @@ static void mqtt_send_discovery(void) {
     mqtt_send_sensor("uplink", uplink_name());
     mqtt_publish_mute();
     mqtt_publish_volume(g_user_vol);
+    {
+        int ma = alsa_get_pct(MA_VOL_CTL);
+        if (ma >= 0) {
+            g_ma_vol = ma;
+            mqtt_publish_ma_volume(ma);
+        }
+    }
+    mqtt_publish_sleep(g_sleep_deadline
+                       ? (int)((g_sleep_deadline - time(NULL) + 59) / 60) : 0);
 
     LOG_INFO("MQTT Home Assistant discovery published, %s/player/# subscribed", g_topic_prefix);
 }
@@ -2127,6 +2334,21 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
     /* Pending rate-limited volume MQTT flush */
     if (g_pending_vol_pub >= 0 && (now - g_last_vol_pub_sec) >= 1) {
         mqtt_publish_volume(g_pending_vol_pub);
+    }
+
+    /* MQTT sleep timer. Counts down in HA so the number entity shows what is
+     * left, and fires whatever is playing - see sleep_timer_arm(). */
+    if (g_sleep_deadline) {
+        int left = (int)((g_sleep_deadline - now + 59) / 60);
+        if (left <= 0) {
+            LOG_INFO("Sleep timer expired, powering off");
+            g_sleep_deadline = 0;
+            mqtt_publish_sleep(0);
+            uloop_end();
+            graceful_shutdown();
+            return;
+        }
+        if (left != g_sleep_left_pub) mqtt_publish_sleep(left);
     }
 
     /* Auto-sleep check: strictly disabled when charging or always-on */
