@@ -5,6 +5,14 @@
 PID_FILE="/tmp/alarm.pid"
 STATE_FILE="/tmp/alarm_state.json"
 CRON_FILE="/etc/crontabs/root"
+PREV_VOL_FILE="/tmp/alarm_prev_vol"
+
+wake_hardware() {
+    if [ -p /tmp/mcu_cmd_fifo ]; then
+        printf "AXX+POW+000\n" > /tmp/mcu_cmd_fifo 2>/dev/null || true
+        printf "AXX+MUT+000\n" > /tmp/mcu_cmd_fifo 2>/dev/null || true
+    fi
+}
 
 duck_down_hard() {
     # Completely suppress or heavily mute background music streams
@@ -72,6 +80,13 @@ do_stop() {
     local extra_pids=$(pgrep -f "mpg123.*alarm_in|aplay.*alarm_in" 2>/dev/null)
     [ -n "$extra_pids" ] && kill_audio $extra_pids
     duck_restore
+    if [ -s "$PREV_VOL_FILE" ] && [ -p /tmp/mcu_cmd_fifo ]; then
+        local prev_v=$(cat "$PREV_VOL_FILE" 2>/dev/null)
+        if [ -n "$prev_v" ]; then
+            printf "AXX+VOL+%03d\n" "$prev_v" > /tmp/mcu_cmd_fifo 2>/dev/null || true
+        fi
+    fi
+    rm -f "$PREV_VOL_FILE"
     /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
     printf '{"status":"idle","ringing":false}\n' > "$STATE_FILE"
     mqtt_pub "alarm/status" "idle"
@@ -105,6 +120,10 @@ do_start() {
     local stream_url=$(uci -q get mcud.alarm.stream_url || echo "http://icecast.vrtcdn.be/klara-high.mp3")
     local fade_sec=$(uci -q get mcud.alarm.fade_sec || echo "0")
     local duration_min=$(uci -q get mcud.alarm.duration_min || echo "30")
+
+    # Wake amplifier and power rail if in Standby
+    wake_hardware
+    ubus call mcud status 2>/dev/null | grep -o '"volume"[^,]*' | tr -dc 0-9 > "$PREV_VOL_FILE"
 
     # Stateful transport pause for all active players (Spotify, AirPlay, WebRadio, Squeeze)
     /usr/bin/player_control.sh pause all >/dev/null 2>&1 || true

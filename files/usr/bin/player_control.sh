@@ -122,6 +122,16 @@ case "$ACTION" in
 		if [ "$TARGET" = all ]; then do_resume_all; else one_target resume "$TARGET"; fi
 		;;
 	toggle)
+		# If Smart Alarm or Timer is ringing, physical Play/Pause dismisses it
+		if [ -f /tmp/alarm.pid ]; then
+			/usr/bin/smart_alarm.sh stop
+			exit 0
+		fi
+		if [ -f /tmp/timer_ring.pid ] || [ -f /tmp/timer.pid ]; then
+			/usr/bin/smart_timer.sh cancel
+			exit 0
+		fi
+
 		# The state file only records what we last did to a player, so anything the
 		# phone does behind our back leaves the key inverted for one press. librespot
 		# knows its own play_status, and the patched fifo takes a stateless toggle
