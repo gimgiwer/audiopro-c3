@@ -56,10 +56,10 @@ end
 -- Lazy session garbage collector for expired sessions and old rate-limit entries
 local function gc_sessions()
     local sess_dir = "/tmp/ap_sessions"
-    local p = io.popen("ls " .. sess_dir .. " 2>/dev/null", "r")
-    if p then
-        local now = os.time()
-        for fname in p:lines() do
+    local now = os.time()
+    local ps = io.popen("ls " .. sess_dir .. " 2>/dev/null", "r")
+    if ps then
+        for fname in ps:lines() do
             if string.match(fname, "^%x+$") then
                 local content = read_file(sess_dir .. "/" .. fname)
                 if content then
@@ -70,7 +70,24 @@ local function gc_sessions()
                 end
             end
         end
-        p:close()
+        ps:close()
+    end
+
+    -- Purge expired rate-limit IP tracking files (> 300s old) to prevent tmpfs RAM leak on 64MB MT7688
+    local fail_dir = "/tmp/ap_auth_fails"
+    local pf = io.popen("ls " .. fail_dir .. " 2>/dev/null", "r")
+    if pf then
+        for fname in pf:lines() do
+            local content = read_file(fail_dir .. "/" .. fname)
+            if content then
+                local _, fail_tm = string.match(content, "(%d+)%s+(%d+)")
+                local tm = tonumber(fail_tm or "0") or 0
+                if tm > 0 and (now - tm) > 300 then
+                    os.remove(fail_dir .. "/" .. fname)
+                end
+            end
+        end
+        pf:close()
     end
 end
 
@@ -341,15 +358,15 @@ function handle_request(env)
         end
     end
 
-    -- Binary Artwork (Public)
+    -- Artwork Endpoint (Public)
     if action == "get_artwork" then
         local artwork = read_file("/tmp/audiopro_artwork.jpg")
         if artwork and #artwork > 0 then
-            uhttpd.send("Status: 200 OK\r\nContent-Type: image/jpeg\r\nCache-Control: no-cache\r\n\r\n")
+            uhttpd.send("Status: 200 OK\r\nContent-Type: image/jpeg\r\nCache-Control: no-cache\r\n" .. SEC_HEADERS .. "\r\n")
             uhttpd.send(artwork)
             return
         else
-            uhttpd.send("Status: 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNo artwork")
+            uhttpd.send("Status: 404 Not Found\r\nContent-Type: text/plain\r\n" .. SEC_HEADERS .. "\r\nNo artwork")
             return
         end
     end
@@ -358,11 +375,11 @@ function handle_request(env)
     if action == "download_cert" then
         local cert = read_file("/etc/uhttpd.crt")
         if cert and #cert > 0 then
-            uhttpd.send("Status: 200 OK\r\nContent-Type: application/x-x509-ca-cert\r\nContent-Disposition: attachment; filename=\"audiopro-c3.crt\"\r\n\r\n")
+            uhttpd.send("Status: 200 OK\r\nContent-Type: application/x-x509-ca-cert\r\nContent-Disposition: attachment; filename=\"audiopro-c3.crt\"\r\n" .. SEC_HEADERS .. "\r\n")
             uhttpd.send(cert)
             return
         else
-            uhttpd.send("Status: 404 Not Found\r\nContent-Type: text/plain\r\n\r\nCertificate not found")
+            uhttpd.send("Status: 404 Not Found\r\nContent-Type: text/plain\r\n" .. SEC_HEADERS .. "\r\nCertificate not found")
             return
         end
     end
@@ -743,6 +760,8 @@ function handle_request(env)
             os.execute("uci -q del uhttpd.main.listen_https 2>/dev/null; uci set uhttpd.main.redirect_https='0' 2>/dev/null")
         end
         os.execute("uci commit uhttpd 2>/dev/null; (sleep 1 && /etc/init.d/uhttpd restart) >/dev/null 2>&1 &")
+        -- Invalidate all active sessions when security policies change
+        os.execute("rm -f /tmp/ap_sessions/* 2>/dev/null")
         uhttpd.send(string.format('{"status":"ok","message":"Security settings saved","auth_enabled":%s,"session_ttl":%d,"session_days":%d}',
             (auth_en == "1" and "true" or "false"), ttl, days))
 
