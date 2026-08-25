@@ -28,7 +28,8 @@
       --accent-alpha: rgba(59, 130, 246, 0.12);
       --text-primary: #ffffff;
       --text-secondary: #94a3b8;
-      --text-muted: #64748b;
+      --text-muted: #78889e;
+      --border: rgba(255, 255, 255, 0.08);
       --border-subtle: rgba(255, 255, 255, 0.08);
       --border-active: rgba(59, 130, 246, 0.5);
       --status-green: #10b981;
@@ -47,7 +48,10 @@
       --switch-active: #3b82f6;
       --btn-main-bg: #ffffff;
       --btn-main-text: #000000;
-      --transition: all 0.2s ease;
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+      --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+      --transition: transform 160ms var(--ease-out), opacity 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
     }
 
     /* Light Theme (Clean Crisp White with Minimal Cobalt Accents) */
@@ -66,6 +70,7 @@
       --text-primary: #0f172a;
       --text-secondary: #475569;
       --text-muted: #64748b;
+      --border: rgba(0, 0, 0, 0.08);
       --border-subtle: rgba(0, 0, 0, 0.08);
       --border-active: rgba(37, 99, 235, 0.5);
       --status-green: #059669;
@@ -80,7 +85,10 @@
       --switch-active: #2563eb;
       --btn-main-bg: #0f172a;
       --btn-main-text: #ffffff;
-      --transition: all 0.2s ease;
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+      --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+      --transition: transform 160ms var(--ease-out), opacity 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
     }
 
     * {
@@ -92,8 +100,13 @@
       -webkit-user-select: none;
     }
 
+    *:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
     body, button, input, select, textarea {
-      font-family: system-ui, "Geist", "Geist Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
     input, select, textarea {
@@ -185,8 +198,8 @@
 
     /* Header Controls */
     .btn-header {
-      min-width: 34px;
-      height: 34px;
+      min-width: 42px;
+      height: 42px;
       padding: 0 8px;
       border-radius: var(--radius-full);
       background: rgba(125, 125, 125, 0.08);
@@ -202,10 +215,16 @@
       transition: var(--transition);
     }
 
-    .btn-header:hover {
-      color: var(--accent);
-      border-color: var(--border-active);
-      transform: scale(1.05);
+    .btn-header:active {
+      transform: scale(0.95);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .btn-header:hover {
+        color: var(--accent);
+        border-color: var(--border-active);
+        transform: scale(1.05);
+      }
     }
 
     .btn-header svg {
@@ -291,7 +310,7 @@
     }
 
     .tab-btn {
-      height: 38px;
+      height: 42px;
       border-radius: var(--radius-sm);
       background: transparent;
       border: none;
@@ -305,6 +324,10 @@
       justify-content: center;
       gap: 6px;
       transition: var(--transition);
+    }
+
+    .tab-btn:active {
+      transform: scale(0.97);
     }
 
     .tab-btn.active {
@@ -496,7 +519,7 @@
     }
 
     .btn-step-fine {
-      height: 32px;
+      height: 38px;
       border-radius: var(--radius-sm);
       background: var(--bg-surface);
       border: 1px solid var(--border-subtle);
@@ -507,10 +530,19 @@
       transition: var(--transition);
     }
 
-    .btn-step-fine:hover, .btn-step-fine:active {
+    .btn-step-fine:active {
+      transform: scale(0.96);
       color: var(--accent);
       border-color: var(--border-active);
       background: var(--bg-card-hover);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .btn-step-fine:hover {
+        color: var(--accent);
+        border-color: var(--border-active);
+        background: var(--bg-card-hover);
+      }
     }
 
     /* Volume Section */
@@ -657,8 +689,8 @@
     }
 
     .btn-step {
-      width: 36px;
-      height: 36px;
+      width: 44px;
+      height: 44px;
       border-radius: var(--radius-sm);
       background: var(--bg-surface);
       border: 1px solid var(--border-subtle);
@@ -673,7 +705,7 @@
     }
 
     .btn-step:active {
-      transform: scale(0.9);
+      transform: scale(0.96);
       background: var(--bg-card-hover);
     }
 
@@ -699,14 +731,16 @@
       overflow: hidden;
     }
 
-    .source-card:hover {
-      background: var(--bg-card-hover);
-      border-color: var(--border-active);
-      transform: translateY(-2px);
+    .source-card:active {
+      transform: scale(0.97);
     }
 
-    .source-card:active {
-      transform: translateY(0) scale(0.97);
+    @media (hover: hover) and (pointer: fine) {
+      .source-card:hover {
+        background: var(--bg-card-hover);
+        border-color: var(--border-active);
+        transform: translateY(-2px);
+      }
     }
 
     .source-card.active {
@@ -799,16 +833,15 @@
       display: none;
       flex-direction: column;
       gap: 12px;
-      animation: fadeIn 0.22s ease forwards;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
     }
 
     .accordion-body.show {
       display: flex;
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-6px); }
-      to { opacity: 1; transform: translateY(0); }
+      opacity: 1;
+      transform: translateY(0);
     }
 
     /* Form Fields */
@@ -1049,20 +1082,26 @@
       margin-top: 4px;
     }
 
-    .btn-primary:hover {
+    .btn-primary:active {
+      transform: scale(0.98);
       opacity: 0.92;
-      transform: translateY(-1px);
     }
 
-    .btn-primary:active {
-      transform: translateY(1px);
-      opacity: 0.85;
+    .btn-main:active {
+      transform: scale(0.98);
     }
 
     .btn-primary:disabled {
       opacity: 0.6;
       cursor: not-allowed;
       transform: none;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .btn-primary:hover {
+        opacity: 0.92;
+        transform: translateY(-1px);
+      }
     }
 
     .btn-primary svg {
@@ -1341,8 +1380,8 @@
     }
 
     .np-ctrl-btn {
-      width: 38px;
-      height: 38px;
+      width: 44px;
+      height: 44px;
       border-radius: var(--radius-full);
       background: var(--bg-surface);
       border: 1px solid var(--border);
@@ -1351,18 +1390,24 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: var(--transition);
     }
 
-    .np-ctrl-btn:hover:not(:disabled) {
-      border-color: var(--border-active);
-      color: var(--accent);
-      transform: scale(1.05);
+    .np-ctrl-btn:active:not(:disabled) {
+      transform: scale(0.94);
     }
 
     .np-ctrl-btn:disabled {
       opacity: 0.35;
       cursor: not-allowed;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .np-ctrl-btn:hover:not(:disabled) {
+        border-color: var(--border-active);
+        color: var(--accent);
+        transform: scale(1.05);
+      }
     }
 
     .np-ctrl-btn.play-pause {
@@ -1374,9 +1419,11 @@
       box-shadow: var(--shadow-accent);
     }
 
-    .np-ctrl-btn.play-pause:hover {
-      background: var(--accent-light);
-      transform: scale(1.08);
+    @media (hover: hover) and (pointer: fine) {
+      .np-ctrl-btn.play-pause:hover {
+        background: var(--accent-light);
+        transform: scale(1.08);
+      }
     }
 
     .np-ctrl-btn svg {
@@ -1403,7 +1450,7 @@
       z-index: 9999;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.3s ease;
+      transition: opacity 200ms var(--ease-out);
     }
 
     .login-overlay.show {
@@ -1423,11 +1470,13 @@
       flex-direction: column;
       gap: 18px;
       text-align: center;
-      transform: scale(0.95);
-      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      opacity: 0;
+      transform: scale(0.96);
+      transition: transform 200ms var(--ease-out), opacity 200ms var(--ease-out);
     }
 
     .login-overlay.show .login-card {
+      opacity: 1;
       transform: scale(1);
     }
 
@@ -1489,7 +1538,7 @@
       position: fixed;
       bottom: calc(20px + env(safe-area-inset-bottom));
       left: 50%;
-      transform: translateX(-50%) translateY(100px);
+      transform: translateX(-50%) translateY(20px);
       background: var(--bg-card);
       border: 1px solid var(--border-active);
       color: var(--text-primary);
@@ -1503,7 +1552,7 @@
       gap: 10px;
       opacity: 0;
       pointer-events: none;
-      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
+      transition: transform 200ms var(--ease-out), opacity 200ms var(--ease-out);
       z-index: 1000;
       white-space: nowrap;
     }
@@ -1588,21 +1637,21 @@
 
     <!-- Main Navigation Tabs -->
     <nav class="nav-tabs">
-      <button id="tabBtnStatus" class="tab-btn active" onclick="switchTab('status')">
+      <button id="tabBtnStatus" class="tab-btn active" onclick="switchTab('status')" aria-label="Status Tab">
         <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
           <rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>
         </svg>
         <span data-i18n="tab_status">Status</span>
       </button>
 
-      <button id="tabBtnControls" class="tab-btn" onclick="switchTab('controls')">
+      <button id="tabBtnControls" class="tab-btn" onclick="switchTab('controls')" aria-label="Controls Tab">
         <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
           <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>
         </svg>
         <span data-i18n="tab_controls">Controls</span>
       </button>
 
-      <button id="tabBtnSettings" class="tab-btn" onclick="switchTab('settings')">
+      <button id="tabBtnSettings" class="tab-btn" onclick="switchTab('settings')" aria-label="Settings Tab">
         <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
           <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
           <circle cx="12" cy="12" r="3"/>
@@ -1637,12 +1686,12 @@
           <div class="section-header" style="margin-bottom: 6px;">
             <span class="section-title" data-i18n="vol_title">Master Volume</span>
             <div class="section-value-box">
-              <input type="number" id="heroVolInput" class="section-num-input" min="0" max="100" value="25" onchange="setVolume(this.value)">
+              <input type="number" id="heroVolInput" class="section-num-input" min="0" max="100" value="25" onchange="setVolume(this.value)" aria-label="Volume percentage input">
               <span style="font-size:0.8rem; font-weight:700; color:var(--accent)">%</span>
             </div>
           </div>
           <div class="volume-main-row">
-            <button class="btn-icon" aria-label="Mute" onclick="toggleMute()">
+            <button class="btn-icon" aria-label="Toggle Mute" onclick="toggleMute()">
               <svg class="heroVolumeIcon" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>
               </svg>
@@ -1653,28 +1702,28 @@
           </div>
           <!-- Fine +/- 1% Steps -->
           <div class="vol-granular-row">
-            <button class="btn-step-fine" onclick="stepVolume(-5)">−5%</button>
-            <button class="btn-step-fine" onclick="stepVolume(-1)">−1%</button>
-            <button class="btn-step-fine" onclick="stepVolume(1)">+1%</button>
-            <button class="btn-step-fine" onclick="stepVolume(5)">+5%</button>
+            <button class="btn-step-fine" aria-label="Decrease volume by 5 percent" onclick="stepVolume(-5)">−5%</button>
+            <button class="btn-step-fine" aria-label="Decrease volume by 1 percent" onclick="stepVolume(-1)">−1%</button>
+            <button class="btn-step-fine" aria-label="Increase volume by 1 percent" onclick="stepVolume(1)">+1%</button>
+            <button class="btn-step-fine" aria-label="Increase volume by 5 percent" onclick="stepVolume(5)">+5%</button>
           </div>
         </div>
 
         <!-- Quick Source Toggle in Hero -->
         <div class="source-grid">
-          <button id="hero-src-wifi" class="source-card active" onclick="switchSource('wifi')">
+          <button id="hero-src-wifi" class="source-card active" aria-label="Select Wi-Fi Source" onclick="switchSource('wifi')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/></svg>
             </div>
             <div class="source-name">Wi-Fi</div>
           </button>
-          <button id="hero-src-bt" class="source-card" onclick="switchSource('bt')">
+          <button id="hero-src-bt" class="source-card" aria-label="Select Bluetooth Source" onclick="switchSource('bt')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="m7 7l10 10l-5 5V2l5 5L7 17"/></svg>
             </div>
             <div class="source-name">Bluetooth</div>
           </button>
-          <button id="hero-src-aux" class="source-card" onclick="switchSource('aux')">
+          <button id="hero-src-aux" class="source-card" aria-label="Select AUX In Source" onclick="switchSource('aux')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1zm0 2v-2M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10m16 11v-2M3 5V3M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2zm3-5V3"/></svg>
             </div>
@@ -1704,7 +1753,7 @@
 
         <!-- Player Controls (Play/Pause, Disabled Prev/Next) -->
         <div class="np-controls-row">
-          <button class="np-ctrl-btn" disabled title="Previous (Not available)" aria-label="Previous">
+          <button class="np-ctrl-btn" disabled title="Previous (Not available)" aria-label="Previous track">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/>
             </svg>
@@ -1714,7 +1763,7 @@
               <rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/>
             </svg>
           </button>
-          <button class="np-ctrl-btn" disabled title="Next (Not available)" aria-label="Next">
+          <button class="np-ctrl-btn" disabled title="Next (Not available)" aria-label="Next track">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/>
             </svg>
@@ -1780,14 +1829,14 @@
             <span data-i18n="vol_title">Master Volume</span>
           </div>
           <div class="section-value-box">
-            <input type="number" id="volInput" class="section-num-input" min="0" max="100" value="25" onchange="setVolume(this.value)">
+            <input type="number" id="volInput" class="section-num-input" min="0" max="100" value="25" onchange="setVolume(this.value)" aria-label="Volume percentage input">
             <span style="font-size:0.8rem; font-weight:700; color:var(--accent)">%</span>
           </div>
         </div>
 
         <div class="volume-box">
           <div class="volume-main-row">
-            <button id="muteBtn" class="btn-icon" aria-label="Mute / Unmute" onclick="toggleMute()">
+            <button id="muteBtn" class="btn-icon" aria-label="Toggle Mute" onclick="toggleMute()">
               <svg id="volumeIcon" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6m3.364 3.364a9 9 0 0 0 0-12.728"/>
               </svg>
@@ -1800,10 +1849,10 @@
 
           <!-- Fine +/- 1% and +/- 10% Steps -->
           <div class="vol-granular-row">
-            <button class="btn-step-fine" onclick="stepVolume(-10)">−10%</button>
-            <button class="btn-step-fine" onclick="stepVolume(-1)">−1%</button>
-            <button class="btn-step-fine" onclick="stepVolume(1)">+1%</button>
-            <button class="btn-step-fine" onclick="stepVolume(10)">+10%</button>
+            <button class="btn-step-fine" aria-label="Decrease volume by 10 percent" onclick="stepVolume(-10)">−10%</button>
+            <button class="btn-step-fine" aria-label="Decrease volume by 1 percent" onclick="stepVolume(-1)">−1%</button>
+            <button class="btn-step-fine" aria-label="Increase volume by 1 percent" onclick="stepVolume(1)">+1%</button>
+            <button class="btn-step-fine" aria-label="Increase volume by 10 percent" onclick="stepVolume(10)">+10%</button>
           </div>
         </div>
       </section>
@@ -1821,7 +1870,7 @@
 
         <div class="source-grid">
           <!-- Wi-Fi / AirPlay -->
-          <button id="src-wifi" class="source-card active" onclick="switchSource('wifi')">
+          <button id="src-wifi" class="source-card active" aria-label="Select Wi-Fi Source" onclick="switchSource('wifi')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/>
@@ -1832,7 +1881,7 @@
           </button>
 
           <!-- Bluetooth -->
-          <button id="src-bt" class="source-card" onclick="switchSource('bt')">
+          <button id="src-bt" class="source-card" aria-label="Select Bluetooth Source" onclick="switchSource('bt')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="m7 7l10 10l-5 5V2l5 5L7 17"/>
@@ -1843,7 +1892,7 @@
           </button>
 
           <!-- AUX In -->
-          <button id="src-aux" class="source-card" onclick="switchSource('aux')">
+          <button id="src-aux" class="source-card" aria-label="Select AUX In Source" onclick="switchSource('aux')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <g><path d="M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1zm0 2v-2"/><path d="M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10m16 11v-2M3 5V3"/><path d="M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2zm3-5V3"/></g>
@@ -1869,12 +1918,12 @@
 
         <!-- Quick EQ Presets -->
         <div class="eq-preset-row" style="display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 16px 0;">
-          <button type="button" class="btn-step-fine" style="font-weight:700;" onclick="setEqPreset('Default')">Default (Factory C3)</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Flat')">Flat (0 dB)</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Bass Boost')">Bass Boost</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Vocal')">Vocal</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Rock')">Rock</button>
-          <button type="button" class="btn-step-fine" onclick="setEqPreset('Night')">Night</button>
+          <button type="button" class="btn-step-fine" style="font-weight:700;" aria-label="Default equalizer preset" onclick="setEqPreset('Default')">Default (Factory C3)</button>
+          <button type="button" class="btn-step-fine" aria-label="Flat equalizer preset" onclick="setEqPreset('Flat')">Flat (0 dB)</button>
+          <button type="button" class="btn-step-fine" aria-label="Bass Boost equalizer preset" onclick="setEqPreset('Bass Boost')">Bass Boost</button>
+          <button type="button" class="btn-step-fine" aria-label="Vocal equalizer preset" onclick="setEqPreset('Vocal')">Vocal</button>
+          <button type="button" class="btn-step-fine" aria-label="Rock equalizer preset" onclick="setEqPreset('Rock')">Rock</button>
+          <button type="button" class="btn-step-fine" aria-label="Night equalizer preset" onclick="setEqPreset('Night')">Night</button>
         </div>
 
         <!-- 7 Sliders: 60Hz, 150Hz, 400Hz, 1kHz, 2.5kHz, 6kHz, 14kHz -->
@@ -1882,49 +1931,49 @@
           <div class="eq-col">
             <span class="eq-val" id="eqVal60" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+2 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand60" min="-12" max="12" step="1" value="2" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand60" min="-12" max="12" step="1" value="2" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()" aria-label="Equalizer 60 Hz band">
             </div>
             <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">60Hz</span>
           </div>
           <div class="eq-col">
             <span class="eq-val" id="eqVal150" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+1 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand150" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand150" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()" aria-label="Equalizer 150 Hz band">
             </div>
             <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">150Hz</span>
           </div>
           <div class="eq-col">
             <span class="eq-val" id="eqVal400" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand400" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand400" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()" aria-label="Equalizer 400 Hz band">
             </div>
             <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">400Hz</span>
           </div>
           <div class="eq-col">
             <span class="eq-val" id="eqVal1k" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">0 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand1k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand1k" min="-12" max="12" step="1" value="0" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()" aria-label="Equalizer 1 kHz band">
             </div>
             <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">1kHz</span>
           </div>
           <div class="eq-col">
             <span class="eq-val" id="eqVal2k5" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+1 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand2k5" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand2k5" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()" aria-label="Equalizer 2.5 kHz band">
             </div>
             <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">2.5k</span>
           </div>
           <div class="eq-col">
             <span class="eq-val" id="eqVal6k" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+2 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand6k" min="-12" max="12" step="1" value="2" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand6k" min="-12" max="12" step="1" value="2" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()" aria-label="Equalizer 6 kHz band">
             </div>
             <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">6kHz</span>
           </div>
           <div class="eq-col">
             <span class="eq-val" id="eqVal14k" style="font-size:0.7rem; font-weight:600; color:var(--text-secondary)">+1 dB</span>
             <div style="height:120px; display:flex; align-items:center; justify-content:center; margin:8px 0;">
-              <input type="range" id="eqBand14k" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()">
+              <input type="range" id="eqBand14k" min="-12" max="12" step="1" value="1" style="writing-mode:vertical-lr; direction:rtl; width:6px; height:110px;" oninput="onEqSliderChange()" aria-label="Equalizer 14 kHz band">
             </div>
             <span style="font-size:0.7rem; font-weight:700; color:var(--accent)">14kHz</span>
           </div>
@@ -1933,7 +1982,7 @@
 
       <!-- Hardware Buttons 1..4 Actions Configurator -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('presetActionsSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('presetActionsSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/>
@@ -1958,7 +2007,7 @@
 
       <!-- Autonomous Smart Alarm Card -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('smartAlarmSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('smartAlarmSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M5 3 2 6M22 6l-3-3M6.38 18.7 4 21M17.64 18.67 20 21"/>
@@ -2040,27 +2089,27 @@
             <div class="form-group" style="margin-bottom:14px;">
               <label style="font-size:0.75rem; color:var(--text-secondary);">Active Days</label>
               <div id="alarmDaysContainer" style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
-                <button type="button" class="btn-day-toggle active" data-day="1" onclick="toggleAlarmDay(this)">Mon</button>
-                <button type="button" class="btn-day-toggle active" data-day="2" onclick="toggleAlarmDay(this)">Tue</button>
-                <button type="button" class="btn-day-toggle active" data-day="3" onclick="toggleAlarmDay(this)">Wed</button>
-                <button type="button" class="btn-day-toggle active" data-day="4" onclick="toggleAlarmDay(this)">Thu</button>
-                <button type="button" class="btn-day-toggle active" data-day="5" onclick="toggleAlarmDay(this)">Fri</button>
-                <button type="button" class="btn-day-toggle" data-day="6" onclick="toggleAlarmDay(this)">Sat</button>
-                <button type="button" class="btn-day-toggle" data-day="0" onclick="toggleAlarmDay(this)">Sun</button>
+                <button type="button" class="btn-day-toggle active" data-day="1" aria-label="Monday" onclick="toggleAlarmDay(this)">Mon</button>
+                <button type="button" class="btn-day-toggle active" data-day="2" aria-label="Tuesday" onclick="toggleAlarmDay(this)">Tue</button>
+                <button type="button" class="btn-day-toggle active" data-day="3" aria-label="Wednesday" onclick="toggleAlarmDay(this)">Wed</button>
+                <button type="button" class="btn-day-toggle active" data-day="4" aria-label="Thursday" onclick="toggleAlarmDay(this)">Thu</button>
+                <button type="button" class="btn-day-toggle active" data-day="5" aria-label="Friday" onclick="toggleAlarmDay(this)">Fri</button>
+                <button type="button" class="btn-day-toggle" data-day="6" aria-label="Saturday" onclick="toggleAlarmDay(this)">Sat</button>
+                <button type="button" class="btn-day-toggle" data-day="0" aria-label="Sunday" onclick="toggleAlarmDay(this)">Sun</button>
               </div>
             </div>
 
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <button type="submit" class="btn-primary" style="flex:2; min-width:120px; height:38px;">
+              <button type="submit" class="btn-primary" style="flex:2; min-width:120px; height:38px;" aria-label="Save Alarm">
                 <span>Save Alarm</span>
               </button>
-              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="testAlarm()">
+              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="testAlarm()" aria-label="Test Alarm">
                 <span>Test</span>
               </button>
-              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="snoozeAlarm()">
+              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="snoozeAlarm()" aria-label="Snooze Alarm">
                 <span>Snooze</span>
               </button>
-              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="stopAlarm()">
+              <button type="button" class="btn-header" style="flex:1; min-width:70px; height:38px; border-radius:var(--radius-sm);" onclick="stopAlarm()" aria-label="Stop Alarm">
                 <span>Stop</span>
               </button>
             </div>
@@ -2070,7 +2119,7 @@
 
       <!-- Smart Countdown Timer Card -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('smartTimerSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('smartTimerSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
@@ -2091,19 +2140,19 @@
           <div id="timerActiveBanner" style="display:none; background:rgba(0, 229, 255, 0.08); border:1px solid var(--accent); border-radius:var(--radius-md); padding:12px; margin-bottom:14px; text-align:center;">
             <div id="timerActiveName" style="font-size:0.8rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em;">Timer Running</div>
             <div id="timerActiveCountdown" style="font-size:2rem; font-weight:800; color:var(--accent); font-family:monospace; margin:4px 0;">00:00</div>
-            <button type="button" class="btn-primary" style="height:32px; background:var(--status-red); border-color:var(--status-red); margin-top:6px;" onclick="cancelTimer()">Cancel Timer</button>
+            <button type="button" class="btn-primary" style="height:32px; background:var(--status-red); border-color:var(--status-red); margin-top:6px;" onclick="cancelTimer()" aria-label="Cancel Timer">Cancel Timer</button>
           </div>
 
           <!-- Quick Timers -->
           <div style="margin-bottom:14px;">
             <label style="font-size:0.75rem; color:var(--text-secondary);">Quick Presets</label>
             <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
-              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(60, '1 Min')">1m</button>
-              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(180, 'Tea / 3 Min')">3m</button>
-              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(300, 'Eggs / 5 Min')">5m</button>
-              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(600, '10 Min')">10m</button>
-              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(900, '15 Min')">15m</button>
-              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(1800, '30 Min')">30m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(60, '1 Min')" aria-label="Start 1 minute timer">1m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(180, 'Tea / 3 Min')" aria-label="Start 3 minutes timer">3m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(300, 'Eggs / 5 Min')" aria-label="Start 5 minutes timer">5m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(600, '10 Min')" aria-label="Start 10 minutes timer">10m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(900, '15 Min')" aria-label="Start 15 minutes timer">15m</button>
+              <button type="button" class="btn-day-toggle" onclick="quickStartTimer(1800, '30 Min')" aria-label="Start 30 minutes timer">30m</button>
             </div>
           </div>
 
@@ -2125,7 +2174,7 @@
               <input type="text" id="timerNameInput" class="input-field" style="margin-top:4px;" placeholder="e.g. Kitchen, Workout" value="Kitchen Timer">
             </div>
 
-            <button type="submit" class="btn-primary" style="height:38px;">
+            <button type="submit" class="btn-primary" style="height:38px;" aria-label="Start Timer">
               <span>Start Timer</span>
             </button>
           </form>
@@ -2139,7 +2188,7 @@
 
       <!-- Home Wi-Fi Setup (STA) -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('homeWifiSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('homeWifiSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/>
@@ -2160,7 +2209,7 @@
             <div class="form-group">
               <div class="form-label">
                 <span data-i18n="wifi_ssid">Network Name (SSID)</span>
-                <button type="button" id="scanBtn" class="scan-btn" onclick="scanNetworks()">
+                <button type="button" id="scanBtn" class="scan-btn" onclick="scanNetworks()" aria-label="Scan Wi-Fi Networks">
                   <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                     <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8m0 0V3m0 5h5m-5 4a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16m0 0v5m0-5h-5"/>
                   </svg>
@@ -2168,12 +2217,12 @@
                 </button>
               </div>
 
-              <select id="networkSelect" class="network-select" onchange="onNetworkSelect(this)">
+              <select id="networkSelect" class="network-select" onchange="onNetworkSelect(this)" aria-label="Scanned networks list">
                 <option value="" data-i18n="wifi_select_opt">-- Select a scanned network --</option>
               </select>
 
               <div class="input-wrapper">
-                <input type="text" id="wifiSsid" class="input-field" placeholder="Home Wi-Fi SSID" required autocomplete="off">
+                <input type="text" id="wifiSsid" class="input-field" placeholder="Home Wi-Fi SSID" required autocomplete="off" aria-label="Wi-Fi SSID">
               </div>
             </div>
 
@@ -2182,8 +2231,8 @@
                 <span data-i18n="wifi_pass">Wi-Fi Password</span>
               </div>
               <div class="input-wrapper">
-                <input type="password" id="wifiPass" class="input-field" placeholder="Password" autocomplete="off">
-                <button type="button" class="input-addon-btn" onclick="togglePasswordVisibility('wifiPass', 'eyeIcon1')" aria-label="Toggle password">
+                <input type="password" id="wifiPass" class="input-field" placeholder="Password" autocomplete="off" aria-label="Wi-Fi Password">
+                <button type="button" class="input-addon-btn" onclick="togglePasswordVisibility('wifiPass', 'eyeIcon1')" aria-label="Toggle password visibility">
                   <svg id="eyeIcon1" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                     <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
                   </svg>
@@ -2191,7 +2240,7 @@
               </div>
             </div>
 
-            <button type="submit" id="wifiSubmitBtn" class="btn-primary">
+            <button type="submit" id="wifiSubmitBtn" class="btn-primary" aria-label="Connect to Home Network">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/>
               </svg>
@@ -2203,7 +2252,7 @@
 
       <!-- SoftAP Configuration (Точка доступа) -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('apSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('apSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5M12 12h.01M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/>
@@ -2242,7 +2291,7 @@
                 <label class="form-label" for="cfgApKey" data-i18n="ap_key">AP Password</label>
                 <div class="input-wrapper">
                   <input type="password" id="cfgApKey" class="input-field" placeholder="Min. 8 characters">
-                  <button type="button" class="input-addon-btn" onclick="togglePasswordVisibility('cfgApKey', 'eyeIcon2')" aria-label="Toggle password">
+                  <button type="button" class="input-addon-btn" onclick="togglePasswordVisibility('cfgApKey', 'eyeIcon2')" aria-label="Toggle password visibility">
                     <svg id="eyeIcon2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                       <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
                     </svg>
@@ -2280,7 +2329,7 @@
 
       <!-- Audio & Power Management (Granular 1% & 1min controls) -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('audioSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('audioSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -2301,8 +2350,8 @@
                 <span id="cfgDefVolDisplay" style="color:var(--accent); font-weight:700;">25%</span>
               </div>
               <div style="display:flex; gap:10px; align-items:center;">
-                <input type="range" id="cfgDefVolRange" min="0" max="100" step="1" value="25" class="volume-slider" style="flex:1;" oninput="syncDefVol(this.value)">
-                <input type="number" id="cfgDefVol" min="0" max="100" value="25" class="input-field" style="width:68px; text-align:center;" oninput="syncDefVol(this.value)">
+                <input type="range" id="cfgDefVolRange" min="0" max="100" step="1" value="25" class="volume-slider" style="flex:1;" oninput="syncDefVol(this.value)" aria-label="Default volume slider">
+                <input type="number" id="cfgDefVol" min="0" max="100" value="25" class="input-field" style="width:68px; text-align:center;" oninput="syncDefVol(this.value)" aria-label="Default volume number">
               </div>
             </div>
 
@@ -2312,7 +2361,7 @@
                 <span data-i18n="auto_sleep_label">Auto-Sleep Timeout (Minutes, 0=Disabled)</span>
               </div>
               <div class="input-wrapper">
-                <input type="number" id="cfgAutoSleep" class="input-field" min="0" max="360" step="1" placeholder="0 = Disabled" required>
+                <input type="number" id="cfgAutoSleep" class="input-field" min="0" max="360" step="1" placeholder="0 = Disabled" required aria-label="Auto-sleep timeout in minutes">
               </div>
             </div>
 
@@ -2347,7 +2396,7 @@
 
       <!-- Device Identity -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('deviceSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('deviceSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
@@ -2374,7 +2423,7 @@
 
       <!-- Home Assistant / MQTT -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('mqttSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('mqttSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
@@ -2439,7 +2488,7 @@
 
       <!-- Firmware Upgrade / Flash Binary Section -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('firmwareSection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('firmwareSection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
@@ -2543,7 +2592,7 @@
 
       <!-- Web UI Security & Authentication Section -->
       <section class="card">
-        <div class="accordion-header" onclick="toggleAccordion('securitySection')">
+        <div class="accordion-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleAccordion('securitySection')">
           <div class="section-title">
             <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
               <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
@@ -2694,7 +2743,7 @@
           <label class="form-label" for="loginPass" data-i18n="auth_password">Password</label>
           <div class="input-wrapper">
             <input type="password" id="loginPass" class="input-field" autocomplete="current-password" placeholder="System password" required>
-            <button type="button" class="btn-toggle-eye" onclick="togglePasswordVisibility('loginPass', 'loginPassEye')">
+            <button type="button" class="btn-toggle-eye" onclick="togglePasswordVisibility('loginPass', 'loginPassEye')" aria-label="Toggle password visibility">
               <svg id="loginPassEye" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
               </svg>
@@ -3137,8 +3186,20 @@
       if (section) {
         const isShow = section.classList.toggle('show');
         if (chevron) chevron.classList.toggle('open', isShow);
+        const header = section.parentElement ? section.parentElement.querySelector('.accordion-header') : null;
+        if (header) {
+          header.setAttribute('aria-expanded', isShow ? 'true' : 'false');
+        }
       }
     }
+
+    // Keyboard navigation support for accordion headers
+    document.addEventListener('keydown', function(e) {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.classList && e.target.classList.contains('accordion-header')) {
+        e.preventDefault();
+        e.target.click();
+      }
+    });
 
     // Theme Management
     function applyTheme(themeName) {
@@ -3426,13 +3487,17 @@
     }
 
     // Render battery status
-    function renderBattery(percent) {
-      if (el.batteryPercent) el.batteryPercent.textContent = `${percent}%`;
-      if (el.telBatVal) el.telBatVal.textContent = `${percent}%`;
+    function renderBattery(percent, isCharging) {
+      if (typeof isCharging !== 'undefined') state.isCharging = !!isCharging;
+      const chgText = state.isCharging ? ' ⚡' : '';
+      if (el.batteryPercent) el.batteryPercent.textContent = `${percent}%${chgText}`;
+      if (el.telBatVal) el.telBatVal.textContent = state.isCharging ? `${percent}% (Зарядка)` : `${percent}%`;
       const fillWidth = Math.max(1, Math.min(14, (percent / 100) * 14));
       if (el.batteryLevelBar) {
         el.batteryLevelBar.setAttribute('width', fillWidth.toString());
-        if (percent <= 15) {
+        if (state.isCharging) {
+          el.batteryLevelBar.style.fill = 'var(--accent)';
+        } else if (percent <= 15) {
           el.batteryLevelBar.style.fill = 'var(--status-red)';
         } else if (percent <= 35) {
           el.batteryLevelBar.style.fill = 'var(--status-amber)';
@@ -3858,7 +3923,7 @@
         item.innerHTML = `
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <strong style="font-size:0.9rem; color:var(--text-primary);">Preset ${p.id}</strong>
-            <button type="button" class="btn-step-fine" onclick="savePresetItem(${p.id})">Save</button>
+            <button type="button" class="btn-step-fine" aria-label="Save Preset ${p.id}" onclick="savePresetItem(${p.id})">Save</button>
           </div>
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
             <div>
@@ -4345,7 +4410,7 @@
 
           if (typeof data.battery !== 'undefined') {
             state.battery = data.battery;
-            renderBattery(data.battery);
+            renderBattery(data.battery, data.charging);
           }
 
           if (data.hostname && el.heroHostname) {

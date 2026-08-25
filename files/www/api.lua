@@ -462,6 +462,7 @@ function handle_request(env)
         local mstat = mp and mp:read("*a") or ""
         if mp then mp:close() end
         bat = tonumber(string.match(mstat, '"battery"%s*:%s*(%d+)')) or bat
+        local charging = string.find(mstat, '"charging"%s*:%s*true') ~= nil or string.find(mstat, '"charging"%s*:%s*1') ~= nil
         vol = tonumber(string.match(mstat, '"volume"%s*:%s*(%d+)')) or vol
         src = string.match(mstat, '"source"%s*:%s*"([^"]*)"') or src
         if string.find(mstat, '"mute"') then
@@ -501,8 +502,8 @@ function handle_request(env)
 
         local hostname = uci_get_val("system", "@system[0]", "hostname", "AudioPro-C3")
 
-        local resp = string.format('{"status":"ok","battery":%d,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"daemons":%s,"now_playing":%s}',
-            bat, json_escape(src), vol, tostring(mut), client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), daemons, now_playing)
+        local resp = string.format('{"status":"ok","battery":%d,"charging":%s,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"daemons":%s,"now_playing":%s}',
+            bat, tostring(charging), json_escape(src), vol, tostring(mut), client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), daemons, now_playing)
         uhttpd.send(resp)
 
     elseif action == "volume" then
@@ -531,20 +532,19 @@ function handle_request(env)
         local input = string.lower(params.val or params.input or "wifi")
         local sources = { wifi = "wifi", i2s = "wifi", bt = "bluetooth",
                           bluetooth = "bluetooth", aux = "aux" }
-        local src = sources[input]
-        if src then
-            write_file("/tmp/audio_source", src)
-            send_mcu("AXX+MUT+000\n")
-        end
+        local src = sources[input] or "wifi"
+        write_file("/tmp/audio_source", src)
+        -- Delegate authoritative source switching to mcud daemon (switches STM8S PLM and ALSA routing)
+        os.execute(string.format("ubus call mcud set_source '{\"source\":\"%s\"}' >/dev/null 2>&1", sanitize_shell(src)))
         uhttpd.send(string.format('{"status":"ok","input":"%s"}', json_escape(input)))
 
     elseif action == "player_play" or action == "play" then
-        send_mcu("AXX+PLM+001\nAXX+MUT+000\n")
+        send_mcu("AXX+PLY+001\nAXX+MUT+000\n")
         os.execute("/usr/bin/player_control.sh play all >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","playing":true}')
 
     elseif action == "player_pause" or action == "pause" then
-        send_mcu("AXX+PLM+000\n")
+        send_mcu("AXX+PLY+000\n")
         os.execute("/usr/bin/player_control.sh pause all >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","playing":false}')
 
@@ -563,30 +563,15 @@ function handle_request(env)
         uhttpd.send('{"status":"ok","action":"prev"}')
 
     elseif action == "spotify" or action == "spotify_service" then
-        local verb = string.lower(params.val or params.cmd or "status")
-        if verb ~= "start" and verb ~= "stop" and verb ~= "restart" and verb ~= "status" then
-            uhttpd.send('{"status":"error","message":"val must be start, stop, restart or status"}')
+        local op = params.op or params.state or "status"
+        if op == "restart" or op == "start" then
+            os.execute("/etc/init.d/librespot restart >/dev/null 2>&1 &")
+            uhttpd.send('{"status":"ok","message":"Spotify restarted"}')
+        elseif op == "stop" then
+            os.execute("/etc/init.d/librespot stop >/dev/null 2>&1 &")
+            uhttpd.send('{"status":"ok","message":"Spotify stopped"}')
         else
-            -- keep the uci gate in step with the daemon, otherwise a stop is
-            -- undone by the next reboot
-            if verb == "start" or verb == "stop" then
-                local en = (verb == "start") and "1" or "0"
-                if uci_ctx then
-                    uci_ctx:set("librespot", "main", "enabled", en)
-                    uci_ctx:commit("librespot")
-                else
-                    os.execute(string.format("uci set librespot.main.enabled='%s'; uci commit librespot 2>/dev/null", en))
-                end
-            end
-            if verb ~= "status" then
-                os.execute("/etc/init.d/librespot " .. verb .. " >/dev/null 2>&1")
-                -- procd forks, so give it a moment before reporting the pid back
-                if verb ~= "stop" then os.execute("sleep 1") end
-            end
-            local pid = daemon_pid("librespot")
-            local en = uci_get_val("librespot", "main", "enabled", "1")
-            uhttpd.send(string.format('{"status":"ok","service":"spotify","command":"%s","running":%s,"pid":%d,"enabled":%s}',
-                verb, tostring(pid > 0), pid, tostring(en ~= "0")))
+            uhttpd.send(string.format('{"status":"ok","active":%s}', tostring(daemon_pid("librespot") > 0)))
         end
 
     elseif action == "trigger_preset" or action == "preset" then
@@ -597,10 +582,24 @@ function handle_request(env)
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d triggered"}', pid))
 
     elseif action == "get_eq" then
-        local eq = read_file("/tmp/audiopro_eq.json") or '{"status":"ok","b60":2,"b150":1,"b400":0,"b1k":0,"b2k5":1,"b6k":2,"b14k":1,"preset":"Default"}'
+        local eq = read_file("/tmp/audiopro_eq.json") or '{"status":"ok","preset":"Flat","mode":"hardware","b60":0,"b150":0,"b400":0,"b1k":0,"b2k5":0,"b6k":0,"b14k":0}'
         uhttpd.send(eq)
 
     elseif action == "save_eq" then
+        local pre = params.preset or "Flat"
+        local eq_map = {
+            ["flat"] = 0, ["default"] = 0,
+            ["classic"] = 1,
+            ["pop"] = 2,
+            ["jazz"] = 3,
+            ["vocal"] = 4,
+            ["rock"] = 2, -- maps to pop/rock DSP
+            ["night"] = 4 -- maps to vocal/compressed DSP
+        }
+        local eq_code = eq_map[string.lower(pre)] or 0
+        -- Hardware DSP on secondary MCU (STM8S)
+        send_mcu(string.format("AXX+EQS+%03d\n", eq_code))
+
         local b60 = tonumber(params.b60 or "0") or 0
         local b150 = tonumber(params.b150 or "0") or 0
         local b400 = tonumber(params.b400 or "0") or 0
@@ -608,11 +607,10 @@ function handle_request(env)
         local b2k5 = tonumber(params.b2k5 or "0") or 0
         local b6k = tonumber(params.b6k or "0") or 0
         local b14k = tonumber(params.b14k or "0") or 0
-        local pre = params.preset or "Custom"
-        local eq_json = string.format('{"status":"ok","b60":%d,"b150":%d,"b400":%d,"b1k":%d,"b2k5":%d,"b6k":%d,"b14k":%d,"preset":"%s"}',
-            b60, b150, b400, b1k, b2k5, b6k, b14k, json_escape(pre))
+        local eq_json = string.format('{"status":"ok","preset":"%s","hw_code":%d,"b60":%d,"b150":%d,"b400":%d,"b1k":%d,"b2k5":%d,"b6k":%d,"b14k":%d}',
+            json_escape(pre), eq_code, b60, b150, b400, b1k, b2k5, b6k, b14k)
         write_file("/tmp/audiopro_eq.json", eq_json)
-        uhttpd.send(string.format('{"status":"ok","message":"Equalizer updated","preset":"%s"}', json_escape(pre)))
+        uhttpd.send(string.format('{"status":"ok","message":"Equalizer preset set to %s","preset":"%s"}', json_escape(pre), json_escape(pre)))
 
     elseif action == "tts" or action == "tts_duck" then
         local tts_url = params.url or ""
@@ -642,7 +640,7 @@ function handle_request(env)
         uhttpd.send('{"status":"ok","message":"Streaming stopped"}')
 
     elseif action == "wifi_scan" then
-        local f = io.popen("iwinfo wlan0 scan 2>/dev/null | grep 'ESSID:' | awk -F'\"' '{print $2}'", "r")
+        local f = io.popen("iwinfo radio0 scan 2>/dev/null || iwinfo wlan0 scan 2>/dev/null | grep 'ESSID:' | awk -F'\"' '{print $2}'", "r")
         local networks = {}
         if f then
             for line in f:lines() do
