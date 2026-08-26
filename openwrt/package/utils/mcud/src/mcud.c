@@ -2009,6 +2009,17 @@ static const struct blobmsg_policy set_net_policy[__SET_NET_MAX] = {
     [SET_NET_ERROR] = { .name = "error", .type = BLOBMSG_TYPE_STRING },
 };
 
+enum {
+    SET_PWR_KEEPALIVE,
+    SET_PWR_AUTO_SLEEP,
+    __SET_PWR_MAX
+};
+
+static const struct blobmsg_policy set_pwr_policy[__SET_PWR_MAX] = {
+    [SET_PWR_KEEPALIVE]  = { .name = "keepalive_sec",  .type = BLOBMSG_TYPE_INT32 },
+    [SET_PWR_AUTO_SLEEP] = { .name = "auto_sleep_min", .type = BLOBMSG_TYPE_INT32 },
+};
+
 static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
                             struct ubus_request_data *req, const char *method,
                             struct blob_attr *msg) {
@@ -2027,6 +2038,10 @@ static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
     blobmsg_add_u32(&b, "battery", g_battery_pct);
     blobmsg_add_u8(&b, "charging", g_is_charging ? 1 : 0);
     blobmsg_add_u8(&b, "mute", g_is_muted ? 1 : 0);
+    blobmsg_add_u32(&b, "keepalive_sec", g_keepalive_sec);
+    blobmsg_add_u32(&b, "auto_sleep_min", g_auto_sleep_min);
+    blobmsg_add_string(&b, "power_mode", (g_keepalive_sec > 0 && g_auto_sleep_min == 0) ? "always_on" :
+                                         (g_keepalive_sec == 0) ? "stock_19min_cutoff" : "custom_auto_sleep");
 
     ubus_send_reply(ctx, req, b.head);
     blob_buf_free(&b);
@@ -2197,6 +2212,41 @@ static int mcud_ubus_set_network_state(struct ubus_context *ctx, struct ubus_obj
     return 0;
 }
 
+static int mcud_ubus_set_power_policy(struct ubus_context *ctx, struct ubus_object *obj,
+                                      struct ubus_request_data *req, const char *method,
+                                      struct blob_attr *msg) {
+    (void)obj;
+    (void)method;
+    struct blob_attr *tb[__SET_PWR_MAX];
+    blobmsg_parse(set_pwr_policy, __SET_PWR_MAX, tb, blob_data(msg), blob_len(msg));
+
+    if (tb[SET_PWR_KEEPALIVE]) {
+        int k = blobmsg_get_u32(tb[SET_PWR_KEEPALIVE]);
+        g_keepalive_sec = (k < 0) ? 0 : k;
+        LOG_INFO("UBUS RPC: MCU keepalive updated to %d s (%s)", g_keepalive_sec,
+                 g_keepalive_sec > 0 ? "Always-On enabled, 19-min DC-DC cutoff prevented" :
+                                       "Keepalive disabled, allowing stock 19-min DC-DC cutoff");
+    }
+
+    if (tb[SET_PWR_AUTO_SLEEP]) {
+        int s = blobmsg_get_u32(tb[SET_PWR_AUTO_SLEEP]);
+        g_auto_sleep_min = (s < 0) ? 0 : s;
+        LOG_INFO("UBUS RPC: Inactivity auto-sleep updated to %d min (%s)", g_auto_sleep_min,
+                 g_auto_sleep_min == 0 ? "Always-On" : "Auto power-off on silence enabled");
+    }
+
+    struct blob_buf b;
+    memset(&b, 0, sizeof(b));
+    blob_buf_init(&b, 0);
+    blobmsg_add_u32(&b, "keepalive_sec", g_keepalive_sec);
+    blobmsg_add_u32(&b, "auto_sleep_min", g_auto_sleep_min);
+    blobmsg_add_string(&b, "power_mode", (g_keepalive_sec > 0 && g_auto_sleep_min == 0) ? "always_on" :
+                                         (g_keepalive_sec == 0) ? "stock_19min_cutoff" : "custom_auto_sleep");
+    ubus_send_reply(ctx, req, b.head);
+    blob_buf_free(&b);
+    return 0;
+}
+
 static int mcud_ubus_poweroff(struct ubus_context *ctx, struct ubus_object *obj,
                               struct ubus_request_data *req, const char *method,
                               struct blob_attr *msg) {
@@ -2217,6 +2267,7 @@ static const struct ubus_method mcud_methods[] = {
     UBUS_METHOD("set_source", mcud_ubus_set_source, set_src_policy),
     UBUS_METHOD("set_mute", mcud_ubus_set_mute, set_mute_policy),
     UBUS_METHOD("set_network_state", mcud_ubus_set_network_state, set_net_policy),
+    UBUS_METHOD("set_power_policy", mcud_ubus_set_power_policy, set_pwr_policy),
     UBUS_METHOD_NOARG("poweroff", mcud_ubus_poweroff),
 };
 
