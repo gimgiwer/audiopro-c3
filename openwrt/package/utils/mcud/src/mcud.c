@@ -123,6 +123,9 @@ static int  g_www = 0;
 static int  g_eth = 0;
 static int  g_sleep_in_aux = 0;      /* 0 = keep awake in AUX (default), 1 = timer sleep */
 static int  g_sleep_in_bt = 0;       /* 0 = keep awake in BT (default), 1 = timer sleep */
+static int  g_sleep_on_no_net = 0;   /* 0 = stay awake on no network, 1 = timer sleep on battery */
+static int  g_no_net_timeout_min = 10; /* minutes without network before power off */
+static time_t g_no_net_lost_ts = 0;  /* timestamp when network was lost */
 static int  g_sound_prompts_enabled = 0; /* 0 = Disabled to avoid ALSA audio sink deadlock */
 static int  g_is_playing = 0;        /* 1 = Audio stream running, 0 = Stopped */
 static time_t g_last_activity_time = 0;
@@ -2012,12 +2015,20 @@ static const struct blobmsg_policy set_net_policy[__SET_NET_MAX] = {
 enum {
     SET_PWR_KEEPALIVE,
     SET_PWR_AUTO_SLEEP,
+    SET_PWR_SLEEP_ON_NO_NET,
+    SET_PWR_NO_NET_TIMEOUT,
+    SET_PWR_SLEEP_IN_AUX,
+    SET_PWR_SLEEP_IN_BT,
     __SET_PWR_MAX
 };
 
 static const struct blobmsg_policy set_pwr_policy[__SET_PWR_MAX] = {
-    [SET_PWR_KEEPALIVE]  = { .name = "keepalive_sec",  .type = BLOBMSG_TYPE_INT32 },
-    [SET_PWR_AUTO_SLEEP] = { .name = "auto_sleep_min", .type = BLOBMSG_TYPE_INT32 },
+    [SET_PWR_KEEPALIVE]        = { .name = "keepalive_sec",          .type = BLOBMSG_TYPE_INT32 },
+    [SET_PWR_AUTO_SLEEP]       = { .name = "auto_sleep_min",         .type = BLOBMSG_TYPE_INT32 },
+    [SET_PWR_SLEEP_ON_NO_NET]  = { .name = "sleep_on_no_network",    .type = BLOBMSG_TYPE_INT32 },
+    [SET_PWR_NO_NET_TIMEOUT]   = { .name = "no_network_timeout_min", .type = BLOBMSG_TYPE_INT32 },
+    [SET_PWR_SLEEP_IN_AUX]     = { .name = "sleep_in_aux",           .type = BLOBMSG_TYPE_INT32 },
+    [SET_PWR_SLEEP_IN_BT]      = { .name = "sleep_in_bt",            .type = BLOBMSG_TYPE_INT32 },
 };
 
 static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
@@ -2040,6 +2051,10 @@ static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
     blobmsg_add_u8(&b, "mute", g_is_muted ? 1 : 0);
     blobmsg_add_u32(&b, "keepalive_sec", g_keepalive_sec);
     blobmsg_add_u32(&b, "auto_sleep_min", g_auto_sleep_min);
+    blobmsg_add_u8(&b, "sleep_on_no_network", g_sleep_on_no_net ? 1 : 0);
+    blobmsg_add_u32(&b, "no_network_timeout_min", g_no_net_timeout_min);
+    blobmsg_add_u8(&b, "sleep_in_aux", g_sleep_in_aux ? 1 : 0);
+    blobmsg_add_u8(&b, "sleep_in_bt", g_sleep_in_bt ? 1 : 0);
     blobmsg_add_string(&b, "power_mode", (g_keepalive_sec > 0 && g_auto_sleep_min == 0) ? "always_on" :
                                          (g_keepalive_sec == 0) ? "stock_19min_cutoff" : "custom_auto_sleep");
 
@@ -2235,11 +2250,36 @@ static int mcud_ubus_set_power_policy(struct ubus_context *ctx, struct ubus_obje
                  g_auto_sleep_min == 0 ? "Always-On" : "Auto power-off on silence enabled");
     }
 
+    if (tb[SET_PWR_SLEEP_ON_NO_NET]) {
+        g_sleep_on_no_net = blobmsg_get_u32(tb[SET_PWR_SLEEP_ON_NO_NET]) ? 1 : 0;
+        LOG_INFO("UBUS RPC: sleep_on_no_network updated to %d", g_sleep_on_no_net);
+    }
+
+    if (tb[SET_PWR_NO_NET_TIMEOUT]) {
+        int t = blobmsg_get_u32(tb[SET_PWR_NO_NET_TIMEOUT]);
+        g_no_net_timeout_min = (t < 1) ? 1 : t;
+        LOG_INFO("UBUS RPC: no_network_timeout_min updated to %d min", g_no_net_timeout_min);
+    }
+
+    if (tb[SET_PWR_SLEEP_IN_AUX]) {
+        g_sleep_in_aux = blobmsg_get_u32(tb[SET_PWR_SLEEP_IN_AUX]) ? 1 : 0;
+        LOG_INFO("UBUS RPC: sleep_in_aux updated to %d", g_sleep_in_aux);
+    }
+
+    if (tb[SET_PWR_SLEEP_IN_BT]) {
+        g_sleep_in_bt = blobmsg_get_u32(tb[SET_PWR_SLEEP_IN_BT]) ? 1 : 0;
+        LOG_INFO("UBUS RPC: sleep_in_bt updated to %d", g_sleep_in_bt);
+    }
+
     struct blob_buf b;
     memset(&b, 0, sizeof(b));
     blob_buf_init(&b, 0);
     blobmsg_add_u32(&b, "keepalive_sec", g_keepalive_sec);
     blobmsg_add_u32(&b, "auto_sleep_min", g_auto_sleep_min);
+    blobmsg_add_u8(&b, "sleep_on_no_network", g_sleep_on_no_net ? 1 : 0);
+    blobmsg_add_u32(&b, "no_network_timeout_min", g_no_net_timeout_min);
+    blobmsg_add_u8(&b, "sleep_in_aux", g_sleep_in_aux ? 1 : 0);
+    blobmsg_add_u8(&b, "sleep_in_bt", g_sleep_in_bt ? 1 : 0);
     blobmsg_add_string(&b, "power_mode", (g_keepalive_sec > 0 && g_auto_sleep_min == 0) ? "always_on" :
                                          (g_keepalive_sec == 0) ? "stock_19min_cutoff" : "custom_auto_sleep");
     ubus_send_reply(ctx, req, b.head);
@@ -2514,6 +2554,29 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
         }
     }
 
+    /* No-network sleep check on battery in Wi-Fi mode */
+    char net_if[32];
+    int has_net = default_route_iface(net_if, sizeof(net_if));
+    if (has_net) {
+        g_no_net_lost_ts = 0;
+    } else {
+        if (g_no_net_lost_ts == 0) {
+            g_no_net_lost_ts = now;
+        }
+        if (!g_is_charging && g_sleep_on_no_net && g_current_source == 0) {
+            if ((now - g_no_net_lost_ts) >= (time_t)(g_no_net_timeout_min * 60)) {
+                if (is_audio_active()) {
+                    g_no_net_lost_ts = now;
+                } else {
+                    LOG_INFO("No-Network-Sleep: No network uplink for %d min on battery in Wi-Fi mode. Powering off...", g_no_net_timeout_min);
+                    uloop_end();
+                    graceful_shutdown();
+                    return;
+                }
+            }
+        }
+    }
+
     uloop_timeout_set(t, SLEEP_CHECK_MS);
 }
 
@@ -2529,7 +2592,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, sig_handler);
 
     int opt;
-    while ((opt = getopt(argc, argv, "h:p:u:P:t:v:s:l:k:abm")) != -1) {
+    while ((opt = getopt(argc, argv, "h:p:u:P:t:v:s:l:k:abmnN:")) != -1) {
         switch (opt) {
             case 'l':
                 g_log_level = atoi(optarg);
@@ -2539,6 +2602,13 @@ int main(int argc, char *argv[]) {
                 break;
             case 'b':
                 g_sleep_in_bt = 1;
+                break;
+            case 'n':
+                g_sleep_on_no_net = 1;
+                break;
+            case 'N':
+                g_no_net_timeout_min = atoi(optarg);
+                if (g_no_net_timeout_min < 1) g_no_net_timeout_min = 1;
                 break;
             case 'v':
                 g_user_vol = atoi(optarg);
