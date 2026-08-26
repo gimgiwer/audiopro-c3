@@ -2439,13 +2439,17 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
      * us anyway, so let the MCU have its power-off. */
     /* Stock mv_ioguard: keepalive is only required on battery power. When running
      * on AC (g_is_charging=1), STM8S rails are held by the charger unconditionally —
-     * the 19-minute DC-DC cutoff timer is battery-only (confirmed by mv_ioguard
-     * disassembly: cutoff only armed after MCU+BAT+OFF / !g_is_charging). */
+     * the 19-minute DC-DC cutoff timer is battery-only.
+     * Keepalive is sent if:
+     * 1) Always-On mode is configured (g_auto_sleep_min == 0), OR
+     * 2) Network uplink is available, OR
+     * 3) External inputs (Bluetooth / AUX) or audio streaming are active. */
     if (g_keepalive_sec > 0 && !g_is_charging && now - last_keepalive >= g_keepalive_sec) {
         static int fake_pos = 0;
         char kaif[32], buf[32];
         last_keepalive = now;
-        if (default_route_iface(kaif, sizeof(kaif))) {
+        if (g_auto_sleep_min == 0 || default_route_iface(kaif, sizeof(kaif)) ||
+            g_current_source != 0 || is_audio_active()) {
             uart_send(CMD_POWER_ON);
             uart_send("AXX+PLY+PLA\n");
             snprintf(buf, sizeof(buf), "AXX+PLY+DUR%d&\n", KA_FAKE_DUR_MS);
