@@ -558,31 +558,28 @@ static const unsigned short vol_curve[101] = {
 };
 
 static long vol_pct_to_raw(int pct, long min, long max) {
-	if (pct < 0) pct = 0;
-	if (pct > 100) pct = 100;
-	if (pct == 0) return min;
-	/* Linear dB fader: 1% = -16 dB, 100% = 0 dB. */
-	long db10 = -160L + (160L * (pct - 1)) / 99L;
-	/* Master softvol is configured -60..0 dB. */
-	long raw = ((db10 + 600L) * (max - min) + 300L) / 600L;
-	return min + raw;
+	if (pct <= 0) return min;
+	if (pct >= 100) return max;
+	if (min == 0 && max == 1000) return (long)vol_curve[pct];
+	return min + ((long)vol_curve[pct] * (max - min) + 500L) / 1000L;
 }
 
 static int vol_db10(int pct) {
-	if (pct <= 0) return -6000;
-	return (int)(-160L + (160L * (pct - 1)) / 99L);
+	if (pct <= 0) return -600;
+	long raw = (long)vol_curve[pct];
+	return (int)((raw - 1000L) * 600L / 1000L);
 }
 
-/* Nearest percent rather than a truncation: librespot writes whatever its own
- * rounding produced, which lands a point or two off our grid. */
+/* Nearest percent rather than a truncation: matches librespot's linear volume law. */
 static int vol_raw_to_pct(long v, long min, long max) {
 	if (max <= min) return -1;
-	long raw = v - min;
+	long raw = ((v - min) * 1000L + (max - min) / 2) / (max - min);
 	if (raw <= 0) return 0;
-	long target = ((raw * 600L) + (max - min) / 2) / (max - min) - 600L;
+	if (raw >= 1000) return 100;
 	int best = 1; long err = 0x7fffffffL;
 	for (int p = 1; p <= 100; p++) {
-		long d = vol_db10(p) - target; if (d < 0) d = -d;
+		long d = (long)vol_curve[p] - raw;
+		if (d < 0) d = -d;
 		if (d < err) { err = d; best = p; }
 	}
 	return best;
