@@ -39,31 +39,43 @@ static void uart_send(int fd, const char *cmd) {
 }
 
 int main(void) {
-    printf("=== Linkplay Secondary MCU (STM8) Live Diagnostic ===\n");
+    printf("=== Linkplay Secondary MCU (STM8S) Live Diagnostic (Stock Aligned) ===\n");
     int fd = uart_init();
     if (fd < 0) return 1;
 
     printf("[+] UART %s opened @ 57600 8N1\n", SERIAL_PORT);
     
-    // 4-Step Linkplay Handshake
+    /* Verified Stock 10-Step Handshake Sequence */
+    printf("[*] Running Stock Boot Handshake Sequence...\n");
     uart_send(fd, "AXX+MCU+RDY\n");
-    usleep(150000);
+    usleep(100000);
+    uart_send(fd, "AXX+POW+000\n");
+    usleep(100000);
     uart_send(fd, "AXX+BOT+DON\n");
-    usleep(150000);
-    uart_send(fd, "AXX+PLM+001\n");
-    usleep(150000);
+    usleep(100000);
+    uart_send(fd, "AXX+M2S+007\n");
+    uart_send(fd, "AXX+M2S+011\n");
+    usleep(100000);
+    uart_send(fd, "AXX+RA0+000\n");
+    uart_send(fd, "AXX+STA+001\n");
+    uart_send(fd, "AXX+WWW+001\n");
+    uart_send(fd, "AXX+ETH+000\n");
+    usleep(100000);
+    uart_send(fd, "AXX+PLM+000\n");
+    usleep(100000);
     uart_send(fd, "AXX+MUT+000\n");
-    usleep(150000);
     uart_send(fd, "AXX+VOL+035\n");
-    usleep(150000);
+    uart_send(fd, "AXX+PLY+001\n");
+    usleep(100000);
+    uart_send(fd, "AXX+MCU+VER\n");
     uart_send(fd, "AXX+BAT+GET\n");
 
-    printf("\n[*] Listening for MCU RX responses for 5 seconds...\n");
+    printf("\n[*] Listening for MCU RX responses (press Ctrl+C to stop)...\n");
     struct pollfd pfd = { .fd = fd, .events = POLLIN };
     time_t start = time(NULL);
     char buf[256];
 
-    while (time(NULL) - start < 5) {
+    while (time(NULL) - start < 10) {
         int ret = poll(&pfd, 1, 500);
         if (ret > 0 && (pfd.revents & POLLIN)) {
             ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -75,7 +87,7 @@ int main(void) {
         }
     }
 
-    printf("\n[+] Test completed.\n");
+    printf("\n[+] Diagnostic test completed.\n");
     close(fd);
     return 0;
 }

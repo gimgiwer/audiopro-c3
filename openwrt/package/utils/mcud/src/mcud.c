@@ -482,6 +482,10 @@ static void graceful_shutdown(void) {
     system("killall -TERM librespot shairport-sync squeezelite 2>/dev/null");
     usleep(200000);
 
+    /* Stock mv_ioguard: stop MCU playback state before mute */
+    uart_send(CMD_PLAY_STOP);
+    usleep(50000);
+
     /* Hardware Mute amplifier */
     uart_send(CMD_MUTE);
     usleep(100000);
@@ -1867,6 +1871,12 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+S2M+")) {
         const char *p = strstr(cmd, "MCU+S2M+") + 8;
         LOG_INFO("MCU S2M Event received: [%.3s]", p);
+        if (strncmp(p, "011", 3) == 0) {
+            uart_send(CMD_AUDIOPRO_WAKE_S);
+            uart_send("AXX+S2M+011\n");
+        } else if (strncmp(p, "008", 3) == 0) {
+            uart_send(CMD_POWER_ON);
+        }
     /* Charge state comes in on MCU+BAT++ON / MCU+BAT+OFF. There is no MCU+CHA+
      * family - that string appears in no stock binary, so the handlers that used
      * to sit here could never fire and g_is_charging stayed 0 forever.
