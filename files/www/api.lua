@@ -476,6 +476,15 @@ function handle_request(env)
             mut = string.find(mstat, '"mute"%s*:%s*true') ~= nil
         end
 
+        local mcu_ver = string.match(mstat, '"mcu_version"%s*:%s*"([^"]*)"') or "unknown"
+        local pwr_mode = string.match(mstat, '"power_mode"%s*:%s*"([^"]*)"') or "always_on"
+        local ka_sec = tonumber(string.match(mstat, '"keepalive_sec"%s*:%s*(%d+)')) or 60
+        local sleep_min = tonumber(string.match(mstat, '"auto_sleep_min"%s*:%s*(%d+)')) or 0
+        local sleep_no_net = string.find(mstat, '"sleep_on_no_network"%s*:%s*1') ~= nil or string.find(mstat, '"sleep_on_no_network"%s*:%s*true') ~= nil
+        local no_net_timeout = tonumber(string.match(mstat, '"no_network_timeout_min"%s*:%s*(%d+)')) or 10
+        local sleep_aux = string.find(mstat, '"sleep_in_aux"%s*:%s*1') ~= nil or string.find(mstat, '"sleep_in_aux"%s*:%s*true') ~= nil
+        local sleep_bt = string.find(mstat, '"sleep_in_bt"%s*:%s*1') ~= nil or string.find(mstat, '"sleep_in_bt"%s*:%s*true') ~= nil
+
         local uptime = 120
         local up_str = read_file("/proc/uptime")
         if up_str then uptime = math.floor(tonumber(string.match(up_str, "^(%d+%.?%d*)") or "120")) end
@@ -509,8 +518,10 @@ function handle_request(env)
 
         local hostname = uci_get_val("system", "@system[0]", "hostname", "AudioPro-C3")
 
-        local resp = string.format('{"status":"ok","battery":%d,"charging":%s,"source":"%s","volume":%d,"mute":%s,"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"daemons":%s,"now_playing":%s}',
-            bat, tostring(charging), json_escape(src), vol, tostring(mut), client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), daemons, now_playing)
+        local resp = string.format('{"status":"ok","battery":%d,"charging":%s,"source":"%s","volume":%d,"mute":%s,"mcu_version":"%s","power_policy":{"mode":"%s","keepalive_sec":%d,"auto_sleep_min":%d,"sleep_on_no_network":%s,"no_network_timeout_min":%d,"sleep_in_aux":%s,"sleep_in_bt":%s},"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"daemons":%s,"now_playing":%s}',
+            bat, tostring(charging), json_escape(src), vol, tostring(mut), json_escape(mcu_ver),
+            json_escape(pwr_mode), ka_sec, sleep_min, tostring(sleep_no_net), no_net_timeout, tostring(sleep_aux), tostring(sleep_bt),
+            client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), daemons, now_playing)
         uhttpd.send(resp)
 
     elseif action == "volume" then
@@ -533,6 +544,40 @@ function handle_request(env)
         send_mcu("AXX+MUT+000\n")
         write_file("/tmp/current_mute", "0")
         uhttpd.send('{"status":"ok","mute":false}')
+
+    elseif action == "set_power_policy" or action == "power_policy" then
+        local args = {}
+        if params.keepalive_sec then table.insert(args, string.format('"keepalive_sec":%d', tonumber(params.keepalive_sec) or 0)) end
+        if params.auto_sleep_min then table.insert(args, string.format('"auto_sleep_min":%d', tonumber(params.auto_sleep_min) or 0)) end
+        if params.sleep_on_no_network then table.insert(args, string.format('"sleep_on_no_network":%d', (params.sleep_on_no_network == "1" or params.sleep_on_no_network == "true") and 1 or 0)) end
+        if params.no_network_timeout_min then table.insert(args, string.format('"no_network_timeout_min":%d', tonumber(params.no_network_timeout_min) or 10)) end
+        if params.sleep_in_aux then table.insert(args, string.format('"sleep_in_aux":%d', (params.sleep_in_aux == "1" or params.sleep_in_aux == "true") and 1 or 0)) end
+        if params.sleep_in_bt then table.insert(args, string.format('"sleep_in_bt":%d', (params.sleep_in_bt == "1" or params.sleep_in_bt == "true") and 1 or 0)) end
+
+        if #args > 0 then
+            local json_payload = "{" .. table.concat(args, ",") .. "}"
+            local p = io.popen(string.format("ubus call mcud set_power_policy '%s' 2>/dev/null", json_payload), "r")
+            local res = p and p:read("*a") or ""
+            if p then p:close() end
+
+            -- Optionally persist to UCI if requested
+            if params.save == "1" or params.persist == "1" then
+                if params.keepalive_sec then os.execute(string.format("uci set mcud.main.mcu_keepalive_sec='%d' 2>/dev/null", tonumber(params.keepalive_sec) or 0)) end
+                if params.auto_sleep_min then os.execute(string.format("uci set mcud.main.auto_sleep_min='%d' 2>/dev/null", tonumber(params.auto_sleep_min) or 0)) end
+                if params.sleep_on_no_network then os.execute(string.format("uci set mcud.main.sleep_on_no_network='%s' 2>/dev/null", (params.sleep_on_no_network == "1" or params.sleep_on_no_network == "true") and "1" or "0")) end
+                if params.no_network_timeout_min then os.execute(string.format("uci set mcud.main.no_network_timeout_min='%d' 2>/dev/null", tonumber(params.no_network_timeout_min) or 10)) end
+                if params.sleep_in_aux then os.execute(string.format("uci set mcud.main.sleep_in_aux='%s' 2>/dev/null", (params.sleep_in_aux == "1" or params.sleep_in_aux == "true") and "1" or "0")) end
+                if params.sleep_in_bt then os.execute(string.format("uci set mcud.main.sleep_in_bt='%s' 2>/dev/null", (params.sleep_in_bt == "1" or params.sleep_in_bt == "true") and "1" or "0")) end
+                os.execute("uci commit mcud 2>/dev/null")
+            end
+
+            uhttpd.send(string.format('{"status":"ok","power_policy":%s}', res ~= "" and res or '{"applied":true}'))
+        else
+            local p = io.popen("ubus call mcud status 2>/dev/null", "r")
+            local res = p and p:read("*a") or "{}"
+            if p then p:close() end
+            uhttpd.send(string.format('{"status":"ok","power_status":%s}', res))
+        end
 
     -- Stock has no input-select opcode: AXX+INP+* used to be sent here but it
     -- appears nowhere in the stock rootfs, so the MCU just dropped it. AXX+PLM is
