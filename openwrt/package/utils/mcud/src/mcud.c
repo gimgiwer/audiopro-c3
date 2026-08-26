@@ -30,7 +30,7 @@
 #define SLEEP_CHECK_MS       5000
 #define MCU_KEEPALIVE_SEC    60   /* default for -k, see sleep_timer_cb */
 #define KA_FAKE_DUR_MS       600000  /* the track length we claim in the keepalive burst */
-#define VOL_STEP_DB          3   /* per key press, see adjust_user_volume */
+#define VOL_STEP_DB          1   /* fallback step in the linear -16..0 dB scale */
 #define MCU_VOL_TOLERANCE    2   /* MCU rounds our 0..100 onto its own scale */
 #define MAX_LINE_LEN         128
 #define READ_BUF_SIZE        256
@@ -48,6 +48,9 @@
 #define CMD_MODE_WIFI        "AXX+PLM+000\n"
 #define CMD_MODE_AUX         "AXX+PLM+001\n"
 #define CMD_MODE_BT          "AXX+PLM+002\n"
+/* CMD_INPUT_WIFI/AUX/BT removed: AXX+INP+ family does not exist in STM8S MCU firmware.
+ * Confirmed by full disassembly of mv_ioguard (uart_cmd_parse @ 0x4082b0, MCUCommandSend @ 0x40cab4).
+ * MCU only understands AXX+PLM+ for input mode selection. */
 #define CMD_POWER_ON         "AXX+POW+000\n"  /* Stock: 000 = Wakeup from Standby */
 #define CMD_STANDBY          "AXX+POW+001\n"  /* Stock: 001 = Low power standby */
 #define CMD_POWER_OFF        "AXX+POW+OFF\n"  /* Stock: AXX+POW+OFF cuts secondary rail */
@@ -550,21 +553,32 @@ static const unsigned short vol_curve[101] = {
 static long vol_pct_to_raw(int pct, long min, long max) {
 	if (pct < 0) pct = 0;
 	if (pct > 100) pct = 100;
-	return min + ((long)vol_curve[pct] * (max - min) + 500) / 1000;
+	if (pct == 0) return min;
+	/* Linear dB fader: 1% = -16 dB, 100% = 0 dB. */
+	long db10 = -160L + (160L * (pct - 1)) / 99L;
+	/* Master softvol is configured -60..0 dB. */
+	long raw = ((db10 + 600L) * (max - min) + 300L) / 600L;
+	return min + raw;
+}
+
+static int vol_db10(int pct) {
+	if (pct <= 0) return -6000;
+	return (int)(-160L + (160L * (pct - 1)) / 99L);
 }
 
 /* Nearest percent rather than a truncation: librespot writes whatever its own
  * rounding produced, which lands a point or two off our grid. */
 static int vol_raw_to_pct(long v, long min, long max) {
 	if (max <= min) return -1;
-	long permille = ((v - min) * 1000 + (max - min) / 2) / (max - min);
-	int lo = 0, hi = 100;
-	while (lo < hi) {
-		int mid = (lo + hi) / 2;
-		if (vol_curve[mid] < permille) lo = mid + 1; else hi = mid;
+	long raw = v - min;
+	if (raw <= 0) return 0;
+	long target = ((raw * 600L) + (max - min) / 2) / (max - min) - 600L;
+	int best = 1; long err = 0x7fffffffL;
+	for (int p = 1; p <= 100; p++) {
+		long d = vol_db10(p) - target; if (d < 0) d = -d;
+		if (d < err) { err = d; best = p; }
 	}
-	if (lo > 0 && permille - vol_curve[lo - 1] < vol_curve[lo] - permille) lo--;
-	return lo;
+	return best;
 }
 
 /* Attenuation is software-only here: the PCM5102A has no volume register and the
@@ -573,7 +587,7 @@ static int vol_raw_to_pct(long v, long min, long max) {
  * wrapper instead of a plugin. */
 static void alsa_set_master(int vol) {
     if (!g_master_elem) return;
-    long min = 0, max = 100;
+    long min = 0, max = 1000;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return;
     long v = vol_pct_to_raw(vol, min, max);
     if (snd_mixer_selem_set_playback_volume_all(g_master_elem, v) < 0)
@@ -617,7 +631,7 @@ static void vol_ramp_cb(struct uloop_timeout *t) {
 
 static void alsa_ramp_master(int vol) {
     if (!g_master_elem) return;
-    long min = 0, max = 100, cur = 0;
+    long min = 0, max = 1000, cur = 0;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return;
     if (snd_mixer_selem_get_playback_volume(g_master_elem, SND_MIXER_SCHN_FRONT_LEFT, &cur) < 0) {
         alsa_set_master(vol);
@@ -638,7 +652,7 @@ static void alsa_ramp_master(int vol) {
 
 static int alsa_get_master(void) {
     if (!g_master_elem) return -1;
-    long min = 0, max = 100, v = 0;
+    long min = 0, max = 1000, v = 0;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return -1;
     if (snd_mixer_selem_get_playback_volume(g_master_elem, SND_MIXER_SCHN_FRONT_LEFT, &v) < 0) return -1;
     return vol_raw_to_pct(v, min, max);
@@ -860,7 +874,7 @@ static void alsa_init(void) {
     {
         int mute_top = 0;
         while (mute_top < 100 && vol_curve[mute_top + 1] == 0) mute_top++;
-        int dbt = (vol_curve[25] * 6) / 10 - 600;
+        int dbt = vol_db10(25);
         LOG_INFO("ALSA Master volume control ready (fader, 25%% = %d.%d dB, <=%d%% = mute)",
                  dbt / 10, (-dbt) % 10, mute_top);
     }
@@ -868,17 +882,11 @@ static void alsa_init(void) {
 
 static void mqtt_publish_volume(int vol) {
     if (!g_mosq || !g_mqtt_enabled) return;
-    time_t now = time(NULL);
-    if (now == g_last_vol_pub_sec) {
-        g_pending_vol_pub = vol;
-        return;
-    }
-
     char topic[128], payload[16];
     snprintf(topic, sizeof(topic), "%s/player/volume", g_topic_prefix);
     snprintf(payload, sizeof(payload), "%d", vol);
     mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
-    g_last_vol_pub_sec = now;
+    g_last_vol_pub_sec = time(NULL);
     g_pending_vol_pub = -1;
 }
 
@@ -1000,11 +1008,11 @@ static void set_user_volume(int vol) {
     mcu_report_state("VOL", g_user_vol);
     mqtt_publish_volume(g_user_vol);
     vol_touch();
-    if (vol_curve[g_user_vol] == 0)
+    if (g_user_vol == 0)
         LOG_INFO("Master volume: %d%% (muted)", g_user_vol);
     else {
-        int dbt = (vol_curve[g_user_vol] * 6) / 10 - 600;   /* tenths of a dB */
-        LOG_INFO("Master volume: %d%% (%d.%d dB)", g_user_vol, dbt / 10, (-dbt) % 10);
+        int db10 = vol_db10(g_user_vol);
+        LOG_INFO("Master volume: %d%% (%d.%d dB)", g_user_vol, db10 / 10, (-db10) % 10);
     }
 }
 
@@ -1013,13 +1021,14 @@ static void set_user_volume(int vol) {
  * dB-linear, so step there and convert back to the percent everyone reports.
  * Only the sign of delta matters now. */
 static void adjust_user_volume(int delta) {
-    long min = 0, max = 100;
+    long min = 0, max = 1000;
     if (!g_master_elem ||
         snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) {
         set_user_volume(g_user_vol + (delta > 0 ? VOL_STEP_DB : -VOL_STEP_DB));
         return;
     }
-    long step = ((long)VOL_STEP_DB * (max - min)) / 60;
+    /* Physical keys move by 1 dB on the new -16..0 dB user scale. */
+    long step = ((long)(max - min) + 8) / 16;
     long raw = vol_pct_to_raw(g_user_vol, min, max) + (delta > 0 ? step : -step);
     if (raw < min) raw = min;
     if (raw > max) raw = max;
@@ -1061,6 +1070,11 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             adjust_user_volume(1);
         } else if (strcasecmp(payload, "VOLDOWN") == 0) {
             adjust_user_volume(-1);
+        } else if (!strncasecmp(payload, "PRESET", 6) && payload[6] >= '1' && payload[6] <= '4') {
+            char hcmd[96];
+            snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %c", payload[6]);
+            spawn_async(hcmd);
+            play_sound(SOUND_PRESET);
         } else if (strcasecmp(payload, "REBOOT") == 0) {
             /* async: procd stops us as part of the reboot, and blocking here
              * would hold the loop while the broker waits for our PUBACK */
@@ -1317,10 +1331,10 @@ static void mqtt_send_discovery(void) {
             { "play_pause", "Play/pause",     "mdi:play-pause",    "TOGGLE"  },
             { "next",       "Next track",     "mdi:skip-next",     "NEXT"    },
             { "previous",   "Previous track", "mdi:skip-previous", "PREV"    },
-            /* one press = VOL_STEP_DB, the same step the panel keys take, so a
-             * HA button and the physical key move the level by the same amount */
-            { "volume_up",  "Volume up",      "mdi:volume-plus",   "VOLUP"   },
-            { "volume_down","Volume down",    "mdi:volume-minus",  "VOLDOWN" },
+            { "preset_1",   "Preset 1",        "mdi:numeric-1-box", "PRESET1" },
+            { "preset_2",   "Preset 2",        "mdi:numeric-2-box", "PRESET2" },
+            { "preset_3",   "Preset 3",        "mdi:numeric-3-box", "PRESET3" },
+            { "preset_4",   "Preset 4",        "mdi:numeric-4-box", "PRESET4" },
         };
         for (size_t i = 0; i < sizeof(btns) / sizeof(btns[0]); i++) {
             char topic[256], payload[768];
@@ -1622,6 +1636,17 @@ static int uart_init(void) {
 }
 
 static void set_audio_source(int source) {
+    /* Stock Function_SwitchMode (0x40720c) enforces a 1500 ms cooldown to prevent
+     * STM8S UART ring buffer overflow on rapid SRC button presses. Measured from
+     * mv_ioguard disassembly: tick threshold 0x5DB = 1499 ms, rounded up to 2 s. */
+    static time_t s_last_src_ts = 0;
+    time_t s_now = time(NULL);
+    if (s_now - s_last_src_ts < 2) {
+        LOG_WARN("set_audio_source: cooldown active, ignoring rapid switch to source %d", source % 3);
+        return;
+    }
+    s_last_src_ts = s_now;
+
     g_current_source = source % 3;
     g_last_activity_time = time(NULL);
     const char *src_name = get_source_name(g_current_source);
@@ -1643,6 +1668,8 @@ static void set_audio_source(int source) {
          * faking "connected" is what made the wifi LED lie. Stock only sends PLM. */
         uart_send(CMD_POWER_ON);
         uart_send(CMD_AUDIOPRO_WAKE_M);
+        /* CMD_INPUT_WIFI removed: AXX+INP+ does not exist in STM8S MCU firmware
+         * (confirmed by mv_ioguard full disassembly, MCUCommandSend @ 0x40cab4). */
         uart_send(CMD_MODE_WIFI);
         set_hardware_mute(0);
         play_sound(SOUND_WIFI_CONN);
@@ -1652,6 +1679,7 @@ static void set_audio_source(int source) {
         usleep(50000);
         uart_send(CMD_POWER_ON);
         uart_send(CMD_AUDIOPRO_WAKE_M);
+        /* CMD_INPUT_BT removed: AXX+INP+ does not exist in STM8S MCU firmware. */
         uart_send(CMD_MODE_BT);
         set_hardware_mute(0);
         play_sound(SOUND_BT_CONN);
@@ -1661,6 +1689,7 @@ static void set_audio_source(int source) {
         usleep(50000);
         uart_send(CMD_POWER_ON);
         uart_send(CMD_AUDIOPRO_WAKE_M);
+        /* CMD_INPUT_AUX removed: AXX+INP+ does not exist in STM8S MCU firmware. */
         uart_send(CMD_MODE_AUX);
         set_hardware_mute(0);
         LOG_INFO("Audio source switched: AUX Line-In (AXX+PLM+001)");
@@ -1846,8 +1875,8 @@ static void process_mcu_command(const char *cmd) {
      * Function_BatteryCharge (0x407e78) and Function_BatteryUncharge (0x407e98).
      * Both are a handful of instructions that store 1 or 0 into
      * g_wiimu_shm+0x764 and return. */
-    } else if (strstr(cmd, "MCU+BAT++ON")) {
-        LOG_INFO("Charger connected (MCU+BAT++ON)");
+    } else if (strstr(cmd, "MCU+BAT++ON") || strstr(cmd, "MCU+BAT+ON")) {
+        LOG_INFO("Charger connected (%s)", strstr(cmd, "MCU+BAT++ON") ? "MCU+BAT++ON" : "MCU+BAT+ON");
         g_is_charging = 1;
         mqtt_send_sensor("charging", "true");
         ubus_notify_battery(g_battery_pct, g_is_charging);
@@ -1895,6 +1924,30 @@ static void process_mcu_command(const char *cmd) {
          * MIC+GET answers 000) and no voice assistant, so mirroring the stop would just
          * kill playback on a stray byte. Recognized so it stops showing up as unknown. */
         LOG_DEBUG("MCU+PLY-STP (Alexa cancel) ignored - no voice assistant on this board");
+    } else if (strstr(cmd, "MCU+PLY-PLA")) {
+        /* Stock event 260 (0x104): Function_Resume @ 0x416c94
+         * Physical resume key from STM8S — resume paused playback. */
+        LOG_INFO("MCU+PLY-PLA: physical resume key");
+        ubus_notify_button("resume");
+        spawn_async("/usr/bin/player_control.sh play");
+    } else if (strstr(cmd, "MCU+PLY-PUS")) {
+        /* Stock event 261 (0x105): Function_Pause @ 0x416c80
+         * Physical pause key from STM8S — pause active playback. */
+        LOG_INFO("MCU+PLY-PUS: physical pause key");
+        ubus_notify_button("pause");
+        spawn_async("/usr/bin/player_control.sh pause");
+    } else if (strstr(cmd, "MCU+PLY+PRV")) {
+        /* Stock event 257 (0x101): Function_Prev @ 0x405e4c
+         * Physical previous track key from STM8S. */
+        LOG_INFO("MCU+PLY+PRV: previous track key");
+        ubus_notify_button("prev");
+        spawn_async("/usr/bin/player_control.sh prev");
+    } else if (strstr(cmd, "MCU+PLY+NXT")) {
+        /* Stock event 258 (0x102): Function_Next @ 0x405ee8
+         * Physical next track key from STM8S. */
+        LOG_INFO("MCU+PLY+NXT: next track key");
+        ubus_notify_button("next");
+        spawn_async("/usr/bin/player_control.sh next");
     } else if (strstr(cmd, "MCU+POW+OFF") || strstr(cmd, "MCU+KEY+POW:LONG")) {
         LOG_INFO("MCU reported Power Off event. Initiating graceful shutdown...");
         g_running = 0;
@@ -2323,7 +2376,11 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
      * report set: PLY+PLA plus an advancing POS/DUR pair. So we claim a track is
      * running. Only while we have an uplink: with no route out nobody can reach
      * us anyway, so let the MCU have its power-off. */
-    if (g_keepalive_sec > 0 && now - last_keepalive >= g_keepalive_sec) {
+    /* Stock mv_ioguard: keepalive is only required on battery power. When running
+     * on AC (g_is_charging=1), STM8S rails are held by the charger unconditionally —
+     * the 19-minute DC-DC cutoff timer is battery-only (confirmed by mv_ioguard
+     * disassembly: cutoff only armed after MCU+BAT+OFF / !g_is_charging). */
+    if (g_keepalive_sec > 0 && !g_is_charging && now - last_keepalive >= g_keepalive_sec) {
         static int fake_pos = 0;
         char kaif[32], buf[32];
         last_keepalive = now;
@@ -2478,6 +2535,9 @@ int main(int argc, char *argv[]) {
     if (g_fifo_fd < 0) return EXIT_FAILURE;
 
     alsa_init();
+    /* Establish the persisted safe level before any MCU unmute/play command.
+     * The softvol may come up at 0 dB; never expose that transient to the amp. */
+    alsa_set_master(g_user_vol);
     mqtt_setup();
     ubus_init_service();
 
@@ -2513,14 +2573,16 @@ int main(int argc, char *argv[]) {
     uart_send(CMD_UNMUTE);
     uart_send(CMD_PLAY_START);
 
-    /* Straight write first: softvol creates the control at 0 dB when its params
-     * change, and fading down from full scale is not something to do while
-     * something might already be playing. */
-    alsa_set_master(g_user_vol);
+    /* Master was already set before UNMUTE/PLAY_START above; this call only
+     * synchronizes the MCU/MQTT state and leaves the ALSA level unchanged. */
     set_user_volume(g_user_vol);
     /* The MCU only volunteers its version when asked, and it answers this one
      * (AXX+VER+GET gets nothing). Worth having in the log next to a bug report. */
     uart_send("AXX+MCU+VER\n");
+    /* Ask the MCU to replay its current charger/battery state. Without this,
+     * restarting mcud while AC is already connected leaves charging=false until
+     * the next physical plug/unplug event. */
+    uart_send("AXX+BAT+GET\n");
     g_mcu_link_ts = time(NULL);
     LOG_INFO("Linkplay MCU initialized: I2S Play Mode (AXX+PLM+000), Amplifier Unmuted, AudioPro Wake synced.");
     if (g_auto_sleep_min > 0) {
