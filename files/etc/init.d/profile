@@ -1,0 +1,74 @@
+#!/bin/sh /etc/rc.common
+# Which of the speaker's own services run. Switch with
+#
+#   uci set profile.main.mode='smarthome'    (or 'standalone')
+#   uci commit profile; /etc/init.d/profile start
+#
+# standalone - the factory-like set: Spotify Connect, AirPlay and the LMS player
+#   side by side, each on its own ALSA fader.
+# smarthome  - Music Assistant / Home Assistant only. librespot and
+#   shairport-sync are the two things that own a fader behind MA's back, so with
+#   them gone there is exactly one volume in the box and the keys, HA and MA can
+#   never show different numbers. It also sets mcud's ma_owns_volume, which lets
+#   MA keep the level while its player is idle instead of handing the keys back
+#   to Master. avahi and dbus follow shairport-sync out - they were only ever
+#   here for its mDNS, and the price is that c3.local stops resolving.
+#
+# Which services that is lives in /etc/config/profile, in dependency order
+# because standalone starts them in list order. That file's own comments do not
+# survive the first `uci commit profile`, which is why this is written here.
+#
+# START=99 and the name matters: boot-order runs at S99 too, so anything we turn
+# off has to be turned off after it. "profile" sorts after "boot-order" and
+# before "shairport-sync"/"squeezelite", which is exactly the window we need.
+START=99
+
+# Unlinking from rc.d is not enough for a service whose own init script honours a
+# uci flag - a later `enable` from anywhere would bring it back at the next boot.
+set_enabled() {
+	local svc="$1" val="$2" key dirty=0
+	[ -f "/etc/config/$svc" ] || return 0
+	for key in $(uci -q show "$svc" | sed -n 's/^\([^=]*\.enabled\)=.*/\1/p'); do
+		[ "$(uci -q get "$key")" = "$val" ] && continue
+		uci -q set "$key=$val"
+		dirty=1
+	done
+	# commit rewrites the file and eats its comments, and this runs on every
+	# boot - jffs2 writes stall the audio, so only touch it on a real change
+	[ "$dirty" = 1 ] && uci -q commit "$svc"
+	return 0
+}
+
+start() {
+	local mode list svc want have
+
+	config_load profile
+	config_get mode main mode standalone
+	config_get list main disable ""
+
+	for svc in $list; do
+		[ -x "/etc/init.d/$svc" ] || continue
+		if [ "$mode" = "smarthome" ]; then
+			set_enabled "$svc" 0
+			"/etc/init.d/$svc" disable 2>/dev/null
+			"/etc/init.d/$svc" running 2>/dev/null && "/etc/init.d/$svc" stop
+		else
+			set_enabled "$svc" 1
+			"/etc/init.d/$svc" enable 2>/dev/null
+			"/etc/init.d/$svc" running 2>/dev/null || "/etc/init.d/$svc" start
+		fi
+	done
+
+	# With no rival source there is no reason to ever hand the level back to
+	# Master, so tell mcud. Only on a real change - this also runs on every boot.
+	want=0
+	[ "$mode" = "smarthome" ] && want=1
+	have="$(uci -q get mcud.main.ma_owns_volume)"
+	if [ "$have" != "$want" ]; then
+		uci -q set mcud.main.ma_owns_volume="$want"
+		uci -q commit mcud
+		/etc/init.d/mcud running 2>/dev/null && /etc/init.d/mcud restart
+	fi
+
+	logger -t profile "$mode"
+}

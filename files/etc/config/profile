@@ -1,0 +1,18 @@
+# Which of the speaker's own services run: standalone (factory-like) or
+# smarthome (Music Assistant / Home Assistant only). The full story, including
+# what smarthome takes away, is in /etc/init.d/profile - `uci commit` rewrites
+# this file and drops every comment in it.
+#
+#   uci set profile.main.mode='smarthome'
+#   uci commit profile; /etc/init.d/profile start
+config profile 'main'
+	option mode 'standalone'
+
+	# What smarthome stops and disables, and standalone puts back, in that
+	# order - shairport-sync needs dbus and avahi up before it starts. Add
+	# uhttpd if you never open the local page (its API answers
+	# unauthenticated), or cron if you have nothing scheduled.
+	list disable 'dbus'
+	list disable 'avahi-daemon'
+	list disable 'librespot'
+	list disable 'shairport-sync'

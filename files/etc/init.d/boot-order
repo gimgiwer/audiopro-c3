@@ -21,12 +21,25 @@ START=99
 # shairport-sync.
 ORDER="odhcpd:91 dbus:91 avahi-daemon:92 cron:93 uhttpd:94"
 
+# smarthome mode turns some of these off for good - see /etc/config/profile.
+# Without this we would start them here and S99profile would stop them again on
+# every boot, at two jffs2 writes each.
+profile_off() {
+	[ "$(uci -q get profile.main.mode)" = "smarthome" ] || return 1
+	local s
+	for s in $(uci -q get profile.main.disable); do
+		[ "$s" = "$1" ] && return 0
+	done
+	return 1
+}
+
 start() {
 	for entry in $ORDER; do
 		name=${entry%:*}
 		new=${entry#*:}
 		script=/etc/init.d/$name
 		[ -x "$script" ] || continue
+		profile_off "$name" && continue
 		[ -e "/etc/rc.d/S$new$name" ] && continue
 		"$script" disable 2>/dev/null
 		sed -i "s/^START=.*/START=$new/" "$script"
