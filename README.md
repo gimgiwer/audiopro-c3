@@ -26,14 +26,19 @@ Verified on a running unit, not aspirational:
 | --- | --- |
 | `librespot` | Spotify Connect, patched for fixed-point Vorbis (see below) |
 | `shairport-sync` | AirPlay 1 |
-| `mcud` | front-panel MCU over UART: buttons, LEDs, battery, charge state; MQTT bridge |
+| `squeezelite` | slimproto, so Music Assistant and LMS see the speaker as a player |
+| `mcud` | front-panel MCU over UART: buttons, LEDs, battery, charge state; MQTT bridge and Music Assistant volume/transport over the LMS CLI |
 | `uhttpd` + Lua | web UI and JSON API on `/api` |
 | `avahi` | mDNS, so the speaker is `audiopro.local` |
+| `chronyd` | the clock — there is no RTC on this board, so it starts wrong every boot |
 | `dnsmasq` | DHCP for the setup access point |
 
-`asound.conf` also declares inputs for Squeezelite, DLNA, Snapcast and SIP. Those
-daemons are **not** in the image — the mixer inputs exist, the software does not.
-Add them to `DEVICE_PACKAGES` in `image/audiopro_c3.mk` if you want them.
+`librespot`, `shairport-sync` and `avahi` are the `standalone` half of the service
+profile below; `smarthome` mode stops them.
+
+`asound.conf` also declares `Music`, `TTS`, `Alarm` and `Timer` inputs with faders
+of their own. Nothing in the image plays through them by itself — they are for
+`ha_ducking.sh`, `smart_alarm.sh` and whatever else you point at them.
 
 ## Audio path
 
@@ -45,9 +50,14 @@ service -> softvol (per input) -> softvol "Master" -> dmix -> hw:0,0
 * dmix runs 44100 Hz S16_LE, `period_size 1024`, `buffer_size 16384` — a 371 ms
   ring. That is deliberately generous: `AlsaSink` in librespot is synchronous, so
   decode and output share one thread and the ring is the only slack there is.
-* One `Master` control spans −60…0 dB over 101 steps; the eight per-input controls
-  (`Spotify`, `AirPlay`, `Squeeze`, `Music`, `TTS`, `VoIP`, `Alarm`, `Timer`) span
-  −51…0 dB and are what you duck for notifications.
+* One `Master` control spans −60…0 dB over 1001 steps. The steps are that fine on
+  purpose: librespot polls the control every second and reads anything bigger than
+  0.6 % of the range as somebody else moving the knob, so a coarse control walks
+  itself down.
+* The eight per-input controls (`Spotify`, `AirPlay`, `Squeeze`, `Slimproto`,
+  `Music`, `TTS`, `Alarm`, `Timer`) sit in front of it and are what you duck for
+  notifications. `Slimproto` is the one Music Assistant moves; it spans −23…0 dB
+  because squeezelite has no dB info on a softvol and falls back to a linear map.
 * The DAC is a PCM5102A with no control bus — `/sys/bus/i2c/devices/` is empty.
   Everything is set by the I2S clock alone. Register-level detail and a live dump:
   [docs/I2S_HARDWARE_REGISTERS.md](docs/I2S_HARDWARE_REGISTERS.md).
@@ -102,12 +112,14 @@ build.sh                     clone OpenWrt, graft this on, build
 scripts/install_to_openwrt.sh   graft onto an existing OpenWrt tree
 scripts/build_librespot.sh      cross-build librespot with Tremor
 patches/                     kernel patches (I2S + GDMA)
-patches/librespot/           the Tremor port
+patches/librespot/           the Tremor port and the volume law
+patches/alsa-lib/            softvol dither and gain ramp
 dts/                         device tree
 image/audiopro_c3.mk         device profile, appended to mt76x8.mk
 config/audiopro_c3.diffconfig   config seed for `make defconfig`
 openwrt/package/utils/mcud/  the MCU daemon package
 files/                       root overlay, exactly what ships in the image
+homeassistant/               the HA package for the media card
 docs/                        hardware notes, flashing, network, porting
 src/ services/ tools/        standalone RE and bring-up utilities
 ```
@@ -139,6 +151,61 @@ want it.
 `AudioPro-C3-Setup` / `setup12345`, `UTC`, hostname `audiopro`, no MAC addresses.
 Set your own network from the web UI or `uci`.
 
+### Service profile
+
+Which of the speaker's own services run is one switch:
+
+```sh
+uci set profile.main.mode='smarthome'    # or 'standalone'
+uci commit profile
+/etc/init.d/profile start
+```
+
+`standalone` is the factory-like set: Spotify Connect, AirPlay and the slimproto
+player side by side. `smarthome` keeps only what Music Assistant and Home
+Assistant need and stops everything in `list disable` of `/etc/config/profile` —
+by default `dbus`, `avahi-daemon`, `librespot`, `shairport-sync`.
+
+The reason is the volume. Every source owns a fader in front of `Master`, so a
+phone that reaches librespot or AirPlay directly moves a level Music Assistant
+knows nothing about, and the front panel, the HA slider and the MA slider then
+show three different numbers. With those two gone there is exactly one fader
+being moved, and the profile also sets mcud's `ma_owns_volume`, which keeps the
+front-panel keys on MA's own fader even while its player is idle. The price:
+no direct Spotify Connect and no AirPlay (MA still streams Spotify over
+slimproto), and `audiopro.local` stops resolving with avahi off.
+
+Each service gets both of its switches flipped — the `/etc/rc.d` symlink and the
+service's own uci `enabled` flag — because an `enable` from anywhere else would
+otherwise bring it back on the next boot. `/etc/init.d/boot-order` reads the same
+list and skips those services instead of starting them for `profile` to stop
+again. Keep the list in dependency order: `standalone` starts it front to back,
+and shairport-sync needs dbus and avahi already up.
+
+### Home Assistant
+
+`mcud` publishes MQTT discovery on its own (volume, mute, input, transport, sleep
+timer, restart, power off), but MQTT discovery has no `media_player` platform, so
+artwork, title and transport have to come from the Music Assistant player.
+`homeassistant/audiopro_c3.yaml` fuses the two into one card: drop it in
+`/config/packages/`, add
+
+```yaml
+homeassistant:
+  packages: !include_dir_named packages
+```
+
+to `configuration.yaml` and reload YAML. Do not add automations that mirror volume
+between the two sides or bridge the play/pause button — the speaker already owns
+both, and a second writer stacks the faders or double-toggles the press.
+
+### Clock
+
+There is no RTC. Every boot starts on whatever `sysfixtime` guesses from the newest
+file on flash, and chronyd steps the clock forward once the network is up — which is
+why nothing in `mcud` measures time with the wall clock; every deadline in it is
+`CLOCK_MONOTONIC`. Servers live in `/etc/config/chrony`.
+
 ## Status and honesty
 
 This is a hobbyist port of a speaker with no public documentation, so it is worth
@@ -149,8 +216,10 @@ untrue; those have been corrected in place rather than quietly deleted, and
 something in here that disagrees with your hardware, trust your hardware.
 
 Known open items: the meaning of `CFG0` bit 16 is established empirically but not
-from documentation, and the front-panel MCU re-runs its init poll on a ~20 minute
-timer for reasons that are not yet understood.
+from documentation; the front-panel MCU re-runs its init poll on a ~20 minute timer
+for reasons that are not yet understood; and it never answers `AXX+PLM+GET`, so the
+input selector in the API and on the HA card moves a label and a chime, not the
+hardware input — no verified input-selector opcode has been found.
 
 ## Licence
 
