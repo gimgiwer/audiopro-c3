@@ -7,6 +7,7 @@ TARGET="${2:-all}"
 SAVED_STATE="/tmp/paused_players.state"
 LR_FIFO="/tmp/librespot_cmd"
 LEVEL_DIR="/tmp"
+META_JSON="/tmp/audiopro_meta.json"
 
 . /usr/lib/audiopro/kill_audio.sh
 
@@ -26,13 +27,8 @@ spotify_cmd() {
 pause_spotify()  { spotify_cmd pause; }
 resume_spotify() { spotify_cmd play; }
 
-# AirPlay and squeezelite have no reachable control channel on this build:
-# shairport-sync is compiled without dbus/mpris, and squeezelite only takes
-# orders from its LMS server. Muting the input is the honest approximation --
-# the sender keeps playing, so resume lands further along the track. Save the
-# level we found instead of assuming 100%, or one pause would wipe whatever the
-# user had set. SIGSTOP would be tighter but a stopped dmix client leaves its
-# ring position frozen while the mixer keeps reading it, which loops a fragment.
+# AirPlay has no reachable transport control channel on this build, so it is
+# paused by muting its input.
 mute_ctl() {
 	local ctl="$1" f="$LEVEL_DIR/premute_$1.level"
 	amixer -c 0 sget "$ctl" >/dev/null 2>&1 || return 1
@@ -51,8 +47,17 @@ unmute_ctl() {
 
 pause_airplay()  { mute_ctl AirPlay; }
 resume_airplay() { unmute_ctl AirPlay; }
-pause_squeeze()  { mute_ctl Squeeze; }
-resume_squeeze() { unmute_ctl Squeeze; }
+
+# Music Assistant owns squeezelite's transport and never reads the mixer back, so
+# muting a fader here would leave MA streaming a track it still shows as playing,
+# with the position running on. The play/pause key must not fake that: mcud
+# publishes the press as an mqtt device trigger (audiopro_c3/button/play_pause)
+# and HA turns it into media_player.media_play_pause on the MA player, which is
+# the only thing that can really stop it. An explicit pause/stop from the api or
+# an alarm is a plain local mute and stays one - it silences the speaker and MA
+# keeps its place.
+pause_squeeze()  { [ "$TOGGLING" = 1 ] && return 1; mute_ctl Squeeze; }
+resume_squeeze() { [ "$TOGGLING" = 1 ] && return 1; unmute_ctl Squeeze; }
 
 # SIGSTOP is crude but mpg123 has no control channel. It also catches a TTS
 # prompt if one happens to be playing; mcud's alarm() reaps that either way.
@@ -122,6 +127,7 @@ case "$ACTION" in
 		if [ "$TARGET" = all ]; then do_resume_all; else one_target resume "$TARGET"; fi
 		;;
 	toggle)
+		TOGGLING=1
 		# If Smart Alarm or Timer is ringing, physical Play/Pause dismisses it
 		if [ -f /tmp/alarm.pid ]; then
 			/usr/bin/smart_alarm.sh stop
@@ -139,6 +145,15 @@ case "$ACTION" in
 		# the file the muted-only players share. On an idle librespot the command is
 		# a logged no-op ("ignored while Not Active"), so this cannot start Spotify
 		# while something else is playing.
+		# With no explicit target, follow the source that most recently reported
+		# playback. This keeps the physical key stateless and phone/MA friendly.
+		if [ "$TARGET" = all ] && [ -r "$META_JSON" ]; then
+			case "$(sed -n 's/.*"source": *"\([^"]*\)".*/\1/p' "$META_JSON" | head -1)" in
+				spotify) TARGET=spotify ;;
+				squeeze|music_assistant|ma) TARGET=squeeze ;;
+				airplay) TARGET=airplay ;;
+			esac
+		fi
 		case "$TARGET" in
 			spotify)
 				spotify_cmd toggle
