@@ -225,9 +225,12 @@ codes this cabinet has no jack for — so `mcud` now answers `MCU+PLM+GET` with 
 current source and announces every switch, and the front-panel source key arrives
 as `MCU+PLM+nnn` and lands on the right label. What is missing is the audio: stock
 routed line-in with `MCU+BYP+001` → `ioctl(/dev/i2s_config, 0x2005)`, an I2S
-loopback in the vendor driver. Our driver has the same bit (`CFG1` bit 30,
-`EXTLBK`) but no knob to set it, and whether the carrier board even has an ADC on
-I2S SDI is untested. See
+loopback in the vendor driver. Our driver now exposes that bit as an ALSA switch,
+`I2S External Loopback` on card 0 — it sets `CFG1` bit 30 (`EXTLBK`) and `CFG0`
+bit 20 (`RX_EN`) together and reapplies them on every stream start, which the
+register dumps confirm. Whether anything is audible is a separate question: the RX
+FIFO counters never move, and nothing says the carrier board has an ADC on I2S SDI
+at all. See
 [docs/STOCK_FIRMWARE_ANALYSIS.md](docs/STOCK_FIRMWARE_ANALYSIS.md).
 
 ## Licence

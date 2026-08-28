@@ -107,8 +107,25 @@ to.
 Our own `patches/835-asoc-add-mt7620-support.patch` already carries that bit:
 `I2S_REG_CFG1_EXTLBK BIT(30)` at `CFG1` offset `0x18`, plus the whole RX side
 (`CFG0_RX_EN BIT(20)`, `capture_dma_data`, RX threshold/overrun interrupts). The
-card is playback-only because the PCM5102A is a playback-only codec, so exercising
-this needs a driver-side knob and a rebuild — there is no `devmem` on the device.
+card is playback-only because the PCM5102A is a playback-only codec, and there is
+no `devmem` on the device, so the bit needed a driver-side knob. The patch now
+registers a boolean kcontrol, `I2S External Loopback`, which sets `EXTLBK` and
+`RX_EN` together and reapplies them from `trigger()` — the START case masks `CFG1`
+down to the format bits and would otherwise wipe the loopback on every stream.
+
+Measured on the running board:
+
+| state | `CFG0` | `CFG1` |
+| :--- | :--- | :--- |
+| off, idle | `e0054040` | `00000000` |
+| on, idle | `e0154040` | `40000000` |
+| on, playing | `e1154040` | `40000000` |
+
+So the switch does what it says and the bit survives a stream start. What it does
+not answer is whether the jack is wired to anything: with `RX_EN` on, `INT_STATUS`
+stays `0`, `FF_STATUS` stays `00001003` and `RREG` reads `0` — which is equally
+what a bypass that never touches the RX FIFO would look like. Only a cable in the
+jack and a listen can settle that.
 
 ---
 

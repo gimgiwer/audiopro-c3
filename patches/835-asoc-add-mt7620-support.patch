@@ -60,7 +60,7 @@ Signed-off-by: John Crispin <blogic@openwrt.org>
 +obj-$(CONFIG_SND_RALINK_SOC_I2S) += snd-soc-ralink-i2s.o
 --- /dev/null
 +++ b/sound/soc/ralink/ralink-i2s.c
-@@ -0,0 +1,973 @@
+@@ -0,0 +1,1027 @@
 +/*
 + *  Copyright (C) 2010, Lars-Peter Clausen <lars@metafoo.de>
 + *  Copyright (C) 2016 Michael Lee <igvtee@gmail.com>
@@ -195,6 +195,7 @@ Signed-off-by: John Crispin <blogic@openwrt.org>
 +	struct regmap *regmap;
 +	u32 flags;
 +	unsigned int fmt;
++	bool extlbk;
 +	u16 txdma_req;
 +	u16 rxdma_req;
 +
@@ -372,6 +373,24 @@ Signed-off-by: John Crispin <blogic@openwrt.org>
 +	return 0;
 +}
 +
++/* Line-in on this board is not a mux: stock flips one bit and the I2S block
++ * passes SDI straight back out to SDO (MCU+BYP ends in
++ * ioctl(/dev/i2s_config, 0x2005) in the vendor driver). Nothing here holds the
++ * clocks up, so the block has to be running for it to be audible. */
++static void ralink_i2s_apply_loopback(struct ralink_i2s *i2s)
++{
++	u32 cfg1 = ioread32(i2s->regs + I2S_REG_CFG1) & ~I2S_REG_CFG1_EXTLBK;
++	u32 cfg0 = ioread32(i2s->regs + I2S_REG_CFG0) & ~I2S_REG_CFG0_RX_EN;
++
++	if (i2s->extlbk) {
++		cfg1 |= I2S_REG_CFG1_EXTLBK;
++		cfg0 |= I2S_REG_CFG0_RX_EN;
++	}
++
++	iowrite32(cfg1, i2s->regs + I2S_REG_CFG1);
++	iowrite32(cfg0, i2s->regs + I2S_REG_CFG0);
++}
++
 +static int ralink_i2s_startup(struct snd_pcm_substream *substream,
 +		struct snd_soc_dai *dai)
 +{
@@ -466,6 +485,7 @@ Signed-off-by: John Crispin <blogic@openwrt.org>
 +		else
 +			cfg0 |= I2S_REG_CFG0_RX_EN;
 +		iowrite32(cfg0, i2s->regs + I2S_REG_CFG0);
++		ralink_i2s_apply_loopback(i2s);
 +		break;
 +	case SNDRV_PCM_TRIGGER_STOP:
 +	case SNDRV_PCM_TRIGGER_SUSPEND:
@@ -586,8 +606,42 @@ Signed-off-by: John Crispin <blogic@openwrt.org>
 +	.prealloc_buffer_size = 256 * PAGE_SIZE,
 +};
 +
++static int ralink_i2s_loopback_get(struct snd_kcontrol *kcontrol,
++		struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *c = snd_soc_kcontrol_component(kcontrol);
++	struct ralink_i2s *i2s = snd_soc_component_get_drvdata(c);
++
++	ucontrol->value.integer.value[0] = i2s->extlbk;
++
++	return 0;
++}
++
++static int ralink_i2s_loopback_put(struct snd_kcontrol *kcontrol,
++		struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *c = snd_soc_kcontrol_component(kcontrol);
++	struct ralink_i2s *i2s = snd_soc_component_get_drvdata(c);
++	bool on = !!ucontrol->value.integer.value[0];
++
++	if (i2s->extlbk == on)
++		return 0;
++
++	i2s->extlbk = on;
++	ralink_i2s_apply_loopback(i2s);
++
++	return 1;
++}
++
++static const struct snd_kcontrol_new ralink_i2s_controls[] = {
++	SOC_SINGLE_BOOL_EXT("I2S External Loopback", 0,
++			    ralink_i2s_loopback_get, ralink_i2s_loopback_put),
++};
++
 +static const struct snd_soc_component_driver ralink_i2s_component = {
 +	.name = DRV_NAME,
++	.controls = ralink_i2s_controls,
++	.num_controls = ARRAY_SIZE(ralink_i2s_controls),
 +};
 +
 +static bool ralink_i2s_readable_reg(struct device *dev, unsigned int reg)
