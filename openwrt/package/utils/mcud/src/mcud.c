@@ -36,6 +36,8 @@
 #define MCU_KEEPALIVE_SEC    60   /* default for -k, see sleep_timer_cb */
 #define VOL_STEP_DB          1   /* percent fallback for when Master's raw range is unreadable */
 #define MCU_VOL_STEP         2   /* one panel press moves the MCU's own counter this far */
+#define MCU_VOL_ECHO_MS      2000 /* the MCU restates a level we sent it about a second later */
+#define MCU_WAKE_BURST_MS    3000 /* and restates it twice during its own wake poll */
 #define MAX_LINE_LEN         128
 #define READ_BUF_SIZE        256
 #define BUTTON_DEBOUNCE_MS   120
@@ -131,6 +133,8 @@ static int64_t g_last_button_ms = 0;
 
 static time_t g_mcu_link_ts = 0;      /* when we last ran the MCU handshake */
 static int  g_mcu_vol = -1;           /* the MCU's own volume counter, as last reported */
+static int64_t g_mcu_vol_tx_ms = 0;   /* when we last handed the MCU a level of ours */
+static int64_t g_mcu_burst_ms = 0;    /* when the MCU last started its own wake poll */
 static char g_mcu_ver[16] = "";
 static time_t g_last_vol_pub_sec = 0;
 static int    g_pending_vol_pub = -1;
@@ -151,6 +155,12 @@ static time_t now_mono(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec;
+}
+
+static int64_t mono_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 #define LOG_ERROR(fmt, ...) do { if (g_log_level >= LOG_LEVEL_ERROR) fprintf(stderr, "[mcud ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
@@ -843,7 +853,9 @@ static int ma_write(const char *line) {
         ma_disconnect(1);
         return -1;
     }
-    LOG_DEBUG("MA TX: [%.*s]", (int)(len - 1), line);
+    /* the status poll runs once a second and would bury every other line */
+    if (!strstr(line, "status - 1 tags:"))
+        LOG_DEBUG("MA TX: [%.*s]", (int)(len - 1), line);
     return 0;
 }
 
@@ -1391,9 +1403,9 @@ static void set_user_volume(int vol) {
     g_user_vol = vol;
     alsa_ramp_master(g_user_vol);
 
-    /* Raw 0..100, exactly as stock sent it. The MCU only bookkeeps the number so
-     * its own +/- buttons start from the right base - it does not attenuate. */
-    mcu_report_state("VOL", g_user_vol);
+    /* No AXX+VOL here. The MCU does not attenuate anything, it only bookkeeps the
+     * number - and it restates whatever we give it as a MCU+VOL+nnn that looks like
+     * a key press. It still gets an answer when it asks with MCU+VOL+GET. */
     mqtt_publish_volume(g_user_vol);
     vol_touch();
     if (g_user_vol == 0)
@@ -2155,8 +2167,17 @@ static void process_mcu_command(const char *cmd) {
         uart_send("AXX+SLV+NOT\n");
         return;
     } else if (strstr(cmd, "MCU+VOL+GET")) {
-        /* stock's AXX+VOL+00%d / 0%d / 100 triple is just %03d */
+        /* stock's AXX+VOL+00%d / 0%d / 100 triple is just %03d. The MCU adopts
+         * whatever we answer and restates it, so mark the time or the restatement
+         * looks like a key press. */
         mcu_report_state("VOL", ma_active() ? g_ma_vol : g_user_vol);
+        g_mcu_vol_tx_ms = mono_ms();
+        return;
+    } else if (strstr(cmd, "MCU+PLY+GET")) {
+        /* asked right after a preset key is held. Stock's own reply is
+         * AXX+PLY+00%d and it defaults to 1 (MCUCommandSend id 17, 0x40cf34);
+         * g_is_playing comes from MA's mode, so this is a real answer. */
+        uart_send(g_is_playing ? "AXX+PLY+001\n" : "AXX+PLY+000\n");
         return;
     } else if (strstr(cmd, "MCU+PLM+GET")) {
         /* stock answers this from its own stored source mode (mv_ioguard
@@ -2185,20 +2206,34 @@ static void process_mcu_command(const char *cmd) {
      * for and this MCU (fw 0109) never sends it - captured with a human pressing the
      * keys, every press arrives here instead. The value is the MCU's own counter and
      * has nothing to do with ours: it keeps one per source (line-in came back 100,
-     * wifi 000), it moves in steps of MCU_VOL_STEP, and it ignores our AXX+VOL - we
-     * sent 049 and the next press still reported 006. So only the sign is usable.
+     * wifi 000) and moves in steps of MCU_VOL_STEP, so only the sign is usable.
+     *
+     * Nothing writes our level back with AXX+VOL any more. The MCU quantizes what we
+     * send onto its own even grid and restates it as MCU+VOL+nnn a second later - a
+     * -2 delta that reads exactly like a key press, which answered with another
+     * AXX+VOL. That is the feedback loop that used to walk the volume to 0, and it is
+     * why one press in four came back with the wrong sign. Its counter free-runs now
+     * and pins at its own rails, which costs nothing: the pinned direction is the one
+     * MA has already saturated.
      *
      * A jump bigger than one step is the MCU loading a stored level, which it does on
-     * every source switch and at link-up, and adopting that would slam the volume; the
-     * one it sends leads the M2S/PLM pair by a second, so magnitude is the only thing
-     * that can tell them apart. delta 0 happens at the MCU's own rails and on the
-     * first press after a source switch, where it only re-states the level. */
+     * every source switch; that one leads the M2S/PLM pair by up to a second, so
+     * magnitude is the only thing that can tell them apart. delta 0 at a rail is a
+     * real press with nowhere left to go - the MCU restates a pinned counter instead
+     * of moving it. */
     if (!strncmp(cmd, "MCU+VOL+", 8) && isdigit((unsigned char)cmd[8])) {
         int v = atoi(cmd + 8);
+        int64_t ms = mono_ms();
+        int seen = g_mcu_vol >= 0;
+        int d;
         if (v < 0 || v > 100) return;
-        int d = g_mcu_vol < 0 ? 0 : v - g_mcu_vol;
+        d = seen ? v - g_mcu_vol : 0;
         g_mcu_vol = v;
-        if (d > 0 && d <= MCU_VOL_STEP) {
+        if (ms - g_mcu_vol_tx_ms < MCU_VOL_ECHO_MS) {
+            LOG_DEBUG("MCU volume counter now %d%% (its echo of our own level)", v);
+        } else if (ms - g_mcu_burst_ms < MCU_WAKE_BURST_MS) {
+            LOG_DEBUG("MCU volume counter now %d%% (restated by its wake poll)", v);
+        } else if (d > 0 && d <= MCU_VOL_STEP) {
             LOG_INFO("Panel volume key up (MCU counter %d)", v);
             adjust_user_volume(+1);
             ubus_notify_button("vol_up");
@@ -2206,6 +2241,10 @@ static void process_mcu_command(const char *cmd) {
             LOG_INFO("Panel volume key down (MCU counter %d)", v);
             adjust_user_volume(-1);
             ubus_notify_button("vol_down");
+        } else if (seen && d == 0 && (v == 0 || v == 100)) {
+            LOG_INFO("Panel volume key %s (MCU counter pinned at %d)", v ? "up" : "down", v);
+            adjust_user_volume(v ? +1 : -1);
+            ubus_notify_button(v ? "vol_up" : "vol_down");
         } else {
             LOG_DEBUG("MCU volume counter now %d%% (jump of %d, not a key)", v, d);
         }
@@ -2245,11 +2284,35 @@ static void process_mcu_command(const char *cmd) {
             ma_send("status - 1 tags:");
         else
             spawn_async("/usr/bin/player_control.sh toggle");
-    } else if (strstr(cmd, "MCU+KEY+PRE:")) {
-        const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
-        int preset = atoi(p);
-        if (preset >= 1 && preset <= 4)
+    } else if (!strncmp(cmd, "MCU+KEY+", 8) && isdigit((unsigned char)cmd[8])) {
+        /* Short press on playlist key 1-4, and the only MCU+KEY+ the panel really
+         * sends: the VOL+/VOL-/PLPA/SRC forms above and below come from stock's own
+         * tables and never appear on fw 0109. Stock acks it from the app side with
+         * AXX+KEY+RDY, which is what GNOTIFY=PRESET_KEY:OK turns into at 0x412060. */
+        int preset = atoi(cmd + 8);
+        if (preset >= 1 && preset <= 4) {
             fire_preset(preset, 1);
+            uart_send("AXX+KEY+RDY\n");
+        } else {
+            uart_send("AXX+KEY+NIL\n");
+        }
+    } else if (!strncmp(cmd, "MCU+PRE+", 8) && isdigit((unsigned char)cmd[8])) {
+        /* The same key held until it blinks. Stock stored whatever was playing into
+         * that slot; nothing here can, so it goes out as its own button and whatever
+         * HA has bound to it decides. The MCU still wants OK%01d or FF%01d back
+         * (stock's GNOTIFY=PRESET_SET_FAIL path) to stop blinking. */
+        int preset = atoi(cmd + 8);
+        char b[24];
+        if (preset >= 1 && preset <= 4) {
+            snprintf(b, sizeof(b), "preset_%d_hold", preset);
+            mqtt_send_button(b);
+            ubus_notify_button(b);
+            LOG_INFO("Playlist key %d held", preset);
+            snprintf(b, sizeof(b), "AXX+PRE+OK%d\n", preset);
+        } else {
+            snprintf(b, sizeof(b), "AXX+PRE+FF%d\n", preset % 10);
+        }
+        uart_send(b);
     } else if (strstr(cmd, "MCU+KEY+SRC") || strstr(cmd, "MCU+KEY+WIFI") ||
                strstr(cmd, "MCU+KEY+AUX") || strstr(cmd, "MCU+KEY+BT") ||
                strstr(cmd, "MCU+KEY+PAIR")) {
@@ -2280,6 +2343,10 @@ static void process_mcu_command(const char *cmd) {
             /* wake request: keep the amp rail up, the MCU expects us alive */
             uart_send(CMD_POWER_ON);
         }
+        /* 007/008 open the MCU's own poll burst, and it restates its volume twice
+         * inside it - two phantom key presses before this gate existed. */
+        if (strncmp(p, "007", 3) == 0 || strncmp(p, "008", 3) == 0)
+            g_mcu_burst_ms = mono_ms();
     } else if (strstr(cmd, "MCU+S2M+")) {
         const char *p = strstr(cmd, "MCU+S2M+") + 8;
         LOG_INFO("MCU S2M Event received: [%.3s]", p);
