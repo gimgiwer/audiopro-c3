@@ -589,7 +589,7 @@ function handle_request(env)
                           bluetooth = "bluetooth", aux = "aux" }
         local src = sources[input] or "wifi"
         write_file("/tmp/audio_source", src)
-        -- Delegate authoritative source switching to mcud daemon (switches STM8S PLM and ALSA routing)
+        -- Delegate logical source state and power handling to mcud; no unverified input opcode is sent.
         os.execute(string.format("ubus call mcud set_source '{\"source\":\"%s\"}' >/dev/null 2>&1", sanitize_shell(src)))
         uhttpd.send(string.format('{"status":"ok","input":"%s"}', json_escape(input)))
 
@@ -885,7 +885,7 @@ function handle_request(env)
             else
                 os.execute(string.format("uci set system.@system[0].hostname='%s'; uci commit system 2>/dev/null; uci set shairport-sync.shairport_sync.name='%s' 2>/dev/null; uci commit shairport-sync 2>/dev/null", host, host))
             end
-            os.execute(string.format("echo '%s' > /proc/sys/kernel/hostname 2>/dev/null; sed -i 's/name = .*/name = \"%s\";/' /etc/shairport-sync.conf 2>/dev/null", host, host))
+            os.execute(string.format("echo '%s' > /proc/sys/kernel/hostname 2>/dev/null", host))
             uhttpd.send(string.format('{"status":"ok","message":"Device name updated to %s"}', json_escape(host)))
         else
             uhttpd.send('{"status":"error","message":"Hostname cannot be empty"}')

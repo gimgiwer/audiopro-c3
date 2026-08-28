@@ -433,21 +433,26 @@ esac
 
 ## 10. Streaming Services
 
-### 10.1. AirPlay (`/etc/shairport-sync.conf`)
-```text
-general = {
-    name = "Audio Pro C3";
-    output_backend = "alsa";
-    mdns_backend = "avahi";
-    port = 5000;
-};
+### 10.1. AirPlay (`/etc/config/shairport-sync`)
 
-alsa = {
-    output_device = "airplay_in";
-    mixer_control_name = "AirPlay";
-    audio_backend_buffer_desired_length = 6615; /* Standard 150ms default (customizable to 1323/30ms or 441/10ms) */;
-    disable_synchronization = "no";
-};
+The init script generates the daemon's own `/var/etc/shairport-sync-*.conf` from
+uci on every start, so a hand-written `/etc/shairport-sync.conf` is ignored.
+Everything, the metadata pipe included, has to be set here:
+
+```text
+config shairport-sync 'shairport_sync'
+	option name 'Audio Pro C3'
+	option output_backend 'alsa'
+	option mdns_backend 'avahi'
+	option port '5000'
+	option alsa_output_device 'airplay_in'
+	option alsa_mixer_control_name 'AirPlay'
+	option alsa_buffer_length '6615'          # 150 ms at 44.1 kHz
+	option alsa_disable_synchronization 'no'
+	option volume_control_profile 'flat'
+	option metadata_enabled 'yes'
+	option metadata_cover_art 'yes'
+	option metadata_pipe_name '/tmp/shairport-sync-meta'
 ```
 
 ### 10.2. Spotify Connect Wrapper (`/usr/bin/librespot-wrapper.sh`)

@@ -5,8 +5,9 @@ config shairport-sync 'shairport_sync'
 	option output_backend 'alsa'
 	option mdns_backend 'avahi'
 	option port '5000'
-	# Unified Master control
-	option alsa_mixer_control_name 'Master'
+	# AirPlay owns its source fader; Master remains the shared output level.
+	option alsa_output_device 'airplay_in'
+	option alsa_mixer_control_name 'AirPlay'
 	# Buffer size in frames @ 44.1kHz:
 	# 6615 = 150ms (Default — stable on 2.4GHz Wi-Fi)
 	# 2205 =  50ms (Fast home network)
@@ -16,8 +17,14 @@ config shairport-sync 'shairport_sync'
 	option alsa_disable_synchronization 'no'
 	# 50ms drift threshold before forced resync (0 = disabled, causes glitches on bad Wi-Fi)
 	option resync_threshold '2205'
-	# Let the AirPlay client's slider through; it lands on Master above
+	# Let the AirPlay client's slider through; it lands on AirPlay above
 	option ignore_volume_control 'no'
 	# flat = straight-through in dB, so the phone slider means the same number
-	# on Master as librespot and the panel buttons. "standard" bends the curve.
+	# on AirPlay. "standard" bends the curve.
 	option volume_control_profile 'flat'
+	# meta_airplay.sh reads the pipe for the web UI's now-playing panel. It has to
+	# be turned on here: the hand-written /etc/shairport-sync.conf that used to
+	# carry these was never read, the init generates its own conf from this file.
+	option metadata_enabled 'yes'
+	option metadata_cover_art 'yes'
+	option metadata_pipe_name '/tmp/shairport-sync-meta'
