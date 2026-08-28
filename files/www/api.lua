@@ -579,10 +579,9 @@ function handle_request(env)
             uhttpd.send(string.format('{"status":"ok","power_status":%s}', res))
         end
 
-    -- Stock has no input-select opcode: AXX+INP+* used to be sent here but it
-    -- appears nowhere in the stock rootfs, so the MCU just dropped it. AXX+PLM is
-    -- play/pause (mv_ioguard emits GNOTIFY=PLM_PAUSE/PLM_RESUME for it), not a
-    -- source selector. So the source is ours to track; only unmute is a real command.
+    -- AXX+INP+* used to be sent here and appears nowhere in the stock rootfs, so
+    -- the MCU just dropped it. The real selector is AXX+PLM+nnn, and mcud owns it -
+    -- it has to answer MCU+PLM+GET too, so don't send PLM from here as well.
     elseif action == "input" then
         local input = string.lower(params.val or params.input or "wifi")
         local sources = { wifi = "wifi", i2s = "wifi", bt = "bluetooth",

@@ -217,9 +217,18 @@ something in here that disagrees with your hardware, trust your hardware.
 
 Known open items: the meaning of `CFG0` bit 16 is established empirically but not
 from documentation; the front-panel MCU re-runs its init poll on a ~20 minute timer
-for reasons that are not yet understood; and it never answers `AXX+PLM+GET`, so the
-input selector in the API and on the HA card moves a label and a chime, not the
-hardware input — no verified input-selector opcode has been found.
+for reasons that are not yet understood; and the AUX input still plays nothing.
+
+The input selector itself is no longer a guess. `AXX+PLM+nnn` is stock's
+source-mode channel — `000` Wi-Fi, `005` line-in, `006` Bluetooth, and eleven more
+codes this cabinet has no jack for — so `mcud` now answers `MCU+PLM+GET` with the
+current source and announces every switch, and the front-panel source key arrives
+as `MCU+PLM+nnn` and lands on the right label. What is missing is the audio: stock
+routed line-in with `MCU+BYP+001` → `ioctl(/dev/i2s_config, 0x2005)`, an I2S
+loopback in the vendor driver. Our driver has the same bit (`CFG1` bit 30,
+`EXTLBK`) but no knob to set it, and whether the carrier board even has an ADC on
+I2S SDI is untested. See
+[docs/STOCK_FIRMWARE_ANALYSIS.md](docs/STOCK_FIRMWARE_ANALYSIS.md).
 
 ## Licence
 

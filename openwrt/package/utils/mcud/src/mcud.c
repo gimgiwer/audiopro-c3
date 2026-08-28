@@ -50,7 +50,6 @@
 /* STM8S factory opcodes (Linkplay A28 / Audio Pro C3 hardware). */
 #define CMD_MCU_READY        "AXX+MCU+RDY\n"
 #define CMD_BOOT_DONE        "AXX+BOT+DON\n"
-/* No verified hardware input-selector opcode exists. PLM reports playback state. */
 #define CMD_POWER_ON         "AXX+POW+000\n"  /* Stock: 000 = Wakeup from Standby */
 #define CMD_STANDBY          "AXX+POW+001\n"  /* Stock: 001 = Low power standby */
 #define CMD_POWER_OFF        "AXX+POW+OFF\n"  /* Stock: AXX+POW+OFF cuts secondary rail */
@@ -266,6 +265,30 @@ static const char *get_source_name(int source) {
         case 1: return "bluetooth";
         case 2: return "aux";
         default: return "unknown";
+    }
+}
+
+/* PLM is stock's source-mode channel, not play/pause: mv_ioguard's
+ * Function_SwitchMode (0x40720c) maps these numbers onto
+ * setPlayerCmd:switchmode_by_mcu:<name>, and AXX+PLM+%03d is what the app sends
+ * back for GNOTIFY=PLAY_SOURCE_MODE. Only three of its fourteen codes mean
+ * anything on this board; 012 is stock's second line-in jack, which the C3 lacks
+ * but the MCU may still name. */
+static int plm_code(int source) {
+    switch (source) {
+        case 1:  return 6;   /* bluetooth */
+        case 2:  return 5;   /* line-in */
+        default: return 0;   /* wifi */
+    }
+}
+
+static int source_from_plm(int code) {
+    switch (code) {
+        case 0:  return 0;
+        case 6:  return 1;
+        case 5:
+        case 12: return 2;
+        default: return -1;
     }
 }
 
@@ -2024,6 +2047,9 @@ static void set_audio_source(int source) {
         close(fd);
     }
 
+    /* the MCU keeps its own source mirror and polls it back with MCU+PLM+GET */
+    mcu_report_state("PLM", plm_code(g_current_source));
+
     if (g_current_source == 0) {
         uart_send(CMD_BOOT_DONE);
         usleep(50000);
@@ -2120,8 +2146,9 @@ static void process_mcu_command(const char *cmd) {
         mcu_report_state("VOL", ma_active() ? g_ma_vol : g_user_vol);
         return;
     } else if (strstr(cmd, "MCU+PLM+GET")) {
-        /* PLM is playback state, not an input selector. */
-        uart_send(g_is_playing ? "AXX+PLM+001\n" : "AXX+PLM+000\n");
+        /* stock answers this from its own stored source mode (mv_ioguard
+         * ParseCommonMCUEvent 0x41783c, cfg+968), so ours is the mirror */
+        mcu_report_state("PLM", plm_code(g_current_source));
         return;
     }
 
@@ -2134,6 +2161,16 @@ static void process_mcu_command(const char *cmd) {
     /* Audio Pro C3 has physical pushbuttons only (MCU+KEY+VOL+ / VOL-), no rotary encoder.
      * The STM8S sends MCU+VOL+ solely as an echo/quantization state. Treating it as an
      * ALSA volume setter created a feedback loop that walked the volume down to 0. */
+    if (!strncmp(cmd, "MCU+PLM+", 8) && isdigit((unsigned char)cmd[8])) {
+        int src = source_from_plm(atoi(cmd + 8));
+        if (src < 0) {
+            LOG_INFO("MCU asked for source mode %.3s - no path for it here", cmd + 8);
+        } else if (src != g_current_source) {
+            set_audio_source(src);
+        }
+        return;
+    }
+
     if (!strncmp(cmd, "MCU+VOL+", 8) && isdigit((unsigned char)cmd[8])) {
         int v = atoi(cmd + 8);
         LOG_DEBUG("MCU volume echo %d%% (current master: %d%%)", v, g_user_vol);

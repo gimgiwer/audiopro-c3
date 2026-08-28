@@ -41,13 +41,74 @@ Deep technical breakdown of the factory firmware captured from a running Audio P
   - Communicates via UART `/dev/ttyS0` @ **57600 baud, 8N1** (verified in NVRAM: `wiimuuartconfig=57600,8,N,1`).
   - Serial console port is `/dev/ttyS1` @ 57600 (`console=ttyS1,57600n8`).
 * **Linkplay MCU ASCII Protocol Commands:**
-  - Power on / un-mute amplifier: `AXX+PLM+001\n` followed by `AXX+MUT+000\n`.
   - Set hardware volume: `AXX+VOL+020\n` (range `000` to `100`).
-  - There is **no input-selector opcode**. `AXX+INP+*` was documented here earlier but
-    it occurs zero times anywhere in the stock rootfs, so the MCU never understood it.
-  - `AXX+PLM+%03d` is play/pause state, not a source selector — `mv_ioguard` emits
-    `GNOTIFY=PLM_PAUSE` / `GNOTIFY=PLM_RESUME` for it. Out-of-range values are sent as
-    `AXX+PLM+FFF`; the dispatcher range-checks `value < 101` (mv_ioguard `0x40cf5c`).
+  - Play / pause is the `PLY` family: `AXX+PLY+00%d` (`MCUCommandSend` id 17) and the
+    raw `AXX+PLY+PUS\n` that `GNOTIFY=PLM_PAUSE` sends through the passthrough id 35.
+    That misleading notify name is where this file's old "PLM is play/pause" claim
+    came from; it was wrong.
+  - `AXX+INP+*` occurs zero times anywhere in the stock rootfs, so the MCU never
+    understood it. The real selector is `PLM`, below.
+
+### 2.1 Input switching (`PLM` = play **source** mode)
+
+Recovered from `system/workdir/bin/mv_ioguard`. Both directions are numeric:
+
+| direction | wire | meaning |
+| --- | --- | --- |
+| host → MCU | `AXX+PLM+%03d` (`MCUCommandSend` id 1) | user picked a source; fed by `GNOTIFY=PLAY_SOURCE_MODE:<n>` (`cmdSocket_recive` `0x410c28`) |
+| host → MCU | `AXX+PLM-%03d` (id 38) | the box switched by itself; fed by `GNOTIFY=PLAY_AUTO_SWITCH:<n>` |
+| host → MCU | `AXX+PLM+GET` (id 27) | ask the MCU |
+| MCU → host | `MCU+PLM+nnn` | MCU picked a source (front-panel key) |
+| MCU → host | `MCU+PLM+GET` | MCU asks us; stock answers id 1 with its own mirror at `cfg+968` (`ParseCommonMCUEvent` `0x41783c`) |
+
+Values ≥ 101 go out as `AXX+PLM+FFF` — the dispatcher range-checks with
+`sltiu v0,a3,101` at `0x40cf5c`.
+
+Inbound `MCU+PLM+nnn` becomes event 12, which is `Function_SwitchMode`
+(`0x0040720c`). It turns the three digits into a name and writes
+`setPlayerCmd:switchmode_by_mcu:<name>` into the FIFO `/tmp/Requesta01controller`,
+where `a01controller` does the actual switch:
+
+```
+000 wifi   004 udisk    005 line-in   006 bluetooth  007 mirror   008 optical
+009 RCA    010 co-axial 011 FM        012 line-in2   013 XLR      015 HDMI
+014 switch_DAC_by_mcu:TFcard         017 cd
+```
+
+If the app is not up yet it falls back to `key_id_press:mode` on
+`/tmp/RequestGoheadCmd`; an unknown code goes to `/tmp/pusheventinfo` as
+`ButtonEvent:mode`. The same function is reached from the app side by
+`GNOTIFY=INPUTMODESWITCH` (`0x4151f4`). Five OEM projects (`BUSH_31326`,
+`JENSEN_31324`, `KS_31330`, `TIBO_31322/3`) remap code `016` to a different event;
+the C3 is not one of them.
+
+### 2.2 Line-in audio is an I2S loopback, not a mux
+
+`MCU+BYP+nnn` → event 64 → `Function_I2SBypassMode` (`0x004076c0`) writes
+`i2sbypasson` (`001`/`002`) or `i2sbypassoff` (`000`) to the same FIFO.
+`a01controller` then calls `WMUtil_Set_I2SByPassMode()` in `lib/libmvmsg.so`
+(`0x4a60`), which is nothing but:
+
+```c
+fd = open("/dev/i2s_config", O_RDWR);
+ioctl(fd, on ? 0x2005 : 0x2004, arg);
+close(fd);
+```
+
+`/dev/i2s_config` is created by `system/workdir/live.sh:98` as
+`mknod /dev/i2s_config c 221 0`; siblings are `WMUtil_Set_I2SMode` (0x2001/0x2002)
+and `WMUtil_Set_I2SFormat` (0x2006/0x2007). So the analog jack is wired to an I2S
+receiver and the vendor driver simply loops RX back into TX in hardware — no GPIO,
+no relay, no mux string exists anywhere in `a01controller`. There is a software
+capture→playback thread as fallback, which is what
+`!!!Exception: line-in mode is playing, not i2sbypass, but thread has quit` refers
+to.
+
+Our own `patches/835-asoc-add-mt7620-support.patch` already carries that bit:
+`I2S_REG_CFG1_EXTLBK BIT(30)` at `CFG1` offset `0x18`, plus the whole RX side
+(`CFG0_RX_EN BIT(20)`, `capture_dma_data`, RX threshold/overrun interrupts). The
+card is playback-only because the PCM5102A is a playback-only codec, so exercising
+this needs a driver-side knob and a rebuild — there is no `devmem` on the device.
 
 ---
 
