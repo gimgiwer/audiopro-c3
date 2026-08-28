@@ -12,17 +12,19 @@ exec 9>/tmp/ha_ducking.lock
 flock -x 9 2>/dev/null || true
 
 # librespot owns the Spotify stage (it is the phone's slider, not our parked
-# 100%), so that one has to be put back where it was instead of at max.
+# 100%), so that one has to be put back where it was instead of at max. Saved as
+# a raw value: amixer's percent is the raw fraction rounded down to an integer,
+# so a save/restore in percent walks the level down a step per announcement.
 SPOTIFY_SAVE=/tmp/ha_ducking.spotify
 
 spotify_level() {
     sp=$(cat "$SPOTIFY_SAVE" 2>/dev/null)
-    case "$sp" in ''|*[!0-9]*) sp=100 ;; esac
+    case "$sp" in ''|*[!0-9]*) sp=255 ;; esac
     echo "$sp"
 }
 
 duck_down() {
-    amixer -c 0 sget Spotify 2>/dev/null | sed -n 's/.*\[\([0-9]*\)%\].*/\1/p' | head -1 > "$SPOTIFY_SAVE"
+    amixer -c 0 sget Spotify 2>/dev/null | sed -n 's/.*: \([0-9]*\) \[.*/\1/p' | head -1 > "$SPOTIFY_SAVE"
     # Two steps instead of one hop, so the ear gets a hint of a ramp
     amixer -q -c 0 sset Music 50% 2>/dev/null || true
     amixer -q -c 0 sset Spotify 50% 2>/dev/null || true
@@ -39,12 +41,12 @@ duck_down() {
 duck_up() {
     sp=$(spotify_level)
     amixer -q -c 0 sset Music 60% 2>/dev/null || true
-    amixer -q -c 0 sset Spotify $(( sp * 6 / 10 ))% 2>/dev/null || true
+    amixer -q -c 0 sset Spotify $(( sp * 6 / 10 )) 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 60% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 60% 2>/dev/null || true
     amixer -q -c 0 sset Alarm 60% 2>/dev/null || true
     amixer -q -c 0 sset Music 100% 2>/dev/null || true
-    amixer -q -c 0 sset Spotify ${sp}% 2>/dev/null || true
+    amixer -q -c 0 sset Spotify "$sp" 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 100% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 100% 2>/dev/null || true
     amixer -q -c 0 sset Alarm 100% 2>/dev/null || true

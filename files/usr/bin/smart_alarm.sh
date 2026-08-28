@@ -6,6 +6,10 @@ PID_FILE="/tmp/alarm.pid"
 STATE_FILE="/tmp/alarm_state.json"
 CRON_FILE="/etc/crontabs/root"
 PREV_VOL_FILE="/tmp/alarm_prev_vol"
+# librespot's own slider lives on the Spotify stage, so it has to come back where
+# the phone left it - raw, because amixer's percent is the rounded raw fraction
+# and restoring in percent walks the level down one step per alarm.
+PREV_SPOT_FILE="/tmp/alarm_prev_spotify"
 
 wake_hardware() {
     if [ -p /tmp/mcu_cmd_fifo ]; then
@@ -15,6 +19,7 @@ wake_hardware() {
 }
 
 duck_down_hard() {
+    amixer -c 0 sget Spotify 2>/dev/null | sed -n 's/.*: \([0-9]*\) \[.*/\1/p' | head -1 > "$PREV_SPOT_FILE"
     # Completely suppress or heavily mute background music streams
     amixer -q -c 0 sset Music 0% 2>/dev/null || true
     amixer -q -c 0 sset Spotify 0% 2>/dev/null || true
@@ -23,13 +28,16 @@ duck_down_hard() {
 }
 
 duck_restore() {
+    local sp=$(cat "$PREV_SPOT_FILE" 2>/dev/null)
+    case "$sp" in ''|*[!0-9]*) sp=255 ;; esac
+    rm -f "$PREV_SPOT_FILE"
     # Smoothly restore background music channels
     amixer -q -c 0 sset Music 50% 2>/dev/null || true
-    amixer -q -c 0 sset Spotify 50% 2>/dev/null || true
+    amixer -q -c 0 sset Spotify $(( sp * 6 / 10 )) 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 50% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 50% 2>/dev/null || true
     amixer -q -c 0 sset Music 100% 2>/dev/null || true
-    amixer -q -c 0 sset Spotify 100% 2>/dev/null || true
+    amixer -q -c 0 sset Spotify "$sp" 2>/dev/null || true
     amixer -q -c 0 sset AirPlay 100% 2>/dev/null || true
     amixer -q -c 0 sset Squeeze 100% 2>/dev/null || true
 }

@@ -50,8 +50,8 @@ make_cmdline() {
 	[ -n "$device" ] && add -o "$device"
 
 	# -V hands volume to an ALSA control instead of squeezelite's own software
-	# gain, so LMS/Music Assistant moves the same Master as Spotify, AirPlay and
-	# the panel buttons. -O because the output device is a plugin PCM, not a ctl.
+	# gain, so LMS/Music Assistant owns the Slimproto source fader. Master stays
+	# the shared output level used by the panel and API. -O because the output device is a plugin PCM, not a ctl.
 	local mixer_device volume_control
 	config_get mixer_device options mixer_device ""
 	config_get volume_control options volume_control ""

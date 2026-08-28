@@ -15,9 +15,9 @@ config librespot 'main'
 	# The cube was here before and put two thirds of the dial below audibility -
 	# under 10% clamped to raw 0, which softvol turns into real digital silence.
 	# Do not switch this without regenerating vol_curve in mcud.c to match.
-	# Caveat: Linear ignores --volume-range and hardcodes 60 dB internally, which
-	# only works because Master really spans -60..0. Narrowing min_dB in
-	# asound.conf silently skews this curve.
+	# Caveat: Linear ignores --volume-range and hardcodes 60 dB internally, so the
+	# control it writes has to span exactly that - spotify_in is -60..0 dB in
+	# asound.conf for this reason. Narrowing it silently flattens the curve.
 	option volume_ctrl 'linear'
 	# Name it, don't leave it out: 0.8.0 has no "keep current volume" default, it
 	# falls back to u16::MAX/2 and writes 50% to whatever control it owns on every
@@ -31,8 +31,8 @@ config librespot 'main'
 	option system_cache '/root/.cache/librespot'
 	option mixer 'alsa'
 	option mixer_device 'default'
-	# Unified Master control: Spotify app volume slider directly controls Master softvol
-	option mixer_control 'Master'
+	# Spotify owns its source fader; Master stays the shared output level.
+	option mixer_control 'Spotify'
 	# f64->S16 dither costs a multiply, an add and an RNG draw per sample on a
 	# CPU with no FPU, and buys nothing while the ALSA mixer does the attenuation
 	option dither 'none'
