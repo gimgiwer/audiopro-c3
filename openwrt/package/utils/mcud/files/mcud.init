@@ -7,7 +7,7 @@ USE_PROCD=1
 PROG=/usr/bin/mcud
 
 start_service() {
-    local enabled default_vol auto_sleep sleep_in_aux sleep_in_bt sleep_on_no_net no_net_timeout log_lvl keepalive mqtt_enabled mqtt_host mqtt_port mqtt_user mqtt_pass mqtt_prefix
+    local enabled default_vol auto_sleep sleep_in_aux sleep_in_bt sleep_on_no_net no_net_timeout log_lvl keepalive mqtt_enabled mqtt_host mqtt_port mqtt_user mqtt_pass mqtt_prefix ma_host ma_port ma_step ma_owns
 
     config_load mcud
     config_get_bool enabled main enabled 1
@@ -28,6 +28,10 @@ start_service() {
     config_get mqtt_pass main mqtt_password ""
     [ -z "$mqtt_pass" ] && config_get mqtt_pass main mqtt_pass ""
     config_get mqtt_prefix main mqtt_topic_prefix "audiopro_c3"
+    config_get ma_host main ma_host ""
+    config_get ma_port main ma_port "9090"
+    config_get ma_step main ma_volume_step "5"
+    config_get_bool ma_owns main ma_owns_volume 0
 
     local args="-v $default_vol -s $auto_sleep -l $log_lvl -k $keepalive"
     [ "$sleep_in_aux" -eq 1 ] && args="$args -a"
@@ -42,6 +46,12 @@ start_service() {
     else
         args="$args -m"
     fi
+
+    # Music Assistant's LMS command line. Empty falls back to the broker host,
+    # since both normally live on the same Home Assistant box.
+    [ -z "$ma_host" ] && ma_host="$mqtt_host"
+    [ -n "$ma_host" ] && args="$args -A $ma_host -Q $ma_port -G $ma_step"
+    [ "$ma_owns" -eq 1 ] && args="$args -o"
 
     procd_open_instance
     procd_set_param command "$PROG" $args

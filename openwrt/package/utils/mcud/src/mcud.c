@@ -12,6 +12,11 @@
 #include <getopt.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <stdarg.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <sys/wait.h>
@@ -30,7 +35,7 @@
 #define SLEEP_CHECK_MS       5000
 #define MCU_KEEPALIVE_SEC    60   /* default for -k, see sleep_timer_cb */
 #define KA_FAKE_DUR_MS       600000  /* the track length we claim in the keepalive burst */
-#define VOL_STEP_DB          1   /* fallback step in the linear -16..0 dB scale */
+#define VOL_STEP_DB          1   /* percent fallback for when Master's raw range is unreadable */
 #define MCU_VOL_TOLERANCE    2   /* MCU rounds our 0..100 onto its own scale */
 #define MAX_LINE_LEN         128
 #define READ_BUF_SIZE        256
@@ -42,15 +47,10 @@
 #define SOUND_WIFI_CONN      "/usr/share/sounds/wifi_connected.mp3"
 #define SOUND_LOW_BAT        "/usr/share/sounds/low_battery.mp3"
 
-/* STM8S Factory Opcodes (Linkplay A28 / Audio Pro C3 Hardware Spec) */
+/* STM8S factory opcodes (Linkplay A28 / Audio Pro C3 hardware). */
 #define CMD_MCU_READY        "AXX+MCU+RDY\n"
 #define CMD_BOOT_DONE        "AXX+BOT+DON\n"
-#define CMD_MODE_WIFI        "AXX+PLM+000\n"
-#define CMD_MODE_AUX         "AXX+PLM+001\n"
-#define CMD_MODE_BT          "AXX+PLM+002\n"
-/* CMD_INPUT_WIFI/AUX/BT removed: AXX+INP+ family does not exist in STM8S MCU firmware.
- * Confirmed by full disassembly of mv_ioguard (uart_cmd_parse @ 0x4082b0, MCUCommandSend @ 0x40cab4).
- * MCU only understands AXX+PLM+ for input mode selection. */
+/* No verified hardware input-selector opcode exists. PLM reports playback state. */
 #define CMD_POWER_ON         "AXX+POW+000\n"  /* Stock: 000 = Wakeup from Standby */
 #define CMD_STANDBY          "AXX+POW+001\n"  /* Stock: 001 = Low power standby */
 #define CMD_POWER_OFF        "AXX+POW+OFF\n"  /* Stock: AXX+POW+OFF cuts secondary rail */
@@ -143,6 +143,16 @@ static int    g_last_bat = 100;
 static int  g_ma_vol = -1;            /* last seen MA fader level, -1 = never read */
 static time_t g_sleep_deadline = 0;   /* MQTT sleep timer, 0 = disarmed */
 static int  g_sleep_left_pub = -1;    /* last minutes-left value published */
+
+/* Every deadline in here is an elapsed-time measurement, so none of them may use
+ * the wall clock: this board has no RTC, so the clock starts wrong and chronyd
+ * steps it forward once the network is up - which used to drag the sleep timer
+ * and the activity stamps along with it. */
+static time_t now_mono(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec;
+}
 
 #define LOG_ERROR(fmt, ...) do { if (g_log_level >= LOG_LEVEL_ERROR) fprintf(stderr, "[mcud ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
 #define LOG_WARN(fmt, ...)  do { if (g_log_level >= LOG_LEVEL_WARN)  fprintf(stderr, "[mcud WARN] " fmt "\n", ##__VA_ARGS__); } while(0)
@@ -662,9 +672,10 @@ static int alsa_get_master(void) {
     return vol_raw_to_pct(v, min, max);
 }
 
-/* Any softvol by name. The per-app stages span -51..0 dB over their raw range
- * and raw is dB-linear, so plain percent-of-range is exactly the number Music
- * Assistant shows on its slider - vol_curve is Master's law and only Master's. */
+/* Any softvol by name. The duck stages span -51..0 dB, Slimproto -23..0, and raw
+ * is dB-linear on all of them, so percent-of-range is the stage's own position -
+ * not what Music Assistant shows: squeezelite runs its slider through its own
+ * curve, so MA 50% lands on raw 166, i.e. 65%. vol_curve is Master's law only. */
 static snd_mixer_elem_t *alsa_find_elem(const char *name) {
     snd_mixer_selem_id_t *sid;
     if (!g_mixer) return NULL;
@@ -693,6 +704,316 @@ static int alsa_set_pct(const char *name, int pct) {
     return snd_mixer_selem_set_playback_volume_all(e, min + (max - min) * pct / 100);
 }
 
+/* --- Music Assistant over the LMS command line (port 9090) ------------------
+ * The Slimproto level really lives in MA: it runs its own curve before
+ * squeezelite ever sees a dB value, so the softvol percent we can read from
+ * ALSA is not the number on the user's slider - raw 131 of 255 is MA 31, not
+ * 51. Talking to the CLI puts the front-panel keys on that same number and
+ * lets the play/pause key reach MA without an HA automation in the middle.
+ * Plain line protocol, request/response only (no subscribe), replies are
+ * URL-encoded. */
+#define MA_PORT_DEFAULT   9090
+/* MA's CLI accepts "listen 1" and "subscribe:N" and then pushes nothing, so a
+ * poll is the only way to notice the phone moving MA's own slider. 1 s because
+ * anything slower is a visible lag between HA and MA; one line each way. */
+#define MA_POLL_MS        1000
+#define MA_RETRY_MIN_MS   5000
+#define MA_RETRY_MAX_MS   30000
+#define MA_STEP_DEFAULT   5     /* MA units per key press: 20 presses top to bottom */
+#define MA_RX_SIZE        4096
+
+static char g_ma_host[64] = "";     /* empty: same box as the broker */
+static int  g_ma_port = MA_PORT_DEFAULT;
+static int  g_ma_step = MA_STEP_DEFAULT;
+static int  g_ma_owns_volume = 0;   /* -o: nothing else rides Master, see /etc/config/profile */
+static int  g_ma_fd = -1;
+static int  g_ma_connecting = 0;
+static struct uloop_fd g_ma_ufd;
+static struct uloop_timeout g_ma_poll_t, g_ma_retry_t;
+static int  g_ma_retry_ms = MA_RETRY_MIN_MS;
+static char g_ma_id[64] = "";       /* our slimproto player id, as MA prints it */
+static char g_ma_rx[MA_RX_SIZE];
+static size_t g_ma_rxlen = 0;
+static int  g_ma_mode = -1;         /* -1 unknown, 0 stop, 1 play, 2 pause */
+static int  g_ma_power = -1;
+
+static void ma_connect(void);
+static void ma_retry_cb(struct uloop_timeout *t);
+
+static void ma_arm_retry(void) {
+    g_ma_retry_t.cb = ma_retry_cb;
+    uloop_timeout_set(&g_ma_retry_t, g_ma_retry_ms);
+    g_ma_retry_ms *= 2;
+    if (g_ma_retry_ms > MA_RETRY_MAX_MS) g_ma_retry_ms = MA_RETRY_MAX_MS;
+}
+
+static const char *ma_host(void) {
+    return g_ma_host[0] ? g_ma_host : g_mqtt_host;
+}
+
+static int ma_connected(void) {
+    return g_ma_fd >= 0 && !g_ma_connecting;
+}
+
+/* MA owns the level only while its player is the thing making sound. Stopped
+ * hands the keys back to Master, which is what Spotify and AirPlay ride on.
+ * With those two off (profile mode smarthome) there is nothing to hand it back
+ * to, so MA keeps it even while idle - it takes "mixer volume N" with power:0
+ * and remembers it for the next play, which is what makes the keys, HA and MA
+ * one number at all times instead of only during playback. */
+static int ma_active(void) {
+    if (!ma_connected() || !g_ma_id[0] || g_ma_vol < 0) return 0;
+    if (g_ma_owns_volume) return 1;
+    return g_ma_power != 0 && (g_ma_mode == 1 || g_ma_mode == 2);
+}
+
+/* One number for the user: whatever the keys move right now is what the MCU
+ * bookkeeps and HA shows. */
+static void vol_publish_visible(void) {
+    int v = ma_active() ? g_ma_vol : g_user_vol;
+    if (v < 0) return;
+    mcu_report_state("VOL", v);
+    mqtt_publish_volume(v);
+}
+
+static void ma_disconnect(int retry) {
+    if (g_ma_fd >= 0) {
+        uloop_fd_delete(&g_ma_ufd);
+        close(g_ma_fd);
+        g_ma_fd = -1;
+    }
+    g_ma_connecting = 0;
+    g_ma_rxlen = 0;
+    g_ma_mode = -1;
+    uloop_timeout_cancel(&g_ma_poll_t);
+    if (retry) ma_arm_retry();
+}
+
+static int ma_write(const char *line) {
+    size_t len;
+    ssize_t n;
+    if (!ma_connected() || !line) return -1;
+    len = strlen(line);
+    n = write(g_ma_fd, line, len);
+    if (n != (ssize_t)len) {
+        LOG_WARN("MA CLI write failed: %s", strerror(errno));
+        ma_disconnect(1);
+        return -1;
+    }
+    LOG_DEBUG("MA TX: [%.*s]", (int)(len - 1), line);
+    return 0;
+}
+
+/* Every player command is prefixed with the player id. */
+static int ma_send(const char *fmt, ...) {
+    char line[256];
+    int n;
+    va_list ap;
+    if (!ma_connected() || !g_ma_id[0]) return -1;
+    n = snprintf(line, sizeof(line), "%s ", g_ma_id);
+    va_start(ap, fmt);
+    n += vsnprintf(line + n, sizeof(line) - n - 2, fmt, ap);
+    va_end(ap);
+    if (n < 0 || n > (int)sizeof(line) - 2) return -1;
+    line[n++] = '\n';
+    line[n] = '\0';
+    return ma_write(line);
+}
+
+static void url_decode(char *s) {
+    char *w = s;
+    while (*s) {
+        if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
+            char hex[3] = { s[1], s[2], 0 };
+            *w++ = (char)strtol(hex, NULL, 16);
+            s += 3;
+        } else {
+            *w++ = *s++;
+        }
+    }
+    *w = '\0';
+}
+
+/* Which of MA's players is us: match the address our own socket came from, so
+ * this survives a MAC that belongs to an interface we never guessed right. */
+static int ma_ip_is_ours(const char *ip) {
+    struct sockaddr_in sa;
+    socklen_t len = sizeof(sa);
+    char mine[INET_ADDRSTRLEN];
+    if (g_ma_fd < 0 || getsockname(g_ma_fd, (struct sockaddr *)&sa, &len) < 0) return 0;
+    if (!inet_ntop(AF_INET, &sa.sin_addr, mine, sizeof(mine))) return 0;
+    return strcmp(mine, ip) == 0;
+}
+
+static void ma_parse_line(char *line) {
+    char pending_id[64] = "";
+    char *tok, *save = NULL, *p;
+    int vol = -1, mode = -1, power = -1;
+
+    /* "mixer volume ?" answers with the query echoed back and then the value,
+     * everything else is key:value pairs - and in those the key arrives
+     * percent-encoded, so this can only ever match the query form. */
+    p = strstr(line, " mixer volume ");
+    if (p) {
+        p += 14;
+        if (*p == '?' && p[1] == ' ') p += 2;
+        if (isdigit((unsigned char)*p)) vol = atoi(p);
+    }
+
+    for (tok = strtok_r(line, " ", &save); tok; tok = strtok_r(NULL, " ", &save)) {
+        char *c;
+        url_decode(tok);
+        c = strchr(tok, ':');
+        if (!c) continue;
+        *c = '\0';
+        if (!strcmp(tok, "playerid")) {
+            snprintf(pending_id, sizeof(pending_id), "%s", c + 1);
+        } else if (!strcmp(tok, "ip")) {
+            char *colon = strchr(c + 1, ':');
+            if (colon) *colon = '\0';
+            if (!g_ma_id[0] && pending_id[0] && ma_ip_is_ours(c + 1)) {
+                snprintf(g_ma_id, sizeof(g_ma_id), "%s", pending_id);
+                LOG_INFO("Music Assistant player is %s", g_ma_id);
+            }
+        } else if (!strcmp(tok, "mixer volume")) {
+            vol = atoi(c + 1);
+        } else if (!strcmp(tok, "mode")) {
+            mode = !strcmp(c + 1, "play") ? 1 : !strcmp(c + 1, "pause") ? 2 : 0;
+        } else if (!strcmp(tok, "power")) {
+            power = atoi(c + 1);
+        }
+    }
+
+    int was_owner = ma_active();
+    if (power >= 0) g_ma_power = power;
+    if (mode >= 0 && mode != g_ma_mode) {
+        g_ma_mode = mode;
+        LOG_INFO("Music Assistant is %s", mode == 1 ? "playing" : mode == 2 ? "paused" : "stopped");
+    }
+    if (vol >= 0 && vol != g_ma_vol) {
+        g_ma_vol = vol;
+        mqtt_publish_ma_volume(vol);
+        LOG_INFO("Music Assistant volume: %d%%", vol);
+        if (ma_active()) vol_publish_visible();
+    }
+    /* MA stopping hands the level back to Master and vice versa - without this
+     * HA keeps showing the number of whoever used to own it. */
+    if (ma_active() != was_owner) vol_publish_visible();
+}
+
+static void ma_poll_cb(struct uloop_timeout *t) {
+    (void)t;
+    if (!ma_connected()) return;
+    if (!g_ma_id[0]) {
+        ma_write("players 0 100\n");
+        uloop_timeout_set(&g_ma_poll_t, MA_POLL_MS);
+        return;
+    }
+    ma_send("status - 1 tags:");
+    /* status carries "mixer volume" only while the player is powered on, and
+     * with owns_volume the keys still move MA's own number when it is off */
+    if (g_ma_owns_volume && g_ma_power != 1) ma_send("mixer volume ?");
+    uloop_timeout_set(&g_ma_poll_t, MA_POLL_MS);
+}
+
+static void ma_fd_cb(struct uloop_fd *ufd, unsigned int events) {
+    (void)events;
+    if (g_ma_connecting) {
+        int err = 0;
+        socklen_t len = sizeof(err);
+        if (getsockopt(g_ma_fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err) {
+            LOG_WARN("MA CLI connect to %s:%d failed: %s", ma_host(), g_ma_port,
+                     strerror(err ? err : errno));
+            ma_disconnect(1);
+            return;
+        }
+        g_ma_connecting = 0;
+        g_ma_retry_ms = MA_RETRY_MIN_MS;
+        uloop_fd_delete(&g_ma_ufd);
+        uloop_fd_add(&g_ma_ufd, ULOOP_READ);
+        LOG_INFO("Music Assistant CLI connected to %s:%d%s", ma_host(), g_ma_port,
+                 g_ma_owns_volume ? " (owns the volume)" : "");
+        g_ma_poll_t.cb = ma_poll_cb;
+        ma_poll_cb(&g_ma_poll_t);
+        return;
+    }
+
+    for (;;) {
+        ssize_t n = read(g_ma_fd, g_ma_rx + g_ma_rxlen, sizeof(g_ma_rx) - g_ma_rxlen - 1);
+        char *nl, *start;
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            ma_disconnect(1);
+            return;
+        }
+        if (n == 0) {
+            LOG_WARN("MA CLI closed the connection");
+            ma_disconnect(1);
+            return;
+        }
+        g_ma_rxlen += n;
+        g_ma_rx[g_ma_rxlen] = '\0';
+        start = g_ma_rx;
+        while ((nl = strchr(start, '\n')) != NULL) {
+            *nl = '\0';
+            if (*start) ma_parse_line(start);
+            start = nl + 1;
+        }
+        g_ma_rxlen = strlen(start);
+        memmove(g_ma_rx, start, g_ma_rxlen + 1);
+        /* a reply longer than the buffer means we lost sync - drop it */
+        if (g_ma_rxlen >= sizeof(g_ma_rx) - 1) g_ma_rxlen = 0;
+    }
+    if (ufd->eof || ufd->error) ma_disconnect(1);
+}
+
+static void ma_retry_cb(struct uloop_timeout *t) {
+    (void)t;
+    ma_connect();
+}
+
+static void ma_connect(void) {
+    const char *host = ma_host();
+    struct sockaddr_in sa;
+    int fd;
+
+    if (g_ma_fd >= 0 || !host[0]) return;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(g_ma_port);
+    if (inet_pton(AF_INET, host, &sa.sin_addr) != 1) {
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) {
+            LOG_WARN("Cannot resolve Music Assistant host %s", host);
+            ma_arm_retry();
+            return;
+        }
+        sa.sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
+        freeaddrinfo(res);
+    }
+    fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        ma_arm_retry();
+        return;
+    }
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0 && errno != EINPROGRESS) {
+        LOG_WARN("MA CLI connect to %s:%d failed: %s", host, g_ma_port, strerror(errno));
+        close(fd);
+        ma_arm_retry();
+        return;
+    }
+    g_ma_fd = fd;
+    g_ma_connecting = 1;
+    g_ma_rxlen = 0;
+    g_ma_ufd.fd = fd;
+    g_ma_ufd.cb = ma_fd_cb;
+    uloop_fd_add(&g_ma_ufd, ULOOP_READ | ULOOP_WRITE);
+}
+
 /* Someone else moved the control - librespot's alsa mixer, amixer, ha_ducking.
  * Follow it so the MCU and MQTT stay in sync. Our own writes land here too, but
  * the value already matches g_user_vol by then so they stop right here. */
@@ -714,11 +1035,13 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
     }
 
     /* Music Assistant lands here: squeezelite converts the server's gain to dB
-     * and writes this control on every volume change and every reconnect, and it
-     * never reads it back - mirroring it out is the only way HA gets to see the
-     * level MA is really using. Master * this is the real output level, which is
-     * why two faders at 25% and 37% sound like -44 dB and neither UI admits it. */
-    {
+     * and writes this control on every volume change and every reconnect. That
+     * write is a free trigger, but the raw value is squeezelite's own curve, not
+     * MA's slider - so ask the server what it actually thinks. Without the CLI
+     * the softvol position is still better than nothing. */
+    if (ma_connected() && g_ma_id[0]) {
+        ma_send("mixer volume ?");
+    } else {
         int ma = alsa_get_pct(MA_VOL_CTL);
         if (ma >= 0 && ma != g_ma_vol) {
             g_ma_vol = ma;
@@ -793,37 +1116,33 @@ static void check_duck_controls(void) {
 }
 
 /* softvol controls are created when the PCM is first opened and don't survive a
- * reboot, so open "master" once just to make the control exist. squeeze_in gets
- * the same treatment because squeezelite reads its -V control before it opens the
- * pcm: without this it finds no "Slimproto", falls back to its own software gain
- * and Music Assistant's slider stops touching our dithered softvol. Opening
- * squeeze_in creates Squeeze and Slimproto both, and it slaves to master so one
- * open would have been enough - keep both, the second is free. */
-static void alsa_probe_master_pcm(void) {    snd_pcm_t *pcm = NULL;
-    int err = snd_pcm_open(&pcm, "master", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
-    if (err < 0) {
-        LOG_WARN("Cannot open ALSA 'master' (%s) - volume control will be unavailable", snd_strerror(err));
-        return;
+ * reboot, and every client that wants a fader looks it up before it opens a pcm:
+ * squeezelite falls back to its own software gain, librespot errors out and procd
+ * respawns it forever, shairport-sync reverts to software volume. ha_ducking.sh
+ * has the same problem for a stage nothing has played through yet. So open the
+ * whole chain once at startup - each open costs a few ms and creates the controls
+ * of everything it slaves to as well. master first, the rest in any order. */
+static void alsa_probe_pcms(void) {
+    static const char *const pcms[] = {
+        "master", "squeeze_in", "spotify_in", "airplay_in",
+        "music_in", "tts_in", "alarm_in", "timer_in", NULL
+    };
+
+    for (int i = 0; pcms[i]; i++) {
+        snd_pcm_t *pcm = NULL;
+        int err = snd_pcm_open(&pcm, pcms[i], SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+        if (err < 0) {
+            LOG_WARN("Cannot open ALSA '%s' (%s) - its fader will be missing",
+                     pcms[i], snd_strerror(err));
+            continue;
+        }
+        snd_pcm_close(pcm);
     }
-    snd_pcm_close(pcm);
-
-    if (snd_pcm_open(&pcm, "squeeze_in", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) < 0)
-        LOG_WARN("Cannot open ALSA 'squeeze_in' - the Slimproto fader will be missing");
-    else
-        snd_pcm_close(pcm);
-
-    /* librespot owns the Spotify stage and opens its mixer control before it ever
-     * opens a pcm, so without this it starts before the control exists, errors out
-     * and procd respawns it forever. We start at 15, it starts at 90. */
-    if (snd_pcm_open(&pcm, "spotify_in", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) < 0)
-        LOG_WARN("Cannot open ALSA 'spotify_in' - librespot will not find its mixer control");
-    else
-        snd_pcm_close(pcm);
 }
 
 static void alsa_init(void) {
     if (g_mixer) return;
-    alsa_probe_master_pcm();
+    alsa_probe_pcms();
 
     if (snd_mixer_open(&g_mixer, 0) < 0) return;
     if (snd_mixer_attach(g_mixer, "default") < 0 ||
@@ -890,7 +1209,7 @@ static void mqtt_publish_volume(int vol) {
     snprintf(topic, sizeof(topic), "%s/player/volume", g_topic_prefix);
     snprintf(payload, sizeof(payload), "%d", vol);
     mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
-    g_last_vol_pub_sec = time(NULL);
+    g_last_vol_pub_sec = now_mono();
     g_pending_vol_pub = -1;
 }
 
@@ -930,7 +1249,7 @@ static void sleep_timer_arm(int minutes) {
         return;
     }
     if (minutes > 240) minutes = 240;
-    g_sleep_deadline = time(NULL) + (time_t)minutes * 60;
+    g_sleep_deadline = now_mono() + (time_t)minutes * 60;
     mqtt_publish_sleep(minutes);
     LOG_INFO("Sleep timer armed: %d min", minutes);
 }
@@ -997,7 +1316,6 @@ static void vol_touch(void) {
 static void set_user_volume(int vol) {
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
-    g_user_vol = vol;
     /* HA and the keys send a level, never an explicit unmute, so any level means
      * unmute - otherwise the switch would read ON while sound came back out */
     if (g_is_muted) {
@@ -1005,6 +1323,16 @@ static void set_user_volume(int vol) {
         uart_send(CMD_UNMUTE);
         mqtt_publish_mute();
     }
+    /* While MA is the live source, its fader is the number everyone looks at.
+     * Moving Master as well would stack two curves and the dB add up. */
+    if (ma_active() && ma_send("mixer volume %d", vol) == 0) {
+        g_ma_vol = vol;
+        mqtt_publish_ma_volume(vol);
+        vol_publish_visible();
+        LOG_INFO("Music Assistant volume: %d%%", vol);
+        return;
+    }
+    g_user_vol = vol;
     alsa_ramp_master(g_user_vol);
 
     /* Raw 0..100, exactly as stock sent it. The MCU only bookkeeps the number so
@@ -1026,12 +1354,25 @@ static void set_user_volume(int vol) {
  * Only the sign of delta matters now. */
 static void adjust_user_volume(int delta) {
     long min = 0, max = 1000;
+    /* MA applies its own curve server-side, so hand it a relative step and read
+     * back whatever it decided rather than predicting the result. */
+    if (ma_active()) {
+        if (g_is_muted) {
+            g_is_muted = 0;
+            uart_send(CMD_UNMUTE);
+            mqtt_publish_mute();
+        }
+        if (ma_send("mixer volume %+d", delta > 0 ? g_ma_step : -g_ma_step) == 0) {
+            ma_send("mixer volume ?");
+            return;
+        }
+    }
     if (!g_master_elem ||
         snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) {
         set_user_volume(g_user_vol + (delta > 0 ? VOL_STEP_DB : -VOL_STEP_DB));
         return;
     }
-    /* Physical keys move by 1 dB on the new -16..0 dB user scale. */
+    /* 16 presses from full to mute, so ~3.8 dB each on Master's -60 dB span. */
     long step = ((long)(max - min) + 8) / 16;
     long raw = vol_pct_to_raw(g_user_vol, min, max) + (delta > 0 ? step : -step);
     if (raw < min) raw = min;
@@ -1065,7 +1406,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
 
     if (strcmp(msg->topic, cmd_topic) == 0) {
         LOG_INFO("MQTT Command received: [%s]", payload);
-        g_last_activity_time = time(NULL);
+        g_last_activity_time = now_mono();
         if (strcasecmp(payload, "UNMUTE") == 0) {
             set_hardware_mute(0);
         } else if (strcasecmp(payload, "MUTE") == 0) {
@@ -1091,6 +1432,18 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             /* Transport goes through the one script that knows how to reach each
              * player - librespot over its fifo, the others by ducking their own
              * softvol. Muting Master instead would leave the sender running. */
+            const char *ma_cmd = NULL;
+            if (strcasecmp(payload, "TOGGLE") == 0)      ma_cmd = "pause";
+            else if (strcasecmp(payload, "PLAY") == 0)   ma_cmd = "mode play";
+            else if (strcasecmp(payload, "PAUSE") == 0)  ma_cmd = "mode pause";
+            else if (strcasecmp(payload, "STOP") == 0)   ma_cmd = "mode stop";
+            else if (strcasecmp(payload, "NEXT") == 0)   ma_cmd = "playlist index +1";
+            /* MA's stream is pushed from the server, so ducking squeezelite's
+             * softvol only mutes it - the transport has to go to the server. */
+            if (ma_cmd && ma_active() && ma_send("%s", ma_cmd) == 0) {
+                ma_send("status - 1 tags:");
+                return;
+            }
             const char *act = NULL;
             if (strcasecmp(payload, "PLAY") == 0)        act = "play";
             else if (strcasecmp(payload, "PAUSE") == 0)  act = "pause";
@@ -1104,21 +1457,27 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             spawn_async(cmd);
         }
     } else if (strcmp(msg->topic, vol_topic) == 0) {
-        g_last_activity_time = time(NULL);
+        g_last_activity_time = now_mono();
         int vol = atoi(payload);
         set_user_volume(vol);
     } else if (strcmp(msg->topic, src_topic) == 0) {
-        g_last_activity_time = time(NULL);
+        g_last_activity_time = now_mono();
         if (strcasecmp(payload, "wifi") == 0)           set_audio_source(0);
         else if (strcasecmp(payload, "bluetooth") == 0) set_audio_source(1);
         else if (strcasecmp(payload, "aux") == 0)       set_audio_source(2);
         else LOG_WARN("MQTT unknown source [%s]", payload);
     } else if (strcmp(msg->topic, mute_topic) == 0) {
-        g_last_activity_time = time(NULL);
+        g_last_activity_time = now_mono();
         set_hardware_mute(strcasecmp(payload, "ON") == 0);
     } else if (strcmp(msg->topic, ma_topic) == 0) {
         int v = atoi(payload);
-        g_last_activity_time = time(NULL);
+        g_last_activity_time = now_mono();
+        if (ma_connected() && g_ma_id[0]) {
+            if (ma_send("mixer volume %d", v) == 0) {
+                ma_send("mixer volume ?");
+                return;
+            }
+        }
         if (alsa_set_pct(MA_VOL_CTL, v) < 0) {
             LOG_WARN("No %s control - is squeezelite running?", MA_VOL_CTL);
             return;
@@ -1453,16 +1812,16 @@ static void mqtt_send_discovery(void) {
     mqtt_send_sensor("playing", g_is_playing ? "true" : "false");
     mqtt_send_sensor("uplink", uplink_name());
     mqtt_publish_mute();
-    mqtt_publish_volume(g_user_vol);
-    {
+    vol_publish_visible();
+    /* only the CLI knows MA's own number; the softvol percent is a different
+     * scale entirely, and seeding from it used to publish a wrong level. */
+    if (g_ma_vol >= 0) mqtt_publish_ma_volume(g_ma_vol);
+    else if (!ma_connected()) {
         int ma = alsa_get_pct(MA_VOL_CTL);
-        if (ma >= 0) {
-            g_ma_vol = ma;
-            mqtt_publish_ma_volume(ma);
-        }
+        if (ma >= 0) mqtt_publish_ma_volume(ma);
     }
     mqtt_publish_sleep(g_sleep_deadline
-                       ? (int)((g_sleep_deadline - time(NULL) + 59) / 60) : 0);
+                       ? (int)((g_sleep_deadline - now_mono() + 59) / 60) : 0);
 
     LOG_INFO("MQTT Home Assistant discovery published, %s/player/# subscribed", g_topic_prefix);
 }
@@ -1644,7 +2003,7 @@ static void set_audio_source(int source) {
      * STM8S UART ring buffer overflow on rapid SRC button presses. Measured from
      * mv_ioguard disassembly: tick threshold 0x5DB = 1499 ms, rounded up to 2 s. */
     static time_t s_last_src_ts = 0;
-    time_t s_now = time(NULL);
+    time_t s_now = now_mono();
     if (s_now - s_last_src_ts < 2) {
         LOG_WARN("set_audio_source: cooldown active, ignoring rapid switch to source %d", source % 3);
         return;
@@ -1652,7 +2011,7 @@ static void set_audio_source(int source) {
     s_last_src_ts = s_now;
 
     g_current_source = source % 3;
-    g_last_activity_time = time(NULL);
+    g_last_activity_time = now_mono();
     const char *src_name = get_source_name(g_current_source);
 
     mqtt_send_sensor("source", src_name);
@@ -1672,31 +2031,24 @@ static void set_audio_source(int source) {
          * faking "connected" is what made the wifi LED lie. Stock only sends PLM. */
         uart_send(CMD_POWER_ON);
         uart_send(CMD_AUDIOPRO_WAKE_M);
-        /* CMD_INPUT_WIFI removed: AXX+INP+ does not exist in STM8S MCU firmware
-         * (confirmed by mv_ioguard full disassembly, MCUCommandSend @ 0x40cab4). */
-        uart_send(CMD_MODE_WIFI);
         set_hardware_mute(0);
         play_sound(SOUND_WIFI_CONN);
-        LOG_INFO("Audio source switched: Wi-Fi / I2S (AXX+PLM+000)");
+        LOG_INFO("Audio source switched: Wi-Fi / I2S");
     } else if (g_current_source == 1) {
         uart_send(CMD_BOOT_DONE);
         usleep(50000);
         uart_send(CMD_POWER_ON);
         uart_send(CMD_AUDIOPRO_WAKE_M);
-        /* CMD_INPUT_BT removed: AXX+INP+ does not exist in STM8S MCU firmware. */
-        uart_send(CMD_MODE_BT);
         set_hardware_mute(0);
         play_sound(SOUND_BT_CONN);
-        LOG_INFO("Audio source switched: Bluetooth BT2 (AXX+PLM+002)");
+        LOG_INFO("Audio source switched: Bluetooth BT2");
     } else {
         uart_send(CMD_BOOT_DONE);
         usleep(50000);
         uart_send(CMD_POWER_ON);
         uart_send(CMD_AUDIOPRO_WAKE_M);
-        /* CMD_INPUT_AUX removed: AXX+INP+ does not exist in STM8S MCU firmware. */
-        uart_send(CMD_MODE_AUX);
         set_hardware_mute(0);
-        LOG_INFO("Audio source switched: AUX Line-In (AXX+PLM+001)");
+        LOG_INFO("Audio source switched: AUX Line-In");
     }
 }
 
@@ -1734,7 +2086,7 @@ static void mcu_report_state(const char *tag, int val) {
 
 static void process_mcu_command(const char *cmd) {
     LOG_DEBUG("MCU RX: [%s]", cmd);
-    g_last_activity_time = time(NULL);
+    g_last_activity_time = now_mono();
 
     /* The MCU polls us for state and waits for an answer. Ignoring these is why
      * the front LEDs used to sit in whatever state the MCU last guessed. Codes
@@ -1765,11 +2117,11 @@ static void process_mcu_command(const char *cmd) {
         return;
     } else if (strstr(cmd, "MCU+VOL+GET")) {
         /* stock's AXX+VOL+00%d / 0%d / 100 triple is just %03d */
-        mcu_report_state("VOL", g_user_vol);
+        mcu_report_state("VOL", ma_active() ? g_ma_vol : g_user_vol);
         return;
     } else if (strstr(cmd, "MCU+PLM+GET")) {
-        uart_send(g_current_source == 1 ? CMD_MODE_BT :
-                  g_current_source == 2 ? CMD_MODE_AUX : CMD_MODE_WIFI);
+        /* PLM is playback state, not an input selector. */
+        uart_send(g_is_playing ? "AXX+PLM+001\n" : "AXX+PLM+000\n");
         return;
     }
 
@@ -1779,30 +2131,12 @@ static void process_mcu_command(const char *cmd) {
         return;
     }
 
-    /* An absolute volume report, as opposed to MCU+VOL+GET. The panel sends
-     * MCU+KEY+VOL+/- for real presses, so this is the MCU telling us the number
-     * it has been bookkeeping - and it re-quantizes on its own scale (send 049,
-     * get 048 back, MCU+VMX+030 says it thinks in 30 steps). Adopting that
-     * blindly walked the level down one step per handshake. We own the only
-     * attenuator, so within the quantization noise we say "in sync", right after
-     * a handshake we re-assert our value, and only an unsolicited jump counts as
-     * something the MCU changed on its own. */
+    /* Audio Pro C3 has physical pushbuttons only (MCU+KEY+VOL+ / VOL-), no rotary encoder.
+     * The STM8S sends MCU+VOL+ solely as an echo/quantization state. Treating it as an
+     * ALSA volume setter created a feedback loop that walked the volume down to 0. */
     if (!strncmp(cmd, "MCU+VOL+", 8) && isdigit((unsigned char)cmd[8])) {
         int v = atoi(cmd + 8);
-        if (v < 0 || v > 100) return;
-        int d = v > g_user_vol ? v - g_user_vol : g_user_vol - v;
-        if (d <= MCU_VOL_TOLERANCE) {
-            LOG_DEBUG("MCU volume %d%% vs ours %d%%, within MCU quantization", v, g_user_vol);
-        } else if (time(NULL) - g_mcu_link_ts <= 5) {
-            LOG_INFO("MCU came up holding %d%%, re-asserting %d%%", v, g_user_vol);
-            mcu_report_state("VOL", g_user_vol);
-        } else {
-            LOG_INFO("Volume changed on the MCU side: %d%%", v);
-            g_user_vol = v;
-            alsa_set_master(v);
-            mqtt_publish_volume(v);
-            vol_touch();
-        }
+        LOG_DEBUG("MCU volume echo %d%% (current master: %d%%)", v, g_user_vol);
         return;
     }
 
@@ -1827,8 +2161,12 @@ static void process_mcu_command(const char *cmd) {
         mqtt_send_button("play_pause");
         ubus_notify_button("play_pause");
         /* O_CREAT on /tmp/player_cmd just made a plain file nothing ever read,
-         * so this key did nothing at all until now */
-        spawn_async("/usr/bin/player_control.sh toggle");
+         * so this key did nothing at all until now. MA is the exception: its
+         * stream comes from the server, so the key has to go there. */
+        if (ma_active() && ma_send("pause") == 0)
+            ma_send("status - 1 tags:");
+        else
+            spawn_async("/usr/bin/player_control.sh toggle");
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);
@@ -2039,7 +2377,8 @@ static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
     blob_buf_init(&b, 0);
 
     blobmsg_add_u8(&b, "power", true);
-    blobmsg_add_u32(&b, "volume", g_user_vol);
+    /* same number the keys and HA see, so scripts don't get a second opinion */
+    blobmsg_add_u32(&b, "volume", ma_active() ? g_ma_vol : g_user_vol);
     blobmsg_add_u32(&b, "mcu_volume", g_user_vol);
     blobmsg_add_string(&b, "mcu_version", g_mcu_ver);
     blobmsg_add_string(&b, "source", get_source_name(g_current_source));
@@ -2078,7 +2417,7 @@ static int mcud_ubus_set_volume(struct ubus_context *ctx, struct ubus_object *ob
     struct blob_buf b;
     memset(&b, 0, sizeof(b));
     blob_buf_init(&b, 0);
-    blobmsg_add_u32(&b, "volume", g_user_vol);
+    blobmsg_add_u32(&b, "volume", ma_active() ? g_ma_vol : g_user_vol);
     blobmsg_add_u32(&b, "mcu_volume", g_user_vol);
     ubus_send_reply(ctx, req, b.head);
     blob_buf_free(&b);
@@ -2383,10 +2722,8 @@ static void uart_read_cb(struct uloop_fd *u, unsigned int events) {
                 token_len = delim - line_buf;
             } else if (next_hdr) {
                 token_len = next_hdr - line_buf;
-            } else if (line_pos >= 16) {
-                token_len = 11;
             } else {
-                /* Incomplete token, wait for more bytes */
+                /* MCU frames are newline/& terminated; wait for the rest. */
                 break;
             }
 
@@ -2435,16 +2772,10 @@ static void fifo_read_cb(struct uloop_fd *u, unsigned int events) {
             if (fifo_pos > 0) {
                 fifo_line[fifo_pos] = '\0';
                 LOG_INFO("FIFO command: %s", fifo_line);
-                g_last_activity_time = time(NULL);
+                g_last_activity_time = now_mono();
 
                 if (strncmp(fifo_line, "AXX+VOL+", 8) == 0 && isdigit((unsigned char)fifo_line[8])) {
                     set_user_volume(atoi(fifo_line + 8));
-                } else if (strncmp(fifo_line, "AXX+PLM+000", 11) == 0) {
-                    set_audio_source(0);
-                } else if (strncmp(fifo_line, "AXX+PLM+001", 11) == 0) {
-                    set_audio_source(2);
-                } else if (strncmp(fifo_line, "AXX+PLM+002", 11) == 0) {
-                    set_audio_source(1);
                 } else {
                     uart_send(fifo_line);
                     uart_send("\n");
@@ -2464,7 +2795,7 @@ static void watchdog_timer_cb(struct uloop_timeout *t) {
 }
 
 static void sleep_timer_cb(struct uloop_timeout *t) {
-    time_t now = time(NULL);
+    time_t now = now_mono();
     static time_t last_keepalive = 0;
 
     /* On battery the MCU pulls the rail ~19 min after power-on and announces it
@@ -2498,18 +2829,15 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
     }
 
     /* Refresh activity timestamp if audio stream is active or external inputs in use */
-    if (is_audio_active()) {
-        g_last_activity_time = now;
-        if (!g_is_playing) {
-            g_is_playing = 1;
-            uart_send(CMD_PLAY_START);
-            mqtt_send_sensor("playing", "true");
-        }
-    } else {
-        if (g_is_playing) {
-            g_is_playing = 0;
-            uart_send(CMD_PLAY_STOP);
-            mqtt_send_sensor("playing", "false");
+    if (is_audio_active()) g_last_activity_time = now;
+    /* dmix keeps the substream RUNNING forever, so is_audio_active() cannot tell
+     * paused from playing. MA knows, and it is the source 95% of the time. */
+    {
+        int playing = ma_active() ? (g_ma_mode == 1) : is_audio_active();
+        if (playing != g_is_playing) {
+            g_is_playing = playing;
+            uart_send(playing ? CMD_PLAY_START : CMD_PLAY_STOP);
+            mqtt_send_sensor("playing", playing ? "true" : "false");
         }
     }
 
@@ -2589,7 +2917,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, sig_handler);
 
     int opt;
-    while ((opt = getopt(argc, argv, "h:p:u:P:t:v:s:l:k:abmnN:")) != -1) {
+    while ((opt = getopt(argc, argv, "h:p:u:P:t:v:s:l:k:A:Q:G:abmnoN:")) != -1) {
         switch (opt) {
             case 'l':
                 g_log_level = atoi(optarg);
@@ -2641,6 +2969,22 @@ int main(int argc, char *argv[]) {
                 break;
             case 'm':
                 g_mqtt_enabled = 0;
+                break;
+            case 'A':
+                strncpy(g_ma_host, optarg, sizeof(g_ma_host) - 1);
+                g_ma_host[sizeof(g_ma_host) - 1] = '\0';
+                break;
+            case 'Q':
+                g_ma_port = atoi(optarg);
+                if (g_ma_port <= 0) g_ma_port = MA_PORT_DEFAULT;
+                break;
+            case 'G':
+                g_ma_step = atoi(optarg);
+                if (g_ma_step < 1) g_ma_step = 1;
+                if (g_ma_step > 25) g_ma_step = 25;
+                break;
+            case 'o':
+                g_ma_owns_volume = 1;
                 break;
         }
     }
@@ -2700,7 +3044,6 @@ int main(int argc, char *argv[]) {
     mcu_report_state("WWW", g_www);
     mcu_report_state("ETH", g_eth);
     usleep(100000);
-    uart_send(CMD_MODE_WIFI);
     usleep(100000);
     uart_send(CMD_UNMUTE);
     uart_send(CMD_PLAY_START);
@@ -2715,8 +3058,8 @@ int main(int argc, char *argv[]) {
      * restarting mcud while AC is already connected leaves charging=false until
      * the next physical plug/unplug event. */
     uart_send("AXX+BAT+GET\n");
-    g_mcu_link_ts = time(NULL);
-    LOG_INFO("Linkplay MCU initialized: I2S Play Mode (AXX+PLM+000), Amplifier Unmuted, AudioPro Wake synced.");
+    g_mcu_link_ts = now_mono();
+    LOG_INFO("Linkplay MCU initialized: I2S playback, amplifier unmuted, AudioPro wake synced.");
     if (g_auto_sleep_min > 0) {
         LOG_INFO("Inactivity Auto-Sleep timer enabled: %d minutes", g_auto_sleep_min);
     } else {
@@ -2729,7 +3072,7 @@ int main(int argc, char *argv[]) {
     }
     play_sound(SOUND_BOOT);
 
-    g_last_activity_time = time(NULL);
+    g_last_activity_time = now_mono();
 
     g_uart_ufd.fd = g_uart_fd;
     g_uart_ufd.cb = uart_read_cb;
@@ -2744,6 +3087,9 @@ int main(int argc, char *argv[]) {
 
     g_sleep_timer.cb = sleep_timer_cb;
     uloop_timeout_set(&g_sleep_timer, SLEEP_CHECK_MS);
+
+    g_ma_retry_t.cb = ma_retry_cb;
+    ma_connect();
 
     uloop_run();
 
@@ -2766,6 +3112,7 @@ int main(int argc, char *argv[]) {
         close(g_wdt_fd);
         g_wdt_fd = -1;
     }
+    ma_disconnect(0);
     for (int i = 0; i < g_mixer_ufd_count; i++) uloop_fd_delete(&g_mixer_ufds[i]);
     free(g_mixer_ufds);
     if (g_mixer) snd_mixer_close(g_mixer);
