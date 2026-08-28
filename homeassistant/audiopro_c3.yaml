@@ -1,6 +1,6 @@
 # Audio Pro C3 - one media card that stays useful when Music Assistant is idle.
 #
-# mcud publishes a full MQTT discovery surface (volume, mute, input, transport,
+# mcud publishes a full MQTT discovery surface (volume, mute, source, transport,
 # sleep timer, restart, power off), but MQTT discovery has no media_player
 # platform, so metadata and transport have to come from the Music Assistant
 # player. This package fuses the two: the child gives artwork, title and
@@ -56,9 +56,10 @@ media_player:
     attributes:
       volume_level: sensor.audio_pro_c3_volume_fraction
       is_volume_muted: switch.audio_pro_c3_mute
-      source: select.audio_pro_c3_input
-      # the select's own options attribute, so the list follows mcud's discovery
-      source_list: select.audio_pro_c3_input|options
+      # read-only: the MCU owns line-in and bluetooth and refuses every input
+      # write, so there is no source_list and no select_source either - the front
+      # panel key is the switch and this only reports where it landed
+      source: sensor.audio_pro_c3_source
     commands:
       volume_set:
         action: mqtt.publish
@@ -70,12 +71,6 @@ media_player:
         data:
           topic: audiopro_c3/player/mute/set
           payload: "{{ 'ON' if is_volume_muted else 'OFF' }}"
-      select_source:
-        action: select.select_option
-        target:
-          entity_id: select.audio_pro_c3_input
-        data:
-          option: "{{ source }}"
       # no turn_on: the MCU cuts the amp rail and only the front panel key wakes
       # the speaker again, same as stock
       turn_off:

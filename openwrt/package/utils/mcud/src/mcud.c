@@ -34,7 +34,6 @@
 #define WATCHDOG_CHECK_MS    5000
 #define SLEEP_CHECK_MS       5000
 #define MCU_KEEPALIVE_SEC    60   /* default for -k, see sleep_timer_cb */
-#define KA_FAKE_DUR_MS       600000  /* the track length we claim in the keepalive burst */
 #define VOL_STEP_DB          1   /* percent fallback for when Master's raw range is unreadable */
 #define MCU_VOL_TOLERANCE    2   /* MCU rounds our 0..100 onto its own scale */
 #define MAX_LINE_LEN         128
@@ -160,7 +159,7 @@ static time_t now_mono(void) {
 
 static int uart_init(void);
 static void graceful_shutdown(void);
-static void set_audio_source(int source);
+static void adopt_audio_source(int source);
 static void set_user_volume(int vol);
 static void mqtt_publish_volume(int vol);
 static void mqtt_publish_ma_volume(int vol);
@@ -170,6 +169,7 @@ static void set_hardware_mute(int mute);
 static const char *get_source_name(int source);
 static void mcu_report_state(const char *tag, int val);
 static void vol_touch(void);
+static void fire_preset(int preset, int announce);
 
 static int uart_send(const char *cmd) {
     if (g_uart_fd < 0 || !cmd) return -1;
@@ -217,9 +217,9 @@ static void play_sound(const char *path) {
             dup2(devnull, STDERR_FILENO);
             close(devnull);
         }
-        /* timeout(1) в образе нет - раньше execlp падал и звук не играл никогда; alarm переживает exec */
+        /* no timeout(1) in the image - execlp used to fail and the sound never played; alarm survives exec */
         alarm(8);
-        /* через dmix-слот, а не plughw:0,0 - прямой hw занят пока что-то играет (EBUSY) */
+        /* through a dmix slot, not plughw:0,0 - the raw hw is EBUSY while anything else plays */
         execlp("mpg123", "mpg123", "-q", "-a", "tts_in", "--", path, (char *)NULL);
         _exit(1);
     }
@@ -622,8 +622,11 @@ static int vol_raw_to_pct(long v, long min, long max) {
  * TPA3116 gain is pin-strapped, so the ALSA "Master" softvol is the only thing
  * that can change the level. Stock did the same, just inside its own writei
  * wrapper instead of a plugin. */
+static int g_master_set_vol = -1;   /* last level we drove Master to ourselves */
+
 static void alsa_set_master(int vol) {
     if (!g_master_elem) return;
+    g_master_set_vol = vol;
     long min = 0, max = 1000;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return;
     long v = vol_pct_to_raw(vol, min, max);
@@ -668,6 +671,7 @@ static void vol_ramp_cb(struct uloop_timeout *t) {
 
 static void alsa_ramp_master(int vol) {
     if (!g_master_elem) return;
+    g_master_set_vol = vol;
     long min = 0, max = 1000, cur = 0;
     if (snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) return;
     if (snd_mixer_selem_get_playback_volume(g_master_elem, SND_MIXER_SCHN_FRONT_LEFT, &cur) < 0) {
@@ -799,7 +803,21 @@ static void vol_publish_visible(void) {
     mqtt_publish_volume(v);
 }
 
+/* Master is in series ahead of MA's own fader, so while MA owns the level Master
+ * has to sit at unity - any lower and the two curves add up, and a stale 0 in
+ * there mutes the speaker no matter what MA does. */
+static void ma_sync_master(int owner) {
+    if (!owner && g_ma_vol >= 0 && g_ma_vol != g_user_vol) {
+        /* handing the level back adopts MA's number so the keys carry on from the
+         * slider instead of jumping to a level nobody set */
+        g_user_vol = g_ma_vol;
+        vol_touch();
+    }
+    if (!g_is_muted) alsa_ramp_master(owner ? 100 : g_user_vol);
+}
+
 static void ma_disconnect(int retry) {
+    int was_owner = ma_active();
     if (g_ma_fd >= 0) {
         uloop_fd_delete(&g_ma_ufd);
         close(g_ma_fd);
@@ -809,6 +827,7 @@ static void ma_disconnect(int retry) {
     g_ma_rxlen = 0;
     g_ma_mode = -1;
     uloop_timeout_cancel(&g_ma_poll_t);
+    if (was_owner) ma_sync_master(0);
     if (retry) ma_arm_retry();
 }
 
@@ -919,9 +938,19 @@ static void ma_parse_line(char *line) {
         LOG_INFO("Music Assistant volume: %d%%", vol);
         if (ma_active()) vol_publish_visible();
     }
-    /* MA stopping hands the level back to Master and vice versa - without this
-     * HA keeps showing the number of whoever used to own it. */
-    if (ma_active() != was_owner) vol_publish_visible();
+    /* MA stopping hands the level back to Master and vice versa - without this HA
+     * keeps showing the number of whoever used to own it. -o hands MA the level as
+     * soon as it connects and the Slimproto watcher has usually seeded g_ma_vol by
+     * then, so there may be no transition to hook at all: keep asserting unity for
+     * as long as MA owns it. alsa_ramp_master is a read and a compare when nothing
+     * moved. */
+    if (ma_active()) {
+        ma_sync_master(1);
+        if (!was_owner) vol_publish_visible();
+    } else if (was_owner) {
+        ma_sync_master(0);
+        vol_publish_visible();
+    }
 }
 
 static void ma_poll_cb(struct uloop_timeout *t) {
@@ -1048,7 +1077,10 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
 
     if (g_ramp_target < 0) {          /* mid-ramp events are our own writes */
         int vol = alsa_get_master();
-        if (vol >= 0 && vol != g_user_vol) {
+        /* the last piece of a ramp clears g_ramp_target before it writes, so its
+         * event lands here too - and mute ramps to 0, which used to be adopted as
+         * "the user chose 0", persisted, and then restored on unmute: silence. */
+        if (vol >= 0 && vol != g_user_vol && vol != g_master_set_vol && !ma_active()) {
             g_user_vol = vol;
             mcu_report_state("VOL", g_user_vol);
             mqtt_publish_volume(g_user_vol);
@@ -1283,7 +1315,7 @@ static void sleep_timer_arm(int minutes) {
  * g_user_vol is left alone: that is what unmute ramps back to. */
 static void set_hardware_mute(int mute) {
     g_is_muted = mute ? 1 : 0;
-    alsa_ramp_master(g_is_muted ? 0 : g_user_vol);
+    alsa_ramp_master(g_is_muted ? 0 : ma_active() ? 100 : g_user_vol);
     uart_send(g_is_muted ? CMD_MUTE : CMD_UNMUTE);
     mqtt_publish_mute();
     LOG_INFO("Master mute %s", g_is_muted ? "engaged" : "released");
@@ -1439,10 +1471,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
         } else if (strcasecmp(payload, "VOLDOWN") == 0) {
             adjust_user_volume(-1);
         } else if (!strncasecmp(payload, "PRESET", 6) && payload[6] >= '1' && payload[6] <= '4') {
-            char hcmd[96];
-            snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %c", payload[6]);
-            spawn_async(hcmd);
-            play_sound(SOUND_PRESET);
+            fire_preset(payload[6] - '0', 0);
         } else if (strcasecmp(payload, "REBOOT") == 0) {
             /* async: procd stops us as part of the reboot, and blocking here
              * would hold the loop while the broker waits for our PUBACK */
@@ -1484,11 +1513,9 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
         int vol = atoi(payload);
         set_user_volume(vol);
     } else if (strcmp(msg->topic, src_topic) == 0) {
-        g_last_activity_time = now_mono();
-        if (strcasecmp(payload, "wifi") == 0)           set_audio_source(0);
-        else if (strcasecmp(payload, "bluetooth") == 0) set_audio_source(1);
-        else if (strcasecmp(payload, "aux") == 0)       set_audio_source(2);
-        else LOG_WARN("MQTT unknown source [%s]", payload);
+        /* still subscribed only to swallow a retained payload left by the select
+         * this used to publish - the MCU ignores every input write we send */
+        LOG_WARN("MQTT source [%s] ignored, the MCU owns the input", payload);
     } else if (strcmp(msg->topic, mute_topic) == 0) {
         g_last_activity_time = now_mono();
         set_hardware_mute(strcasecmp(payload, "ON") == 0);
@@ -1600,25 +1627,24 @@ static void mqtt_send_discovery(void) {
     }
 
     {
-        /* Source used to be a read-only sensor. A select carries the same state and
-         * adds the way to change it, so HA can switch Wi-Fi / BT / AUX with nothing
-         * playing. The empty retained payload on the old sensor topic deletes that
-         * entity - leave it out and HA keeps a second, permanently stale copy. */
+        /* Read-only again. The select this used to be offered a switch the MCU
+         * refuses: MCU+CAP+PLM00000006 says line-in and bluetooth are the MCU's
+         * own inputs and it ignored every AXX+PLM we sent. The empty retained
+         * payload deletes the select - leave it out and HA keeps a second,
+         * permanently stale copy. */
         char topic[256], payload[768];
-        snprintf(topic, sizeof(topic), "homeassistant/sensor/audiopro_c3/source/config");
+        snprintf(topic, sizeof(topic), "homeassistant/select/audiopro_c3/input/config");
         mosquitto_publish(g_mosq, NULL, topic, 0, "", 0, true);
 
-        snprintf(topic, sizeof(topic), "homeassistant/select/audiopro_c3/input/config");
+        snprintf(topic, sizeof(topic), "homeassistant/sensor/audiopro_c3/source/config");
         snprintf(payload, sizeof(payload),
-            "{\"name\":\"Input\","
+            "{\"name\":\"Source\","
             "\"icon\":\"mdi:audio-input-stereo-minijack\","
             "\"state_topic\":\"%s/sensor/source\","
-            "\"command_topic\":\"%s/player/source/set\","
             "\"availability_topic\":\"%s/status\","
-            "\"options\":[\"wifi\",\"bluetooth\",\"aux\"],"
-            "\"unique_id\":\"audiopro_c3_input\","
+            "\"unique_id\":\"audiopro_c3_source\","
             HA_DEV "}",
-            g_topic_prefix, g_topic_prefix, g_topic_prefix);
+            g_topic_prefix, g_topic_prefix);
         mosquitto_publish(g_mosq, NULL, topic, strlen(payload), payload, 0, true);
     }
 
@@ -1856,6 +1882,21 @@ static void mqtt_send_button(const char *name) {
     mosquitto_publish(g_mosq, NULL, topic, 7, "pressed", 0, false);
 }
 
+/* every preset trigger comes through here - front-panel key, mqtt command and the web's
+ * ubus call - so all three get the same beep and the same handler. announce is off for
+ * the mqtt one: HA sent it, publishing the trigger back would only come round again. */
+static void fire_preset(int preset, int announce) {
+    char buf[96];
+    if (announce) {
+        snprintf(buf, sizeof(buf), "preset_%d", preset);
+        mqtt_send_button(buf);
+        ubus_notify_button(buf);
+    }
+    play_sound(SOUND_PRESET);
+    snprintf(buf, sizeof(buf), "/usr/bin/audiopro_preset_handler.sh %d", preset);
+    spawn_async(buf);
+}
+
 static void mqtt_send_sensor(const char *sensor, const char *val) {
     if (!g_mosq || !g_mqtt_enabled) return;
     char topic[128];
@@ -1864,8 +1905,8 @@ static void mqtt_send_sensor(const char *sensor, const char *val) {
 }
 
 /* libmosquitto's own loop_start() thread is unusable here. Its callbacks run on
- * whichever thread drives the loop, and mqtt_on_message() reaches set_audio_source()
- * -> ubus_notify_source() -> ubus_send_event(), which is synchronous: libubus parks in
+ * whichever thread drives the loop, and a callback that ends up in
+ * ubus_send_event() blocks: that call is synchronous, libubus parks in
  * poll(ubus_fd, POLLIN|POLLERR, -1) until the reply arrives, and uloop on the main
  * thread owns that fd and consumes it first. Measured 2026-08-25 with the first HA
  * command ever sent: thread "mosquitto loop" stuck in exactly that poll, no PINGREQ
@@ -2021,19 +2062,19 @@ static int uart_init(void) {
     return fd;
 }
 
-static void set_audio_source(int source) {
-    /* Stock Function_SwitchMode (0x40720c) enforces a 1500 ms cooldown to prevent
-     * STM8S UART ring buffer overflow on rapid SRC button presses. Measured from
-     * mv_ioguard disassembly: tick threshold 0x5DB = 1499 ms, rounded up to 2 s. */
-    static time_t s_last_src_ts = 0;
-    time_t s_now = now_mono();
-    if (s_now - s_last_src_ts < 2) {
-        LOG_WARN("set_audio_source: cooldown active, ignoring rapid switch to source %d", source % 3);
-        return;
-    }
-    s_last_src_ts = s_now;
+/* The MCU owns the switch on this cabinet, so this is a mirror and not a setter.
+ * Three independent reasons: MCU+CAP+PLM00000006 declares line-in and bluetooth
+ * as the MCU's own inputs; every host write (AXX+PLM/CHN/MMM/PLP/AXA/BYP/SLI)
+ * left its own readback at MCU+PLM+000; and stock's cached getStatusEx in this
+ * speaker's config partition says plm_support 0x0 / external 0x0. No cooldown
+ * here either - stock's 1499 ms throttle guards the STM8S ring buffer against
+ * our writes, and applying it to an inbound announcement only makes us lie about
+ * the source until the next keypress, which is what cycling the front-panel key
+ * did: PLM+006 adopted, PLM+005 dropped, state stuck on bluetooth. */
+static void adopt_audio_source(int source) {
+    if (source < 0 || source > 2 || source == g_current_source) return;
 
-    g_current_source = source % 3;
+    g_current_source = source;
     g_last_activity_time = now_mono();
     const char *src_name = get_source_name(g_current_source);
 
@@ -2046,36 +2087,7 @@ static void set_audio_source(int source) {
         write(fd, "\n", 1);
         close(fd);
     }
-
-    /* the MCU keeps its own source mirror and polls it back with MCU+PLM+GET */
-    mcu_report_state("PLM", plm_code(g_current_source));
-
-    if (g_current_source == 0) {
-        uart_send(CMD_BOOT_DONE);
-        usleep(50000);
-        /* no STA/WWW here: picking an input says nothing about the uplink, and
-         * faking "connected" is what made the wifi LED lie. Stock only sends PLM. */
-        uart_send(CMD_POWER_ON);
-        uart_send(CMD_AUDIOPRO_WAKE_M);
-        set_hardware_mute(0);
-        play_sound(SOUND_WIFI_CONN);
-        LOG_INFO("Audio source switched: Wi-Fi / I2S");
-    } else if (g_current_source == 1) {
-        uart_send(CMD_BOOT_DONE);
-        usleep(50000);
-        uart_send(CMD_POWER_ON);
-        uart_send(CMD_AUDIOPRO_WAKE_M);
-        set_hardware_mute(0);
-        play_sound(SOUND_BT_CONN);
-        LOG_INFO("Audio source switched: Bluetooth BT2");
-    } else {
-        uart_send(CMD_BOOT_DONE);
-        usleep(50000);
-        uart_send(CMD_POWER_ON);
-        uart_send(CMD_AUDIOPRO_WAKE_M);
-        set_hardware_mute(0);
-        LOG_INFO("Audio source switched: AUX Line-In");
-    }
+    LOG_INFO("Audio source is now %s (the MCU switched it)", src_name);
 }
 
 /* Lowest-metric default route straight out of procfs - no fork, and it answers
@@ -2164,9 +2176,9 @@ static void process_mcu_command(const char *cmd) {
     if (!strncmp(cmd, "MCU+PLM+", 8) && isdigit((unsigned char)cmd[8])) {
         int src = source_from_plm(atoi(cmd + 8));
         if (src < 0) {
-            LOG_INFO("MCU asked for source mode %.3s - no path for it here", cmd + 8);
-        } else if (src != g_current_source) {
-            set_audio_source(src);
+            LOG_INFO("MCU announced source mode %.3s - no name for it here", cmd + 8);
+        } else {
+            adopt_audio_source(src);
         }
         return;
     }
@@ -2207,38 +2219,34 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+KEY+PRE:")) {
         const char *p = strstr(cmd, "MCU+KEY+PRE:") + 12;
         int preset = atoi(p);
-        if (preset >= 1 && preset <= 4) {
-            char pstr[16];
-            snprintf(pstr, sizeof(pstr), "preset_%d", preset);
-            mqtt_send_button(pstr);
-            ubus_notify_button(pstr);
-            play_sound(SOUND_PRESET);
-            char hcmd[64];
-            snprintf(hcmd, sizeof(hcmd), "/usr/bin/audiopro_preset_handler.sh %d", preset);
-            spawn_async(hcmd);
-        }
-    } else if (strstr(cmd, "MCU+KEY+SRC")) {
-        mqtt_send_button("source");
-        ubus_notify_button("source");
-        set_audio_source(g_current_source + 1);
-    } else if (strstr(cmd, "MCU+KEY+BT") || strstr(cmd, "MCU+KEY+PAIR")) {
-        mqtt_send_button("bluetooth");
-        ubus_notify_button("bluetooth");
-        set_audio_source(1);
-    } else if (strstr(cmd, "MCU+KEY+WIFI")) {
-        set_audio_source(0);
-    } else if (strstr(cmd, "MCU+KEY+AUX")) {
-        set_audio_source(2);
+        if (preset >= 1 && preset <= 4)
+            fire_preset(preset, 1);
+    } else if (strstr(cmd, "MCU+KEY+SRC") || strstr(cmd, "MCU+KEY+WIFI") ||
+               strstr(cmd, "MCU+KEY+AUX") || strstr(cmd, "MCU+KEY+BT") ||
+               strstr(cmd, "MCU+KEY+PAIR")) {
+        /* nothing to drive: the MCU has already switched itself by the time it
+         * tells us, and it announces the result as M2S+011/012/013 + PLM+nnn */
+        const char *btn = (strstr(cmd, "MCU+KEY+BT") || strstr(cmd, "MCU+KEY+PAIR"))
+                          ? "bluetooth" : "source";
+        mqtt_send_button(btn);
+        ubus_notify_button(btn);
     } else if (strstr(cmd, "MCU+M2S+")) {
         const char *p = strstr(cmd, "MCU+M2S+") + 8;
         LOG_INFO("MCU M2S Event received: [%.3s]", p);
-        /* M2S is the multiroom role channel; stock maps GNOTIFY=Master2Slave:<n>
-         * onto AXX+M2S+%03d. Code 007 is the AudioPro wake handshake
-         * (GNOTIFY=audiopro_wake at 0x426104 in stock mv_ioguard). The MCU walks
-         * 008 -> 007 -> 011 on its own and answers 011 to any AXX+MCU+RDY. */
+        /* 011/012/013 is the MCU's current source: wifi / bluetooth / line-in.
+         * Captured while cycling the front-panel key - each one is followed by the
+         * matching MCU+PLM+000/006/005, and AXX+MCU+RDY answers with the same
+         * pair. Not a multiroom role, whatever GNOTIFY=Master2Slave suggests.
+         * 007/008 are the AudioPro wake handshake (GNOTIFY=audiopro_wake at
+         * 0x426104 in stock mv_ioguard). */
         if (strncmp(p, "011", 3) == 0) {
+            adopt_audio_source(0);
             uart_send(CMD_AUDIOPRO_WAKE_M);
             uart_send("AXX+M2S+011\n");
+        } else if (strncmp(p, "012", 3) == 0) {
+            adopt_audio_source(1);
+        } else if (strncmp(p, "013", 3) == 0) {
+            adopt_audio_source(2);
         } else if (strncmp(p, "008", 3) == 0) {
             /* wake request: keep the amp rail up, the MCU expects us alive */
             uart_send(CMD_POWER_ON);
@@ -2311,13 +2319,13 @@ static void process_mcu_command(const char *cmd) {
         LOG_DEBUG("MCU+PLY-STP (Alexa cancel) ignored - no voice assistant on this board");
     } else if (strstr(cmd, "MCU+PLY-PLA")) {
         /* Stock event 260 (0x104): Function_Resume @ 0x416c94
-         * Physical resume key from STM8S — resume paused playback. */
+         * Physical resume key from STM8S - resume paused playback. */
         LOG_INFO("MCU+PLY-PLA: physical resume key");
         ubus_notify_button("resume");
         spawn_async("/usr/bin/player_control.sh play");
     } else if (strstr(cmd, "MCU+PLY-PUS")) {
         /* Stock event 261 (0x105): Function_Pause @ 0x416c80
-         * Physical pause key from STM8S — pause active playback. */
+         * Physical pause key from STM8S - pause active playback. */
         LOG_INFO("MCU+PLY-PUS: physical pause key");
         ubus_notify_button("pause");
         spawn_async("/usr/bin/player_control.sh pause");
@@ -2403,6 +2411,15 @@ static const struct blobmsg_policy set_pwr_policy[__SET_PWR_MAX] = {
     [SET_PWR_SLEEP_IN_BT]      = { .name = "sleep_in_bt",            .type = BLOBMSG_TYPE_INT32 },
 };
 
+enum {
+    TRIG_PRESET_ID,
+    __TRIG_PRESET_MAX
+};
+
+static const struct blobmsg_policy trig_preset_policy[__TRIG_PRESET_MAX] = {
+    [TRIG_PRESET_ID] = { .name = "preset", .type = BLOBMSG_TYPE_INT32 },
+};
+
 static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
                             struct ubus_request_data *req, const char *method,
                             struct blob_attr *msg) {
@@ -2416,7 +2433,6 @@ static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
     blobmsg_add_u8(&b, "power", true);
     /* same number the keys and HA see, so scripts don't get a second opinion */
     blobmsg_add_u32(&b, "volume", ma_active() ? g_ma_vol : g_user_vol);
-    blobmsg_add_u32(&b, "mcu_volume", g_user_vol);
     blobmsg_add_string(&b, "mcu_version", g_mcu_ver);
     blobmsg_add_string(&b, "source", get_source_name(g_current_source));
     blobmsg_add_u32(&b, "battery", g_battery_pct);
@@ -2455,7 +2471,6 @@ static int mcud_ubus_set_volume(struct ubus_context *ctx, struct ubus_object *ob
     memset(&b, 0, sizeof(b));
     blob_buf_init(&b, 0);
     blobmsg_add_u32(&b, "volume", ma_active() ? g_ma_vol : g_user_vol);
-    blobmsg_add_u32(&b, "mcu_volume", g_user_vol);
     ubus_send_reply(ctx, req, b.head);
     blob_buf_free(&b);
     return 0;
@@ -2464,8 +2479,10 @@ static int mcud_ubus_set_volume(struct ubus_context *ctx, struct ubus_object *ob
 static int mcud_ubus_set_source(struct ubus_context *ctx, struct ubus_object *obj,
                                 struct ubus_request_data *req, const char *method,
                                 struct blob_attr *msg) {
+    (void)ctx;
     (void)obj;
     (void)method;
+    (void)req;
     struct blob_attr *tb[__SET_SRC_MAX];
     blobmsg_parse(set_src_policy, __SET_SRC_MAX, tb, blob_data(msg), blob_len(msg));
 
@@ -2473,27 +2490,12 @@ static int mcud_ubus_set_source(struct ubus_context *ctx, struct ubus_object *ob
         return UBUS_STATUS_INVALID_ARGUMENT;
     }
 
-    const char *src = blobmsg_get_string(tb[SET_SRC_SOURCE]);
-    int new_src = 0;
-    if (strcasecmp(src, "wifi") == 0 || strcasecmp(src, "i2s") == 0 || strcmp(src, "0") == 0) {
-        new_src = 0;
-    } else if (strcasecmp(src, "bluetooth") == 0 || strcasecmp(src, "bt") == 0 || strcmp(src, "1") == 0) {
-        new_src = 1;
-    } else if (strcasecmp(src, "aux") == 0 || strcasecmp(src, "line-in") == 0 || strcmp(src, "2") == 0) {
-        new_src = 2;
-    } else {
-        return UBUS_STATUS_INVALID_ARGUMENT;
-    }
-
-    set_audio_source(new_src);
-
-    struct blob_buf b;
-    memset(&b, 0, sizeof(b));
-    blob_buf_init(&b, 0);
-    blobmsg_add_string(&b, "source", get_source_name(g_current_source));
-    ubus_send_reply(ctx, req, b.head);
-    blob_buf_free(&b);
-    return 0;
+    /* Kept so callers get a straight answer instead of "no such method": the MCU
+     * owns the input on this cabinet and drops every AXX+PLM we send. Front panel
+     * key only; we mirror the result. */
+    LOG_WARN("UBUS set_source [%s] refused - only the front panel switches the input",
+             blobmsg_get_string(tb[SET_SRC_SOURCE]));
+    return UBUS_STATUS_NOT_SUPPORTED;
 }
 
 static int mcud_ubus_set_mute(struct ubus_context *ctx, struct ubus_object *obj,
@@ -2612,8 +2614,8 @@ static int mcud_ubus_set_power_policy(struct ubus_context *ctx, struct ubus_obje
         int k = blobmsg_get_u32(tb[SET_PWR_KEEPALIVE]);
         g_keepalive_sec = (k < 0) ? 0 : k;
         LOG_INFO("UBUS RPC: MCU keepalive updated to %d s (%s)", g_keepalive_sec,
-                 g_keepalive_sec > 0 ? "Always-On enabled, 19-min DC-DC cutoff prevented" :
-                                       "Keepalive disabled, allowing stock 19-min DC-DC cutoff");
+                 g_keepalive_sec > 0 ? "on, though the 19-min battery cutoff ignores it" :
+                                       "off");
     }
 
     if (tb[SET_PWR_AUTO_SLEEP]) {
@@ -2674,6 +2676,35 @@ static int mcud_ubus_poweroff(struct ubus_context *ctx, struct ubus_object *obj,
     return 0;
 }
 
+/* the web used to spawn the preset handler itself, which meant a preset pressed in the
+ * browser fired no mqtt trigger and no beep - only the front-panel key did */
+static int mcud_ubus_trigger_preset(struct ubus_context *ctx, struct ubus_object *obj,
+                                    struct ubus_request_data *req, const char *method,
+                                    struct blob_attr *msg) {
+    (void)obj;
+    (void)method;
+    struct blob_attr *tb[__TRIG_PRESET_MAX];
+    blobmsg_parse(trig_preset_policy, __TRIG_PRESET_MAX, tb, blob_data(msg), blob_len(msg));
+
+    if (!tb[TRIG_PRESET_ID]) {
+        return UBUS_STATUS_INVALID_ARGUMENT;
+    }
+
+    int preset = blobmsg_get_u32(tb[TRIG_PRESET_ID]);
+    if (preset < 1 || preset > 4) {
+        return UBUS_STATUS_INVALID_ARGUMENT;
+    }
+    fire_preset(preset, 1);
+
+    struct blob_buf b;
+    memset(&b, 0, sizeof(b));
+    blob_buf_init(&b, 0);
+    blobmsg_add_u32(&b, "preset", preset);
+    ubus_send_reply(ctx, req, b.head);
+    blob_buf_free(&b);
+    return 0;
+}
+
 static const struct ubus_method mcud_methods[] = {
     UBUS_METHOD_NOARG("status", mcud_ubus_status),
     UBUS_METHOD("set_volume", mcud_ubus_set_volume, set_vol_policy),
@@ -2681,6 +2712,7 @@ static const struct ubus_method mcud_methods[] = {
     UBUS_METHOD("set_mute", mcud_ubus_set_mute, set_mute_policy),
     UBUS_METHOD("set_network_state", mcud_ubus_set_network_state, set_net_policy),
     UBUS_METHOD("set_power_policy", mcud_ubus_set_power_policy, set_pwr_policy),
+    UBUS_METHOD("trigger_preset", mcud_ubus_trigger_preset, trig_preset_policy),
     UBUS_METHOD_NOARG("poweroff", mcud_ubus_poweroff),
 };
 
@@ -2835,33 +2867,22 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
     time_t now = now_mono();
     static time_t last_keepalive = 0;
 
-    /* On battery the MCU pulls the rail ~19 min after power-on and announces it
-     * with MCU+PLY-STP a few seconds ahead. A bare AXX+POW+000 every minute does
-     * not stop it - measured, it died on schedule anyway. The one state where it
-     * never cuts is real playback, and what stock streams while playing is this
-     * report set: PLY+PLA plus an advancing POS/DUR pair. So we claim a track is
-     * running. Only while we have an uplink: with no route out nobody can reach
-     * us anyway, so let the MCU have its power-off. */
-    /* Stock mv_ioguard: keepalive is only required on battery power. When running
-     * on AC (g_is_charging=1), STM8S rails are held by the charger unconditionally —
-     * the 19-minute DC-DC cutoff timer is battery-only.
-     * Keepalive is sent if:
-     * 1) Always-On mode is configured (g_auto_sleep_min == 0), OR
-     * 2) Network uplink is available, OR
-     * 3) External inputs (Bluetooth / AUX) or audio streaming are active. */
+    /* The MCU cuts the rail 19 min after the charger is unplugged and nothing the
+     * host sends changes that. Measured end to end: MCU+BAT+OFF at 19:27:07, this
+     * keepalive firing every 60 s the whole time, dead at 19:46:25 with the pack
+     * at 100 %. The faked "track is playing" burst (PLY+PLA + an advancing
+     * POS/DUR pair, which is what stock streams while playing) did not fool it
+     * either, so it is gone. Real playback does look like it holds the rail up,
+     * on stock as well as here, but that is an observation and not a measurement.
+     * On AC the charger holds the rails and none of this applies, hence
+     * !g_is_charging. Only with an uplink, too: with no route out nobody can
+     * reach us anyway, so let the MCU have its power-off. */
     if (g_keepalive_sec > 0 && !g_is_charging && now - last_keepalive >= g_keepalive_sec) {
-        static int fake_pos = 0;
-        char kaif[32], buf[32];
+        char kaif[32];
         last_keepalive = now;
         if (g_auto_sleep_min == 0 || default_route_iface(kaif, sizeof(kaif)) ||
             g_current_source != 0 || is_audio_active()) {
             uart_send(CMD_POWER_ON);
-            uart_send("AXX+PLY+PLA\n");
-            snprintf(buf, sizeof(buf), "AXX+PLY+DUR%d&\n", KA_FAKE_DUR_MS);
-            uart_send(buf);
-            fake_pos = (fake_pos + g_keepalive_sec * 1000) % KA_FAKE_DUR_MS;
-            snprintf(buf, sizeof(buf), "AXX+PLY+POS%d&\n", fake_pos);
-            uart_send(buf);
         }
     }
 
@@ -3054,7 +3075,10 @@ int main(int argc, char *argv[]) {
     mqtt_setup();
     ubus_init_service();
 
-    /* Verified Audio Pro C3 Linkplay Handshake Sequence */
+    /* Verified Audio Pro C3 Linkplay Handshake Sequence. RDY doubles as the only
+     * state readback fw 0109 answers: it replies with the current source
+     * (MCU+PLM+nnn / MCU+M2S+011..013) and MCU+VOL+nnn, so a restart while the box
+     * sits on line-in no longer leaves our mirror claiming wifi. */
     uart_send(CMD_MCU_READY);
     usleep(100000);
     uart_send(CMD_POWER_ON);
@@ -3091,9 +3115,9 @@ int main(int argc, char *argv[]) {
     /* The MCU only volunteers its version when asked, and it answers this one
      * (AXX+VER+GET gets nothing). Worth having in the log next to a bug report. */
     uart_send("AXX+MCU+VER\n");
-    /* Ask the MCU to replay its current charger/battery state. Without this,
-     * restarting mcud while AC is already connected leaves charging=false until
-     * the next physical plug/unplug event. */
+    /* fw 0109 does not answer this one - kept because it costs one line and other
+     * MCU builds might, and charging=false until the next plug event is what we
+     * get otherwise. */
     uart_send("AXX+BAT+GET\n");
     g_mcu_link_ts = now_mono();
     LOG_INFO("Linkplay MCU initialized: I2S playback, amplifier unmuted, AudioPro wake synced.");
