@@ -16,7 +16,7 @@ CMD=$(uci -q get audiopro_presets."$PRESET".command 2>/dev/null || echo "")
 case "$MODE" in
     radio|stream)
         # Kill any active standalone stream players
-        kill_audio_names mpg123 madplay
+        kill_stream
         
         if [ -n "$URL" ]; then
             # Validate URL protocol scheme
@@ -45,38 +45,27 @@ case "$MODE" in
 }
 JSON_EOF
             
-            # Launch background audio stream with argument injection protection
-            if command -v mpg123 >/dev/null 2>&1; then
-                mpg123 -q -a music_in -- "$URL" >/dev/null 2>&1 &
-            elif command -v wget >/dev/null 2>&1; then
-                wget -q -O - -- "$URL" | aplay -D music_in -q - >/dev/null 2>&1 &
-            fi
+            /usr/bin/play_stream.sh "$URL" music_in >/dev/null 2>&1 &
         fi
         ;;
         
-    spotify)
-        # Send preset command to librespot / player pipe
-        echo "preset:$PRESET" > /tmp/player_cmd 2>/dev/null || true
-        ;;
-        
     command)
-        if [ -n "$CMD" ]; then
-            # SECURITY CHECK: Block execution if auth is disabled or commands are explicitly forbidden
-            ALLOW_CMD=$(uci -q get mcud.main.allow_custom_commands || echo "0")
-            AUTH_EN=$(uci -q get mcud.main.auth_enabled || echo "0")
-            
-            if [ "$AUTH_EN" = "0" ]; then
-                echo "SECURITY ALERT: Preset command blocked! Cannot run scripts in passwordless (AUTH_ENABLED=0) mode." > /dev/console
-            elif [ "${ALLOW_CMD:-0}" != "1" ]; then
-                echo "SECURITY ALERT: Preset command blocked! ALLOW_CUSTOM_COMMANDS is 0." > /dev/console
-            else
-                eval "$CMD" >/dev/null 2>&1 &
-            fi
+        # The api has no authentication, so this is root on the lan: the mode is not
+        # offered in the web preset editor and the flag has to be set over ssh. The old
+        # auth_enabled check that used to sit here made the whole branch dead - nothing
+        # on the image can verify a password.
+        if [ -z "$CMD" ]; then
+            :
+        elif [ "$(uci -q get mcud.main.allow_custom_commands || echo 0)" = "1" ]; then
+            eval "$CMD" >/dev/null 2>&1 &
+        else
+            logger -t audiopro_preset "preset $PRESET command blocked: allow_custom_commands is 0"
         fi
         ;;
         
     ha|*)
-        # Home Assistant MQTT event is already dispatched instantly by mcud
+        # Nothing to do: mcud publishes the mqtt trigger before it spawns us, for the
+        # front-panel key and for the web's ubus trigger_preset alike.
         ;;
 esac
 

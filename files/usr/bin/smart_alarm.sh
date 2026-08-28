@@ -54,23 +54,6 @@ set_alarm_channel_vol() {
     amixer -q -c 0 sset Alarm "${v}%" 2>/dev/null || true
 }
 
-mqtt_pub() {
-    local topic=$1
-    local payload=$2
-    if [ -x /usr/bin/mosquitto_pub ]; then
-        local prefix=$(uci -q get mcud.main.mqtt_topic_prefix || echo "audiopro_c3")
-        local host=$(uci -q get mcud.main.mqtt_host || echo "127.0.0.1")
-        local port=$(uci -q get mcud.main.mqtt_port || echo "1883")
-        local user=$(uci -q get mcud.main.mqtt_user || echo "")
-        local pass=$(uci -q get mcud.main.mqtt_password || echo "")
-        # -m must stay one word even for JSON payloads with spaces
-        local args="-h $host -p $port -t ${prefix}/${topic}"
-        [ -n "$user" ] && args="$args -u $user"
-        [ -n "$pass" ] && args="$args -P $pass"
-        mosquitto_pub $args -m "$payload" 2>/dev/null || true
-    fi
-}
-
 create_pid_file() {
     local tmp="/tmp/alarm.pid.$$"
     echo "$$" > "$tmp"
@@ -87,6 +70,9 @@ do_stop() {
     fi
     local extra_pids=$(pgrep -f "mpg123.*alarm_in|aplay.*alarm_in" 2>/dev/null)
     [ -n "$extra_pids" ] && kill_audio $extra_pids
+    # a stream alarm goes through play_stream.sh, whose wget half has no slot in its
+    # argv and ignores SIGPIPE, so the pattern above never reaches it
+    kill_stream
     duck_restore
     if [ -s "$PREV_VOL_FILE" ] && [ -p /tmp/mcu_cmd_fifo ]; then
         local prev_v=$(cat "$PREV_VOL_FILE" 2>/dev/null)
@@ -97,14 +83,12 @@ do_stop() {
     rm -f "$PREV_VOL_FILE"
     /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
     printf '{"status":"idle","ringing":false}\n' > "$STATE_FILE"
-    mqtt_pub "alarm/status" "idle"
 }
 
 do_snooze() {
     local snooze_min=$(uci -q get mcud.alarm.snooze_min || echo "9")
     do_stop
     printf '{"status":"snoozed","snooze_min":%d}\n' "$snooze_min" > "$STATE_FILE"
-    mqtt_pub "alarm/status" "snoozed"
 
     (
         sleep $((snooze_min * 60))
@@ -140,7 +124,6 @@ do_start() {
 
     create_pid_file
     printf '{"status":"active","ringing":true,"mode":"%s","volume":%d}\n' "$alarm_mode" "$target_vol" > "$STATE_FILE"
-    mqtt_pub "alarm/status" "active"
 
     # Volume Setup (Sharp = instant 100%, Gentle = fade-in)
     if [ "$alarm_mode" = "sharp" ] || [ "$fade_sec" -le 0 ]; then
@@ -188,40 +171,7 @@ do_start() {
 
         if [ "$sound_type" = "stream" ] || [ "$sound_type" = "chime_then_stream" ]; then
             if [ $(date +%s) -lt "$end_time" ] && [ -f "$PID_FILE" ]; then
-                mpg123 -a alarm_in "$stream_url" >/dev/null 2>&1
-            fi
-        fi
-
-        if [ "$sound_type" = "spotify" ]; then
-            local spot_uri=$(uci -q get mcud.alarm.spotify_uri || echo "spotify:track:4cOdK2wGLETKBW3PvgPWqT")
-            mqtt_pub "alarm/trigger_spotify" "{\"uri\":\"$spot_uri\",\"device\":\"Audio Pro C3\"}"
-            amixer -q -c 0 sset Spotify 100% 2>/dev/null || true
-            /usr/bin/player_control.sh resume spotify >/dev/null 2>&1 || true
-            
-            # Short intro gong while Spotify connects
-            aplay -q -D alarm_in /usr/share/sounds/bell.wav 2>/dev/null || true
-
-            local waited=0
-            local is_playing=0
-            while [ "$waited" -lt 6 ] && [ -f "$PID_FILE" ]; do
-                sleep 1
-                waited=$((waited + 1))
-                if [ -f /tmp/audiopro_meta.json ] && grep -q '"source": "spotify"' /tmp/audiopro_meta.json 2>/dev/null; then
-                    is_playing=1
-                    break
-                fi
-            done
-
-            # Reliable fallback chime if Spotify is offline or network fails
-            if [ "$is_playing" -eq 0 ] && [ -f "$PID_FILE" ]; then
-                while [ $(date +%s) -lt "$end_time" ] && [ -f "$PID_FILE" ]; do
-                    if [ -f "$sound_file" ]; then
-                        aplay -q -D alarm_in "$sound_file" 2>/dev/null || aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
-                    else
-                        aplay -q -D alarm_in /usr/share/sounds/alarm_sharp.wav 2>/dev/null || true
-                    fi
-                    sleep 1
-                done
+                /usr/bin/play_stream.sh "$stream_url" alarm_in >/dev/null 2>&1
             fi
         fi
 

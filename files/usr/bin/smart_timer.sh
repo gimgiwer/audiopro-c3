@@ -1,28 +1,12 @@
 #!/bin/sh
 # Audio Pro C3 - Smart Countdown Timer Engine
-# Handles background countdowns, MQTT state broadcasting, and ALSA alarm chime on completion
+# Handles background countdowns and the ALSA chime on completion. State for the web ui
+# and for mcud lives in /tmp/timer_state.json - mqtt comes from mcud, not from here.
 
 STATE_FILE="/tmp/timer_state.json"
 PID_FILE="/tmp/timer.pid"
 RING_PID_FILE="/tmp/timer_ring.pid"
 PREV_VOL_FILE="/tmp/timer_prev_vol"
-
-mqtt_pub() {
-    local topic=$1
-    local payload=$2
-    if [ -x /usr/bin/mosquitto_pub ]; then
-        local prefix=$(uci -q get mcud.main.mqtt_topic_prefix || echo "audiopro_c3")
-        local host=$(uci -q get mcud.main.mqtt_host || echo "127.0.0.1")
-        local port=$(uci -q get mcud.main.mqtt_port || echo "1883")
-        local user=$(uci -q get mcud.main.mqtt_user || echo "")
-        local pass=$(uci -q get mcud.main.mqtt_password || echo "")
-        # -m must stay one word even for JSON payloads with spaces
-        local args="-h $host -p $port -t ${prefix}/${topic}"
-        [ -n "$user" ] && args="$args -u $user"
-        [ -n "$pass" ] && args="$args -P $pass"
-        mosquitto_pub $args -m "$payload" 2>/dev/null || true
-    fi
-}
 
 create_pid_file() {
     local tmp="/tmp/timer.pid.$$"
@@ -52,7 +36,6 @@ do_stop_ringing() {
         /usr/bin/player_control.sh resume all >/dev/null 2>&1 || true
     fi
     printf '{"active":false,"ringing":false,"remaining":0,"total":0,"name":""}\n' > "$STATE_FILE"
-    mqtt_pub "timer/status" '{"active":false,"ringing":false,"remaining":0}'
 }
 
 do_cancel() {
@@ -73,7 +56,6 @@ do_ring() {
     echo "$$" > "$tmp_ring"
     mv -f "$tmp_ring" "$RING_PID_FILE" 2>/dev/null || true
     printf '{"active":false,"ringing":true,"remaining":0,"total":0,"name":"%s"}\n' "$TIMER_NAME" > "$STATE_FILE"
-    mqtt_pub "timer/status" '{"active":false,"ringing":true,"remaining":0}'
 
     # Pause active music streams and set volume
     /usr/bin/player_control.sh pause all >/dev/null 2>&1 || true
@@ -121,11 +103,6 @@ do_start() {
 
         printf '{"active":true,"ringing":false,"remaining":%d,"total":%d,"name":"%s"}\n' \
             "$remaining" "$total_sec" "$name" > "$STATE_FILE"
-        
-        # Publish MQTT every 5 seconds or when under 10 seconds
-        if [ $((remaining % 5)) -eq 0 ] || [ "$remaining" -le 10 ]; then
-            mqtt_pub "timer/status" "$(cat "$STATE_FILE")"
-        fi
 
         sleep 1
     done

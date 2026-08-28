@@ -193,6 +193,23 @@ local function daemon_pid(name)
     return tonumber(string.match(out, "^(%d+)") or "0") or 0
 end
 
+-- This image ships neither luci nor an openssl binary, and busybox here has no
+-- cryptpw/mkpasswd either, so there is nothing that can hash a password to compare
+-- against /etc/shadow (whose entries are all * or empty anyway). Anyone who adds one
+-- of those packages gets working logins; until then auth_enabled must stay off, which
+-- is what save_security enforces instead of locking the user out of their own speaker.
+local function auth_verifier_available()
+    local has_luci, luci_sys = pcall(require, "luci.sys")
+    if has_luci and luci_sys and luci_sys.user and luci_sys.user.checkpasswd then return true end
+    local f = io.popen("command -v openssl 2>/dev/null", "r")
+    if f then
+        local out = f:read("*l") or ""
+        f:close()
+        if out ~= "" then return true end
+    end
+    return false
+end
+
 local function verify_system_password(username, password)
     if not username or username == "" or not password or password == "" then return false end
 
@@ -518,10 +535,33 @@ function handle_request(env)
 
         local hostname = uci_get_val("system", "@system[0]", "hostname", "AudioPro-C3")
 
-        local resp = string.format('{"status":"ok","battery":%d,"charging":%s,"source":"%s","volume":%d,"mute":%s,"mcu_version":"%s","power_policy":{"mode":"%s","keepalive_sec":%d,"auto_sleep_min":%d,"sleep_on_no_network":%s,"no_network_timeout_min":%d,"sleep_in_aux":%s,"sleep_in_bt":%s},"ip":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"daemons":%s,"now_playing":%s}',
+        -- the footer and the network card want the speaker's own address, and they
+        -- ask for sta_connected/sta_ssid, which this endpoint never used to send.
+        -- client_ip (REMOTE_ADDR) is the browser, so it was showing the wrong box.
+        local dev_ip = ""
+        local sta_up = false
+        local ipf = io.popen("ip -4 -o addr show scope global 2>/dev/null", "r")
+        if ipf then
+            for line in ipf:lines() do
+                local iface, addr = string.match(line, "^%d+:%s+(%S+)%s+inet%s+([%d%.]+)")
+                if iface and addr then
+                    if string.find(iface, "sta") then
+                        sta_up = true
+                        dev_ip = addr
+                    elseif dev_ip == "" then
+                        dev_ip = addr
+                    end
+                end
+            end
+            ipf:close()
+        end
+        if dev_ip == "" then dev_ip = client_ip end
+        local sta_ssid = uci_get_val("wireless", "sta_iface", "ssid", "")
+
+        local resp = string.format('{"status":"ok","battery":%d,"charging":%s,"source":"%s","volume":%d,"mute":%s,"mcu_version":"%s","power_policy":{"mode":"%s","keepalive_sec":%d,"auto_sleep_min":%d,"sleep_on_no_network":%s,"no_network_timeout_min":%d,"sleep_in_aux":%s,"sleep_in_bt":%s},"ip":"%s","sta_connected":%s,"sta_ssid":"%s","hostname":"%s","uptime":%d,"load":"%s","mem_free":"%s MB","airplay":%s,"spotify":%s,"daemons":%s,"now_playing":%s}',
             bat, tostring(charging), json_escape(src), vol, tostring(mut), json_escape(mcu_ver),
             json_escape(pwr_mode), ka_sec, sleep_min, tostring(sleep_no_net), no_net_timeout, tostring(sleep_aux), tostring(sleep_bt),
-            client_ip, json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), daemons, now_playing)
+            dev_ip, tostring(sta_up), json_escape(sta_ssid), json_escape(hostname), uptime, loadavg, mem_free, tostring(airplay_act), tostring(spotify_act), daemons, now_playing)
         uhttpd.send(resp)
 
     elseif action == "volume" then
@@ -529,19 +569,16 @@ function handle_request(env)
         if vol < 0 then vol = 0 end
         if vol > 100 then vol = 100 end
         os.execute(string.format("ubus call mcud set_volume '{\"volume\":%d}' >/dev/null 2>&1", vol))
-        send_mcu(string.format("AXX+VOL+%03d\n", vol))
         write_file("/tmp/current_volume", tostring(vol))
         uhttpd.send(string.format('{"status":"ok","volume":%d}', vol))
 
     elseif action == "mute" then
-        os.execute("ubus call mcud set_mute '{\"mute\":true}' >/dev/null 2>&1")
-        send_mcu("AXX+MUT+001\n")
+        os.execute("ubus call mcud set_mute '{\"mute\":1}' >/dev/null 2>&1")
         write_file("/tmp/current_mute", "1")
         uhttpd.send('{"status":"ok","mute":true}')
 
     elseif action == "unmute" then
-        os.execute("ubus call mcud set_mute '{\"mute\":false}' >/dev/null 2>&1")
-        send_mcu("AXX+MUT+000\n")
+        os.execute("ubus call mcud set_mute '{\"mute\":0}' >/dev/null 2>&1")
         write_file("/tmp/current_mute", "0")
         uhttpd.send('{"status":"ok","mute":false}')
 
@@ -579,21 +616,20 @@ function handle_request(env)
             uhttpd.send(string.format('{"status":"ok","power_status":%s}', res))
         end
 
-    -- AXX+INP+* used to be sent here and appears nowhere in the stock rootfs, so
-    -- the MCU just dropped it. The real selector is AXX+PLM+nnn, and mcud owns it -
-    -- it has to answer MCU+PLM+GET too, so don't send PLM from here as well.
+    -- Nothing to switch from here. The MCU owns line-in and bluetooth (it says so
+    -- itself: MCU+CAP+PLM00000006) and it dropped every AXX+PLM/CHN/MMM/PLP/AXA/BYP
+    -- the host sent, leaving its own readback at MCU+PLM+000. The front panel key is
+    -- the only switch; mcud follows the MCU's announcement into /tmp/audio_source.
     elseif action == "input" then
-        local input = string.lower(params.val or params.input or "wifi")
-        local sources = { wifi = "wifi", i2s = "wifi", bt = "bluetooth",
-                          bluetooth = "bluetooth", aux = "aux" }
-        local src = sources[input] or "wifi"
-        write_file("/tmp/audio_source", src)
-        -- Delegate logical source state and power handling to mcud; no unverified input opcode is sent.
-        os.execute(string.format("ubus call mcud set_source '{\"source\":\"%s\"}' >/dev/null 2>&1", sanitize_shell(src)))
-        uhttpd.send(string.format('{"status":"ok","input":"%s"}', json_escape(input)))
+        local src = "wifi"
+        local src_str = read_file("/tmp/audio_source")
+        if src_str then src = string.gsub(src_str, "%s+", "") end
+        uhttpd.send(string.format('{"status":"error","error":"input is switched by the front panel only","input":"%s"}',
+                                  json_escape(src)))
 
     elseif action == "player_play" or action == "play" then
-        send_mcu("AXX+PLY+001\nAXX+MUT+000\n")
+        send_mcu("AXX+PLY+001\n")
+        os.execute("ubus call mcud set_mute '{\"mute\":0}' >/dev/null 2>&1")
         os.execute("/usr/bin/player_control.sh play all >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","playing":true}')
 
@@ -606,13 +642,13 @@ function handle_request(env)
         os.execute("/usr/bin/player_control.sh toggle all >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","action":"toggle"}')
 
+    -- No track-skip opcode on the wire: AXX+TRK is nowhere in the stock rootfs, the
+    -- MCU never understood it. Skipping is a player-side thing anyway.
     elseif action == "player_next" or action == "next" then
-        send_mcu("AXX+TRK+001\n")
         os.execute("/usr/bin/player_control.sh next >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","action":"next"}')
 
     elseif action == "player_prev" or action == "prev" then
-        send_mcu("AXX+TRK+000\n")
         os.execute("/usr/bin/player_control.sh prev >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","action":"prev"}')
 
@@ -632,7 +668,12 @@ function handle_request(env)
         local pid = tonumber(params.id or params.preset or "1") or 1
         if pid < 1 then pid = 1 end
         if pid > 4 then pid = 4 end
-        os.execute(string.format("/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", pid))
+        -- mcud publishes the mqtt trigger and beeps, then spawns the same handler, so a
+        -- preset from the browser looks exactly like the front-panel key. Direct spawn
+        -- is the fallback for a speaker running without mcud.
+        if os.execute(string.format("ubus call mcud trigger_preset '{\"preset\":%d}' >/dev/null 2>&1", pid)) ~= 0 then
+            os.execute(string.format("/usr/bin/audiopro_preset_handler.sh %d >/dev/null 2>&1 &", pid))
+        end
         uhttpd.send(string.format('{"status":"ok","message":"Preset %d triggered"}', pid))
 
     elseif action == "tts" or action == "tts_duck" then
@@ -653,18 +694,20 @@ function handle_request(env)
             local meta = string.format('{"active":true,"source":"webradio","title":"%s","artist":"Web Radio","album":"Direct Stream","playing":true,"artwork":false,"updated":%d}',
                 json_escape(stream_name), os.time())
             write_file("/tmp/audiopro_meta.json", meta)
-            os.execute(string.format("mpg123 -q -a music_in -- '%s' >/dev/null 2>&1 &", sanitize_shell(stream_url)))
+            os.execute(string.format("/usr/bin/play_stream.sh '%s' music_in >/dev/null 2>&1 &", sanitize_shell(stream_url)))
             uhttpd.send(string.format('{"status":"ok","message":"Streaming started","title":"%s"}', json_escape(stream_name)))
         else
             uhttpd.send('{"status":"error","message":"Valid stream URL required"}')
         end
 
     elseif action == "stop_stream" then
-        os.execute(". /usr/lib/audiopro/kill_audio.sh; kill_audio_names mpg123 madplay >/dev/null 2>&1")
+        os.execute(". /usr/lib/audiopro/kill_audio.sh; kill_stream >/dev/null 2>&1")
         uhttpd.send('{"status":"ok","message":"Streaming stopped"}')
 
     elseif action == "wifi_scan" then
-        local f = io.popen("timeout -s KILL 5s sh -c '(iwinfo radio0 scan 2>/dev/null || iwinfo wlan0 scan 2>/dev/null)' | grep 'ESSID:' | awk -F'\"' '{print $2}'", "r")
+        -- no timeout(1) in this busybox, and the STA netdev is phy0-sta0, not wlan0.
+        -- The old line had both and always came back empty.
+        local f = io.popen("(iwinfo radio0 scan 2>/dev/null || iwinfo phy0-sta0 scan 2>/dev/null) | grep 'ESSID:' | awk -F'\"' '{print $2}'", "r")
         local networks = {}
         if f then
             for line in f:lines() do
@@ -771,11 +814,17 @@ function handle_request(env)
         local https_en = (uci_get_val("uhttpd", "main", "listen_https", "") ~= "")
         local https_redir = (uci_get_val("uhttpd", "main", "redirect_https", "0") == "1")
         local has_cert = (read_file("/etc/uhttpd.crt") ~= nil)
-        uhttpd.send(string.format('{"status":"ok","auth_enabled":%s,"session_ttl":%d,"session_days":%d,"https_enabled":%s,"https_redirect":%s,"has_cert":%s}',
-            tostring(auth_enabled), session_ttl, s_days, tostring(https_en), tostring(https_redir), tostring(has_cert)))
+        uhttpd.send(string.format('{"status":"ok","auth_enabled":%s,"session_ttl":%d,"session_days":%d,"https_enabled":%s,"https_redirect":%s,"has_cert":%s,"auth_available":%s}',
+            tostring(auth_enabled), session_ttl, s_days, tostring(https_en), tostring(https_redir), tostring(has_cert),
+            tostring(auth_verifier_available())))
 
     elseif action == "save_security" then
         local auth_en = (params.auth_enabled == "1" or params.auth_enabled == "true") and "1" or "0"
+        local auth_note = ""
+        if auth_en == "1" and not auth_verifier_available() then
+            auth_en = "0"
+            auth_note = " Login stayed off: nothing on this image can check a password (no luci, no openssl)."
+        end
         local days = tonumber(params.session_days or "7") or 7
         if days < 1 then days = 1 end
         if days > 365 then days = 365 end
@@ -804,8 +853,8 @@ function handle_request(env)
         os.execute("uci commit uhttpd 2>/dev/null; (sleep 1 && /etc/init.d/uhttpd restart) >/dev/null 2>&1 &")
         -- Invalidate all active sessions when security policies change
         os.execute("rm -f /tmp/ap_sessions/* 2>/dev/null")
-        uhttpd.send(string.format('{"status":"ok","message":"Security settings saved","auth_enabled":%s,"session_ttl":%d,"session_days":%d}',
-            (auth_en == "1" and "true" or "false"), ttl, days))
+        uhttpd.send(string.format('{"status":"ok","message":"Security settings saved.%s","auth_enabled":%s,"session_ttl":%d,"session_days":%d}',
+            json_escape(auth_note), (auth_en == "1" and "true" or "false"), ttl, days))
 
     elseif action == "save_ap" then
         local ssid = params.ap_ssid or ""
@@ -947,8 +996,10 @@ function handle_request(env)
         if pid > 4 then pid = 4 end
         local pname = params.name or ("Preset " .. pid)
         local pmode = params.mode or "ha"
-        local purl = params.url or ""
-        local pcmd = params.command or ""
+        -- keep what is stored when the ui omits a field: the editor only offers ha and
+        -- radio now, so a command mode set over ssh must survive a save from the browser
+        local purl = params.url or uci_get_val("audiopro_presets", tostring(pid), "url", "")
+        local pcmd = params.command or uci_get_val("audiopro_presets", tostring(pid), "command", "")
 
         if uci_ctx then
             uci_ctx:set("audiopro_presets", tostring(pid), "name", pname)
@@ -983,15 +1034,14 @@ function handle_request(env)
         local a_stype = uci_get_val("mcud", "alarm", "sound_type", "chime")
         local a_sfile = uci_get_val("mcud", "alarm", "sound_file", "/usr/share/sounds/alarm_sharp.wav")
         local a_url = uci_get_val("mcud", "alarm", "stream_url", "http://icecast.vrtcdn.be/klara-high.mp3")
-        local a_suri = uci_get_val("mcud", "alarm", "spotify_uri", "spotify:track:4cOdK2wGLETKBW3PvgPWqT")
         local a_fade = tonumber(uci_get_val("mcud", "alarm", "fade_sec", "0")) or 0
         local a_dur = tonumber(uci_get_val("mcud", "alarm", "duration_min", "30")) or 30
         local a_snooze = tonumber(uci_get_val("mcud", "alarm", "snooze_min", "9")) or 9
         local is_active = (read_file("/tmp/alarm.pid") ~= nil)
 
-        local resp = string.format('{"status":"ok","alarm":{"enabled":%s,"time":"%s","days":"%s","target_volume":%d,"alarm_mode":"%s","sound_type":"%s","sound_file":"%s","stream_url":"%s","spotify_uri":"%s","fade_sec":%d,"duration_min":%d,"snooze_min":%d,"active":%s}}',
+        local resp = string.format('{"status":"ok","alarm":{"enabled":%s,"time":"%s","days":"%s","target_volume":%d,"alarm_mode":"%s","sound_type":"%s","sound_file":"%s","stream_url":"%s","fade_sec":%d,"duration_min":%d,"snooze_min":%d,"active":%s}}',
             (a_en == "1" and "true" or "false"), json_escape(a_time), json_escape(a_days), a_vol,
-            json_escape(a_mode), json_escape(a_stype), json_escape(a_sfile), json_escape(a_url), json_escape(a_suri),
+            json_escape(a_mode), json_escape(a_stype), json_escape(a_sfile), json_escape(a_url),
             a_fade, a_dur, a_snooze, (is_active and "true" or "false"))
         uhttpd.send(resp)
 
@@ -1001,10 +1051,12 @@ function handle_request(env)
         local a_days = params.days or "1,2,3,4,5"
         local a_vol = tonumber(params.target_volume or "60") or 60
         local a_mode = (params.alarm_mode == "gentle") and "gentle" or "sharp"
+        -- the three the alarm engine can actually play; anything else used to be
+        -- stored happily and then rang nothing
         local a_stype = params.sound_type or "chime"
+        if a_stype ~= "stream" and a_stype ~= "chime_then_stream" then a_stype = "chime" end
         local a_sfile = params.sound_file or "/usr/share/sounds/alarm_sharp.wav"
         local a_url = params.stream_url or "http://icecast.vrtcdn.be/klara-high.mp3"
-        local a_suri = params.spotify_uri or "spotify:track:4cOdK2wGLETKBW3PvgPWqT"
         local a_fade = tonumber(params.fade_sec or "0") or 0
         local a_dur = tonumber(params.duration_min or "30") or 30
         local a_snooze = tonumber(params.snooze_min or "9") or 9
@@ -1018,16 +1070,15 @@ function handle_request(env)
             uci_ctx:set("mcud", "alarm", "sound_type", a_stype)
             uci_ctx:set("mcud", "alarm", "sound_file", a_sfile)
             uci_ctx:set("mcud", "alarm", "stream_url", a_url)
-            uci_ctx:set("mcud", "alarm", "spotify_uri", a_suri)
             uci_ctx:set("mcud", "alarm", "fade_sec", tostring(a_fade))
             uci_ctx:set("mcud", "alarm", "duration_min", tostring(a_dur))
             uci_ctx:set("mcud", "alarm", "snooze_min", tostring(a_snooze))
             uci_ctx:commit("mcud")
         else
-            os.execute(string.format("uci set mcud.alarm.enabled='%s'; uci set mcud.alarm.time='%s'; uci set mcud.alarm.days='%s'; uci set mcud.alarm.target_volume='%d'; uci set mcud.alarm.alarm_mode='%s'; uci set mcud.alarm.sound_type='%s'; uci set mcud.alarm.sound_file='%s'; uci set mcud.alarm.stream_url='%s'; uci set mcud.alarm.spotify_uri='%s'; uci set mcud.alarm.fade_sec='%d'; uci set mcud.alarm.duration_min='%d'; uci set mcud.alarm.snooze_min='%d'; uci commit mcud 2>/dev/null",
+            os.execute(string.format("uci set mcud.alarm.enabled='%s'; uci set mcud.alarm.time='%s'; uci set mcud.alarm.days='%s'; uci set mcud.alarm.target_volume='%d'; uci set mcud.alarm.alarm_mode='%s'; uci set mcud.alarm.sound_type='%s'; uci set mcud.alarm.sound_file='%s'; uci set mcud.alarm.stream_url='%s'; uci set mcud.alarm.fade_sec='%d'; uci set mcud.alarm.duration_min='%d'; uci set mcud.alarm.snooze_min='%d'; uci commit mcud 2>/dev/null",
                 a_en, sanitize_shell(a_time), sanitize_shell(a_days), a_vol,
                 sanitize_shell(a_mode), sanitize_shell(a_stype), sanitize_shell(a_sfile),
-                sanitize_shell(a_url), sanitize_shell(a_suri), a_fade, a_dur, a_snooze))
+                sanitize_shell(a_url), a_fade, a_dur, a_snooze))
         end
         os.execute("/usr/bin/smart_alarm.sh sync_cron >/dev/null 2>&1 &")
         uhttpd.send('{"status":"ok","message":"Smart alarm configuration saved"}')

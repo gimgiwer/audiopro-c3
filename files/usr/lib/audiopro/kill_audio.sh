@@ -49,3 +49,17 @@ kill_audio_names() {
 	done
 	kill_audio $pids
 }
+
+# kill_stream
+# A web stream is "wget -O - | mpg123 -" (play_stream.sh), and the whole subtree
+# inherits mcud's ignored SIGPIPE, so taking out the decoder leaves the feeder
+# parked in epoll_wait and still pulling the stream - measured: three wrapper/wget
+# pairs left over after three stops. The wrapper is /bin/sh so pgrep -x cannot see
+# it either; both halves have to be matched on the full command line.
+kill_stream() {
+	# both patterns are anchored: unanchored -f matched any shell whose own command
+	# line merely mentioned them, and the first run of this took out its own caller
+	kill_audio $(pgrep -f '^/bin/sh /usr/bin/play_stream\.sh' 2>/dev/null) \
+		$(pgrep -f '^wget -q -O - --' 2>/dev/null) \
+		$(pgrep -x mpg123 2>/dev/null) $(pgrep -x madplay 2>/dev/null)
+}

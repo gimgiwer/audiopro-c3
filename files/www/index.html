@@ -1710,19 +1710,19 @@
 
         <!-- Quick Source Toggle in Hero -->
         <div class="source-grid">
-          <button id="hero-src-wifi" class="source-card active" aria-label="Select Wi-Fi Source" onclick="switchSource('wifi')">
+          <button id="hero-src-wifi" class="source-card active" aria-label="Wi-Fi source, switched on the speaker" onclick="switchSource('wifi')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/></svg>
             </div>
             <div class="source-name">Wi-Fi</div>
           </button>
-          <button id="hero-src-bt" class="source-card" aria-label="Select Bluetooth Source" onclick="switchSource('bt')">
+          <button id="hero-src-bt" class="source-card" aria-label="Bluetooth source, switched on the speaker" onclick="switchSource('bt')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="m7 7l10 10l-5 5V2l5 5L7 17"/></svg>
             </div>
             <div class="source-name">Bluetooth</div>
           </button>
-          <button id="hero-src-aux" class="source-card" aria-label="Select AUX In Source" onclick="switchSource('aux')">
+          <button id="hero-src-aux" class="source-card" aria-label="AUX source, switched on the speaker" onclick="switchSource('aux')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1zm0 2v-2M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10m16 11v-2M3 5V3M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2zm3-5V3"/></svg>
             </div>
@@ -1869,7 +1869,7 @@
 
         <div class="source-grid">
           <!-- Wi-Fi / AirPlay -->
-          <button id="src-wifi" class="source-card active" aria-label="Select Wi-Fi Source" onclick="switchSource('wifi')">
+          <button id="src-wifi" class="source-card active" aria-label="Wi-Fi source, switched on the speaker" onclick="switchSource('wifi')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0"/>
@@ -1880,7 +1880,7 @@
           </button>
 
           <!-- Bluetooth -->
-          <button id="src-bt" class="source-card" aria-label="Select Bluetooth Source" onclick="switchSource('bt')">
+          <button id="src-bt" class="source-card" aria-label="Bluetooth source, switched on the speaker" onclick="switchSource('bt')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <path d="m7 7l10 10l-5 5V2l5 5L7 17"/>
@@ -1891,7 +1891,7 @@
           </button>
 
           <!-- AUX In -->
-          <button id="src-aux" class="source-card" aria-label="Select AUX In Source" onclick="switchSource('aux')">
+          <button id="src-aux" class="source-card" aria-label="AUX source, switched on the speaker" onclick="switchSource('aux')">
             <div class="source-icon">
               <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
                 <g><path d="M17 19a1 1 0 0 1-1-1v-2a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a1 1 0 0 1-1 1zm0 2v-2"/><path d="M19 14V6.5a1 1 0 0 0-7 0v11a1 1 0 0 1-7 0V10m16 11v-2M3 5V3"/><path d="M4 10a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a2 2 0 0 1-2 2zm3-5V3"/></g>
@@ -1951,7 +1951,7 @@
 
         <div id="presetActionsSection" class="accordion-body">
           <div class="helper-box">
-            Bind physical top-panel buttons 1..4 to Home Assistant automations, autonomous Web Radio stations, Spotify, or shell scripts.
+            Bind physical top-panel buttons 1..4 to Home Assistant automations or autonomous Web Radio stations.
           </div>
 
           <div id="presetItemsContainer" style="display:flex; flex-direction:column; gap:12px;">
@@ -2016,7 +2016,6 @@
                   <option value="chime">Built-in Signal (WAV)</option>
                   <option value="stream">Web Radio / MP3 Stream</option>
                   <option value="chime_then_stream">Signal + Radio Stream</option>
-                  <option value="spotify">Spotify Track / Playlist</option>
                 </select>
               </div>
             </div>
@@ -2034,11 +2033,6 @@
             <div id="alarmStreamUrlWrap" class="form-group" style="display:none; margin-bottom:14px;">
               <label style="font-size:0.75rem; color:var(--text-secondary);">Radio Stream URL</label>
               <input type="text" id="alarmStreamUrlInput" class="input-field" style="margin-top:4px;" placeholder="http://..." value="http://icecast.vrtcdn.be/klara-high.mp3">
-            </div>
-
-            <div id="alarmSpotifyUriWrap" class="form-group" style="display:none; margin-bottom:14px;">
-              <label style="font-size:0.75rem; color:var(--text-secondary);">Spotify Track / Playlist URI</label>
-              <input type="text" id="alarmSpotifyUriInput" class="input-field" style="margin-top:4px;" placeholder="spotify:track:... or https://open.spotify.com/..." value="spotify:track:4cOdK2wGLETKBW3PvgPWqT">
             </div>
 
             <div class="form-group" style="margin-bottom:14px;">
@@ -2561,7 +2555,10 @@
 
         <div id="securitySection" class="accordion-body">
           <div class="helper-box" data-i18n="sec_helper">
-            Uses Linux PAM / shadow system credentials (same username and password as SSH). Session is cryptographically bound to client IP and browser fingerprint.
+            Uses the system shadow credentials (same username and password as SSH). Session is cryptographically bound to client IP and browser fingerprint.
+          </div>
+          <div class="helper-box" id="secNoVerifier" style="display:none" data-i18n="sec_no_verifier">
+            This image has no way to check a password (no luci, no openssl), so the login cannot be turned on. Install one of them first.
           </div>
 
           <form onsubmit="saveSecuritySettings(event)">
@@ -2665,7 +2662,7 @@
     <!-- Footer -->
     <footer class="footer">
       <span>IP: <strong id="ipDisplay">10.10.10.254</strong></span>
-      <span>Linkplay A28 • MT7688</span>
+      <span>Linkplay A28 • MT7628AN</span>
       <span>OpenWrt 23.05</span>
     </footer>
 
@@ -2798,7 +2795,8 @@
         fw_upload_err: "Failed to upload firmware binary",
         fw_flash_confirm: "Are you sure you want to flash this firmware binary? Do NOT power off the device!",
         sec_title: "Security & Authentication",
-        sec_helper: "Uses Linux PAM / shadow system credentials (same username and password as SSH). Session is cryptographically bound to client IP and browser fingerprint.",
+        sec_helper: "Uses the system shadow credentials (same username and password as SSH). Session is cryptographically bound to client IP and browser fingerprint.",
+        sec_no_verifier: "This image has no way to check a password (no luci, no openssl), so the login cannot be turned on. Install one of them first.",
         sec_enable: "Require Password",
         sec_enable_desc: "Protect Web UI with SSH / root login",
         sec_session_days: "Session Duration (Days)",
@@ -2823,6 +2821,7 @@
         btn_reboot: "Reboot Speaker",
         sound_muted: "Muted",
         sound_unmuted: "Unmuted",
+        source_readonly: "Use the button on the speaker to change the source",
         theme_light: "Light Theme (Cobalt Blue)",
         theme_dark: "OLED Dark Theme",
         ap_mode: "Access Point Mode"
@@ -2888,6 +2887,7 @@
         fw_flash_confirm: "Вы уверены, что хотите запустить процесс прошивки? НЕ отключайте питание устройства!",
         sec_title: "Безопасность и Доступ",
         sec_helper: "Использует системные учетные данные Linux shadow (как в SSH). Сессия криптографически привязана к IP и браузеру.",
+        sec_no_verifier: "В этой прошивке нечем проверить пароль (нет luci, нет openssl), поэтому вход включить нельзя. Сначала поставьте одно из них.",
         sec_enable: "Требовать пароль",
         sec_enable_desc: "Защитить веб-интерфейс паролем root / SSH",
         sec_session_days: "Срок действия сессии (дней)",
@@ -2912,6 +2912,7 @@
         btn_reboot: "Перезагрузить устройство",
         sound_muted: "Звук отключен",
         sound_unmuted: "Звук включен",
+        source_readonly: "Источник переключается кнопкой на колонке",
         theme_light: "Светлая тема (Cobalt Blue)",
         theme_dark: "OLED Тёмная тема",
         ap_mode: "Режим точки доступа"
@@ -3034,6 +3035,7 @@
       rebootProgressFill: document.getElementById('rebootProgressFill'),
       // Security Elements
       cfgAuthEnabled: document.getElementById('cfgAuthEnabled'),
+      secNoVerifier: document.getElementById('secNoVerifier'),
       cfgSessionDays: document.getElementById('cfgSessionDays'),
       cfgHttpsEnabled: document.getElementById('cfgHttpsEnabled'),
       cfgHttpsRedirect: document.getElementById('cfgHttpsRedirect'),
@@ -3054,23 +3056,15 @@
       }
     }
 
-    // Custom Fetch Wrapper with automatic 403 handling & Lua /api acceleration
+    // /api is the only endpoint there is - the old CGI fallback this used to retry
+    // against is gone, and retrying the same URL just doubled every failed request.
     function apiFetch(url, options = {}) {
-      const targetUrl = url.replace('/api', '/api');
-      return fetch(targetUrl, options).then(res => {
+      return fetch(url, options).then(res => {
         if (res.status === 403) {
           showLoginOverlay();
           throw new Error('Authentication required');
         }
-        if (res.status === 404 && targetUrl.startsWith('/api')) {
-          return fetch(url, options);
-        }
         return res;
-      }).catch(err => {
-        if (targetUrl.startsWith('/api') && err.message !== 'Authentication required') {
-          return fetch(url, options);
-        }
-        throw err;
       });
     }
 
@@ -3318,7 +3312,10 @@
       apiFetch('/api?action=get_security')
         .then(res => res.json())
         .then(data => {
-          if (el.cfgAuthEnabled) el.cfgAuthEnabled.checked = (data.auth_enabled === 1 || data.auth_enabled === '1');
+          if (el.cfgAuthEnabled) el.cfgAuthEnabled.checked = (data.auth_enabled === true || data.auth_enabled === 1 || data.auth_enabled === '1');
+          const canAuth = (data.auth_available !== false);
+          if (el.cfgAuthEnabled) el.cfgAuthEnabled.disabled = !canAuth;
+          if (el.secNoVerifier) el.secNoVerifier.style.display = canAuth ? 'none' : 'block';
           if (el.cfgSessionDays) el.cfgSessionDays.value = data.session_days || 7;
           if (el.cfgHttpsEnabled) el.cfgHttpsEnabled.checked = (data.https_enabled === true || data.https_enabled === 'true');
           if (el.cfgHttpsRedirect) el.cfgHttpsRedirect.checked = (data.https_redirect === true || data.https_redirect === 'true');
@@ -3552,18 +3549,14 @@
         .catch(err => console.warn('Mute error:', err));
     }
 
-    // Switch Source
-    function switchSource(sourceName) {
+    // The cards only report the source. The MCU owns line-in and bluetooth on this
+    // cabinet and drops every host write, so there is nothing to send here - the
+    // front panel key is the switch and the poll picks the result up.
+    function switchSource() {
       haptic(18);
-      state.source = sourceName;
-      renderSource(sourceName);
-      apiFetch(`/api?input=${sourceName}`)
-        .then(res => res.json())
-        .then(() => {
-          const names = { wifi: 'Wi-Fi / AirPlay', bt: 'Bluetooth', aux: 'AUX 3.5 mm' };
-          showToast(`Source: ${names[sourceName] || sourceName}`);
-        })
-        .catch(err => console.warn('Source error:', err));
+      const dict = i18n[state.lang] || i18n.en;
+      showToast(dict.source_readonly);
+      renderSource(state.source);
     }
 
     // Scan available Wi-Fi networks
@@ -3786,8 +3779,6 @@
               <select id="pMode_${p.id}" class="input-field" style="margin-top:4px;" onchange="onPresetModeChange(${p.id})">
                 <option value="ha" ${p.mode === 'ha' ? 'selected' : ''}>Home Assistant (MQTT)</option>
                 <option value="radio" ${p.mode === 'radio' ? 'selected' : ''}>Web Radio Stream</option>
-                <option value="spotify" ${p.mode === 'spotify' ? 'selected' : ''}>Spotify Trigger</option>
-                <option value="command" ${p.mode === 'command' ? 'selected' : ''}>Shell Command</option>
               </select>
             </div>
             <div>
@@ -3796,8 +3787,8 @@
             </div>
           </div>
           <div id="pTargetWrap_${p.id}" style="${p.mode === 'ha' ? 'display:none;' : ''}">
-            <label style="font-size:0.75rem; color:var(--text-secondary);">Stream URL / Command</label>
-            <input type="text" id="pTarget_${p.id}" class="input-field" style="margin-top:4px;" placeholder="http://... or /usr/bin/..." value="${safeTarget}">
+            <label style="font-size:0.75rem; color:var(--text-secondary);">Stream URL</label>
+            <input type="text" id="pTarget_${p.id}" class="input-field" style="margin-top:4px;" placeholder="http://..." value="${safeTarget}">
           </div>
         `;
         container.appendChild(item);
@@ -3824,8 +3815,6 @@
       let params = `action=save_presets&id=${id}&name=${encodeURIComponent(name)}&mode=${mode}`;
       if (mode === 'radio') {
         params += `&url=${encodeURIComponent(target)}`;
-      } else if (mode === 'command') {
-        params += `&command=${encodeURIComponent(target)}`;
       }
 
       apiFetch(`/api?${params}`)
@@ -3844,11 +3833,9 @@
       const type = document.getElementById('alarmSoundTypeSelect') ? document.getElementById('alarmSoundTypeSelect').value : 'chime';
       const soundWrap = document.getElementById('alarmSoundFileWrap');
       const streamWrap = document.getElementById('alarmStreamUrlWrap');
-      const spotWrap = document.getElementById('alarmSpotifyUriWrap');
 
-      if (soundWrap) soundWrap.style.display = (type === 'stream' || type === 'spotify') ? 'none' : 'block';
+      if (soundWrap) soundWrap.style.display = (type === 'stream') ? 'none' : 'block';
       if (streamWrap) streamWrap.style.display = (type === 'stream' || type === 'chime_then_stream') ? 'block' : 'none';
-      if (spotWrap) spotWrap.style.display = (type === 'spotify') ? 'block' : 'none';
     }
 
     function getSelectedAlarmDays() {
@@ -3883,7 +3870,6 @@
             const typeSel = document.getElementById('alarmSoundTypeSelect');
             const fileSel = document.getElementById('alarmSoundFileSelect');
             const urlIn = document.getElementById('alarmStreamUrlInput');
-            const spotIn = document.getElementById('alarmSpotifyUriInput');
 
             if (toggle) toggle.checked = !!a.enabled;
             if (timeIn) timeIn.value = a.time || '07:00';
@@ -3892,7 +3878,6 @@
             if (typeSel) typeSel.value = a.sound_type || 'chime';
             if (fileSel && a.sound_file) fileSel.value = a.sound_file;
             if (urlIn) urlIn.value = a.stream_url || 'http://icecast.vrtcdn.be/klara-high.mp3';
-            if (spotIn) spotIn.value = a.spotify_uri || 'spotify:track:4cOdK2wGLETKBW3PvgPWqT';
             setSelectedAlarmDays(a.days || '1,2,3,4,5');
             onAlarmSoundTypeChange();
           }
@@ -3910,10 +3895,9 @@
       const stype = document.getElementById('alarmSoundTypeSelect') ? document.getElementById('alarmSoundTypeSelect').value : 'chime';
       const sfile = document.getElementById('alarmSoundFileSelect') ? document.getElementById('alarmSoundFileSelect').value : '/usr/share/sounds/alarm_sharp.wav';
       const url = document.getElementById('alarmStreamUrlInput') ? document.getElementById('alarmStreamUrlInput').value.trim() : '';
-      const spot = document.getElementById('alarmSpotifyUriInput') ? document.getElementById('alarmSpotifyUriInput').value.trim() : '';
       const days = getSelectedAlarmDays();
 
-      const params = `action=save_alarm&enabled=${en}&time=${encodeURIComponent(time)}&target_volume=${vol}&alarm_mode=${mode}&sound_type=${stype}&sound_file=${encodeURIComponent(sfile)}&days=${encodeURIComponent(days)}&stream_url=${encodeURIComponent(url)}&spotify_uri=${encodeURIComponent(spot)}`;
+      const params = `action=save_alarm&enabled=${en}&time=${encodeURIComponent(time)}&target_volume=${vol}&alarm_mode=${mode}&sound_type=${stype}&sound_file=${encodeURIComponent(sfile)}&days=${encodeURIComponent(days)}&stream_url=${encodeURIComponent(url)}`;
       apiFetch(`/api?${params}`)
         .then(res => res.json())
         .then(d => showToast(d.message || 'Alarm settings saved'))

@@ -68,11 +68,7 @@ case "$ACTION" in
             if [ -f "$TARGET" ]; then
                 aplay -q -D tts_in -- "$TARGET" 2>/dev/null || true
             elif echo "$TARGET" | grep -qE "^https?://"; then
-                if command -v mpg123 >/dev/null 2>&1; then
-                    mpg123 -q -a tts_in -- "$TARGET" 2>/dev/null || true
-                elif command -v wget >/dev/null 2>&1; then
-                    wget -q -O - -- "$TARGET" | aplay -D tts_in -q - 2>/dev/null || true
-                fi
+                /usr/bin/play_stream.sh "$TARGET" tts_in 2>/dev/null || true
             fi
         fi
 

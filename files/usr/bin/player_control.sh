@@ -172,7 +172,7 @@ case "$ACTION" in
 		spotify_cmd "$ACTION"
 		;;
 	stop)
-		kill_audio_names mpg123
+		kill_stream
 		do_pause_all
 		;;
 	*)
