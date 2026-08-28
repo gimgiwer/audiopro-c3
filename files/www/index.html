@@ -3361,7 +3361,8 @@
       if (el.npTrackArtist) el.npTrackArtist.textContent = np.artist || 'Unknown Artist';
       if (el.npTrackAlbum) el.npTrackAlbum.textContent = np.album || '';
       
-      const srcName = (np.source === 'spotify') ? 'Spotify Connect' : (np.source === 'airplay') ? 'AirPlay' : np.source.toUpperCase();
+      const srcName = (np.source === 'spotify') ? 'Spotify Connect' : (np.source === 'airplay') ? 'AirPlay'
+                    : (np.source === 'squeeze') ? 'Music Assistant' : np.source.toUpperCase();
       if (el.npSourceBadge) el.npSourceBadge.textContent = srcName;
 
       // Play/Pause icon state

@@ -702,6 +702,9 @@ function handle_request(env)
 
     elseif action == "stop_stream" then
         os.execute(". /usr/lib/audiopro/kill_audio.sh; kill_stream >/dev/null 2>&1")
+        -- nothing else clears the cache, so the panel kept showing the station
+        -- that stopped an hour ago
+        write_file("/tmp/audiopro_meta.json", '{"active":false}')
         uhttpd.send('{"status":"ok","message":"Streaming stopped"}')
 
     elseif action == "wifi_scan" then

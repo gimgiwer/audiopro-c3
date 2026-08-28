@@ -48,6 +48,16 @@ unmute_ctl() {
 pause_airplay()  { mute_ctl AirPlay; }
 resume_airplay() { unmute_ctl AirPlay; }
 
+# MA streams from the server, so muting a fader is not a transport at all - the
+# only real one is the LMS CLI, and mcud is what holds that socket. It answers
+# not-found when MA is not the one playing, which is the cue to fall through to
+# the local players. Deliberately not used for pause/resume: those are the alarm
+# and ducking paths, and they must silence the speaker without taking MA's place
+# away from it.
+ma_transport() {
+	ubus call mcud transport "{\"cmd\":\"$1\"}" >/dev/null 2>&1
+}
+
 # Music Assistant owns squeezelite's transport and never reads the mixer back, so
 # muting a fader here would leave MA streaming a track it still shows as playing,
 # with the position running on. The play/pause key must not fake that: mcud
@@ -138,6 +148,10 @@ case "$ACTION" in
 			exit 0
 		fi
 
+		case "$TARGET" in
+			all|squeeze) ma_transport toggle && exit 0 ;;
+		esac
+
 		# The state file only records what we last did to a player, so anything the
 		# phone does behind our back leaves the key inverted for one press. librespot
 		# knows its own play_status, and the patched fifo takes a stateless toggle
@@ -148,7 +162,7 @@ case "$ACTION" in
 		# With no explicit target, follow the source that most recently reported
 		# playback. This keeps the physical key stateless and phone/MA friendly.
 		if [ "$TARGET" = all ] && [ -r "$META_JSON" ]; then
-			case "$(sed -n 's/.*"source": *"\([^"]*\)".*/\1/p' "$META_JSON" | head -1)" in
+			case "$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$META_JSON" | head -1)" in
 				spotify) TARGET=spotify ;;
 				squeeze|music_assistant|ma) TARGET=squeeze ;;
 				airplay) TARGET=airplay ;;
@@ -168,7 +182,8 @@ case "$ACTION" in
 		esac
 		;;
 	next|prev)
-		# Only Spotify has a notion of tracks we can drive from here
+		# MA first, then Spotify - nothing else here has a notion of tracks
+		ma_transport "$ACTION" && exit 0
 		spotify_cmd "$ACTION"
 		;;
 	stop)

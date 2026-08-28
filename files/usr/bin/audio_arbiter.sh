@@ -61,8 +61,9 @@ fi
 
 if [ "$POLICY" = "priority" ] || [ "$POLICY" = "lifo" ]; then
     ACTIVE_SOURCE=""
-    if [ -f "$META_JSON" ] && grep -q '"playing": true' "$META_JSON"; then
-        ACTIVE_SOURCE=$(grep '"source":' "$META_JSON" | sed -n 's/.*"source": *"\([^"]*\)".*/\1/p')
+    # the shell writers pretty-print with a space after the colon and mcud does not
+    if [ -f "$META_JSON" ] && grep -q '"playing"[[:space:]]*:[[:space:]]*true' "$META_JSON"; then
+        ACTIVE_SOURCE=$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$META_JSON")
     fi
     
     [ -z "$ACTIVE_SOURCE" ] && exit 0

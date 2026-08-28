@@ -758,7 +758,10 @@ static int alsa_set_pct(const char *name, int pct) {
 #define MA_RETRY_MIN_MS   5000
 #define MA_RETRY_MAX_MS   30000
 #define MA_STEP_DEFAULT   5     /* MA units per key press: 20 presses top to bottom */
-#define MA_RX_SIZE        4096
+/* one status reply with metadata tags is one line, and MA answers "status - 1"
+ * with the current track plus the next one - two artwork URLs and two titles,
+ * ~2 kB. Overflowing drops the whole line, i.e. mode and volume with it. */
+#define MA_RX_SIZE        8192
 
 static char g_ma_host[64] = "";     /* empty: same box as the broker */
 static int  g_ma_port = MA_PORT_DEFAULT;
@@ -774,6 +777,11 @@ static char g_ma_rx[MA_RX_SIZE];
 static size_t g_ma_rxlen = 0;
 static int  g_ma_mode = -1;         /* -1 unknown, 0 stop, 1 play, 2 pause */
 static int  g_ma_power = -1;
+static char g_ma_title[128] = "";
+static char g_ma_artist[128] = "";
+static char g_ma_album[128] = "";
+static char g_ma_art[256] = "";
+static int  g_meta_ours = 0;        /* we wrote the meta cache last, so we may clear it */
 
 static void ma_connect(void);
 static void ma_retry_cb(struct uloop_timeout *t);
@@ -803,6 +811,16 @@ static int ma_active(void) {
     if (!ma_connected() || !g_ma_id[0] || g_ma_vol < 0) return 0;
     if (g_ma_owns_volume) return 1;
     return g_ma_power != 0 && (g_ma_mode == 1 || g_ma_mode == 2);
+}
+
+/* Whether a transport command has any chance of landing. ma_active() is about the
+ * volume and stays true while the player idles; the CLI, though, accepts "play" and
+ * "mode play" on a stopped player, echoes them back and does nothing - only MA's own
+ * API can start one. So this is what decides whether the key belongs to MA or falls
+ * through to the local players. */
+static int ma_has_transport(void) {
+    return ma_connected() && g_ma_id[0] && g_ma_power != 0 &&
+           (g_ma_mode == 1 || g_ma_mode == 2);
 }
 
 /* One number for the user: whatever the keys move right now is what the MCU
@@ -900,10 +918,61 @@ static int ma_ip_is_ours(const char *ip) {
     return strcmp(mine, ip) == 0;
 }
 
+/* The web UI reads whatever played last out of one cache file, and every other
+ * source writes it from a shell script. Nothing wrote it for the slimproto
+ * player, so the now-playing panel stayed empty (or stuck on the previous
+ * source) for everything Music Assistant plays - which in smarthome mode is
+ * everything. The status poll already carries the track, so this is free. */
+#define META_JSON "/tmp/audiopro_meta.json"
+
+static void meta_json_str(char *out, size_t n, const char *in) {
+    size_t w = 0;
+    for (; *in && w + 2 < n; in++) {
+        if (*in == '"' || *in == '\\') {
+            out[w++] = '\\';
+            out[w++] = *in;
+        } else if ((unsigned char)*in < 0x20) {
+            out[w++] = ' ';
+        } else {
+            out[w++] = *in;
+        }
+    }
+    out[w] = '\0';
+}
+
+static void meta_write(int active) {
+    char t[260], a[260], b[260], tmp[64];
+    FILE *f;
+    snprintf(tmp, sizeof(tmp), "%s.tmp", META_JSON);
+    f = fopen(tmp, "w");
+    if (!f) return;
+    if (!active) {
+        fputs("{\"active\":false}\n", f);
+    } else {
+        meta_json_str(t, sizeof(t), g_ma_title);
+        meta_json_str(a, sizeof(a), g_ma_artist);
+        meta_json_str(b, sizeof(b), g_ma_album);
+        /* artwork_url is what the browser prefers over the local jpg, and MA's
+         * image proxy is on the same LAN as the browser */
+        fprintf(f, "{\"active\":true,\"source\":\"squeeze\",\"title\":\"%s\","
+                   "\"artist\":\"%s\",\"album\":\"%s\",\"playing\":%s,"
+                   "\"artwork\":false,\"artwork_url\":\"%s\",\"updated\":%ld}\n",
+                t, a, b, g_ma_mode == 1 ? "true" : "false", g_ma_art,
+                (long)time(NULL));
+    }
+    fclose(f);
+    if (rename(tmp, META_JSON) < 0) unlink(tmp);
+    g_meta_ours = active;
+}
+
 static void ma_parse_line(char *line) {
     char pending_id[64] = "";
+    char title[128] = "", artist[128] = "", album[128] = "", art[256] = "";
     char *tok, *save = NULL, *p;
     int vol = -1, mode = -1, power = -1;
+    /* the reply lists the current track and the next one, each opened by its own
+     * "playlist index"; -2 keeps the fields before the first block out */
+    int cur = -1, idx = -2, mode_changed = 0;
 
     /* "mixer volume ?" answers with the query echoed back and then the value,
      * everything else is key:value pairs - and in those the key arrives
@@ -936,6 +1005,23 @@ static void ma_parse_line(char *line) {
             mode = !strcmp(c + 1, "play") ? 1 : !strcmp(c + 1, "pause") ? 2 : 0;
         } else if (!strcmp(tok, "power")) {
             power = atoi(c + 1);
+        } else if (!strcmp(tok, "playlist_cur_index")) {
+            cur = atoi(c + 1);
+        } else if (!strcmp(tok, "playlist index")) {
+            idx = atoi(c + 1);
+        } else if (!strcmp(tok, "current_title")) {
+            /* a radio stream carries its name here and no track title at all */
+            if (!title[0]) snprintf(title, sizeof(title), "%s", c + 1);
+        } else if (idx == cur) {
+            if (!strcmp(tok, "title")) {
+                snprintf(title, sizeof(title), "%s", c + 1);
+            } else if (!strcmp(tok, "artist")) {
+                snprintf(artist, sizeof(artist), "%s", c + 1);
+            } else if (!strcmp(tok, "album")) {
+                snprintf(album, sizeof(album), "%s", c + 1);
+            } else if (!strcmp(tok, "artwork_url")) {
+                snprintf(art, sizeof(art), "%s", c + 1);
+            }
         }
     }
 
@@ -943,6 +1029,7 @@ static void ma_parse_line(char *line) {
     if (power >= 0) g_ma_power = power;
     if (mode >= 0 && mode != g_ma_mode) {
         g_ma_mode = mode;
+        mode_changed = 1;
         LOG_INFO("Music Assistant is %s", mode == 1 ? "playing" : mode == 2 ? "paused" : "stopped");
     }
     if (vol >= 0 && vol != g_ma_vol) {
@@ -964,6 +1051,25 @@ static void ma_parse_line(char *line) {
         ma_sync_master(0);
         vol_publish_visible();
     }
+
+    /* The cache is only worth touching while MA is the one making sound, and the
+     * poll runs every second, so only on a real change. Whoever else played last
+     * keeps its own entry: we clear the file only if we are the one who filled it. */
+    if (g_ma_mode == 1 || g_ma_mode == 2) {
+        if (title[0] && (mode_changed || strcmp(title, g_ma_title) ||
+                         strcmp(artist, g_ma_artist) || strcmp(album, g_ma_album) ||
+                         strcmp(art, g_ma_art))) {
+            snprintf(g_ma_title, sizeof(g_ma_title), "%s", title);
+            snprintf(g_ma_artist, sizeof(g_ma_artist), "%s", artist);
+            snprintf(g_ma_album, sizeof(g_ma_album), "%s", album);
+            snprintf(g_ma_art, sizeof(g_ma_art), "%s", art);
+            meta_write(1);
+            LOG_INFO("Now playing: %s - %s", g_ma_artist, g_ma_title);
+        }
+    } else if (g_meta_ours) {
+        g_ma_title[0] = g_ma_artist[0] = g_ma_album[0] = g_ma_art[0] = '\0';
+        meta_write(0);
+    }
 }
 
 static void ma_poll_cb(struct uloop_timeout *t) {
@@ -974,7 +1080,7 @@ static void ma_poll_cb(struct uloop_timeout *t) {
         uloop_timeout_set(&g_ma_poll_t, MA_POLL_MS);
         return;
     }
-    ma_send("status - 1 tags:");
+    ma_send("status - 1 tags:alKd");
     /* status carries "mixer volume" only while the player is powered on, and
      * with owns_volume the keys still move MA's own number when it is off */
     if (g_ma_owns_volume && g_ma_power != 1) ma_send("mixer volume ?");
@@ -1506,7 +1612,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             /* MA's stream is pushed from the server, so ducking squeezelite's
              * softvol only mutes it - the transport has to go to the server. */
             if (ma_cmd && ma_active() && ma_send("%s", ma_cmd) == 0) {
-                ma_send("status - 1 tags:");
+                ma_send("status - 1 tags:alKd");
                 return;
             }
             const char *act = NULL;
@@ -2280,8 +2386,8 @@ static void process_mcu_command(const char *cmd) {
         /* O_CREAT on /tmp/player_cmd just made a plain file nothing ever read,
          * so this key did nothing at all until now. MA is the exception: its
          * stream comes from the server, so the key has to go there. */
-        if (ma_active() && ma_send("pause") == 0)
-            ma_send("status - 1 tags:");
+        if (ma_has_transport() && ma_send("pause") == 0)
+            ma_send("status - 1 tags:alKd");
         else
             spawn_async("/usr/bin/player_control.sh toggle");
     } else if (!strncmp(cmd, "MCU+KEY+", 8) && isdigit((unsigned char)cmd[8])) {
@@ -2514,6 +2620,15 @@ enum {
 
 static const struct blobmsg_policy trig_preset_policy[__TRIG_PRESET_MAX] = {
     [TRIG_PRESET_ID] = { .name = "preset", .type = BLOBMSG_TYPE_INT32 },
+};
+
+enum {
+    TRANSPORT_CMD,
+    __TRANSPORT_MAX
+};
+
+static const struct blobmsg_policy transport_policy[__TRANSPORT_MAX] = {
+    [TRANSPORT_CMD] = { .name = "cmd", .type = BLOBMSG_TYPE_STRING },
 };
 
 static int mcud_ubus_status(struct ubus_context *ctx, struct ubus_object *obj,
@@ -2801,6 +2916,40 @@ static int mcud_ubus_trigger_preset(struct ubus_context *ctx, struct ubus_object
     return 0;
 }
 
+/* Transport for whoever is really playing. The physical key already knew that MA
+ * has to be driven over the CLI and everything else went to player_control.sh,
+ * which can only mute a fader for a stream it does not own - so the web ui's
+ * play/pause did nothing at all while MA was the source. NOT_FOUND means "not
+ * mine", i.e. the caller should fall back to the local players. */
+static int mcud_ubus_transport(struct ubus_context *ctx, struct ubus_object *obj,
+                               struct ubus_request_data *req, const char *method,
+                               struct blob_attr *msg) {
+    (void)ctx;
+    (void)obj;
+    (void)req;
+    (void)method;
+    struct blob_attr *tb[__TRANSPORT_MAX];
+    const char *cmd;
+    blobmsg_parse(transport_policy, __TRANSPORT_MAX, tb, blob_data(msg), blob_len(msg));
+    if (!tb[TRANSPORT_CMD]) return UBUS_STATUS_INVALID_ARGUMENT;
+    cmd = blobmsg_get_string(tb[TRANSPORT_CMD]);
+    if (!ma_has_transport()) return UBUS_STATUS_NOT_FOUND;
+
+    /* bare "pause" is the toggle, "pause 1" only ever pauses, and resume is the
+     * toggle again because "play" is one of the verbs MA ignores */
+    if (!strcmp(cmd, "toggle")) ma_send("pause");
+    else if (!strcmp(cmd, "play")) { if (g_ma_mode == 2) ma_send("pause"); }
+    else if (!strcmp(cmd, "pause")) ma_send("pause 1");
+    else if (!strcmp(cmd, "stop")) ma_send("stop");
+    else if (!strcmp(cmd, "next")) ma_send("playlist index +1");
+    else if (!strcmp(cmd, "prev")) ma_send("playlist index -1");
+    else return UBUS_STATUS_INVALID_ARGUMENT;
+
+    LOG_INFO("Transport %s sent to Music Assistant", cmd);
+    ma_send("status - 1 tags:alKd");
+    return 0;
+}
+
 static const struct ubus_method mcud_methods[] = {
     UBUS_METHOD_NOARG("status", mcud_ubus_status),
     UBUS_METHOD("set_volume", mcud_ubus_set_volume, set_vol_policy),
@@ -2809,6 +2958,7 @@ static const struct ubus_method mcud_methods[] = {
     UBUS_METHOD("set_network_state", mcud_ubus_set_network_state, set_net_policy),
     UBUS_METHOD("set_power_policy", mcud_ubus_set_power_policy, set_pwr_policy),
     UBUS_METHOD("trigger_preset", mcud_ubus_trigger_preset, trig_preset_policy),
+    UBUS_METHOD("transport", mcud_ubus_transport, transport_policy),
     UBUS_METHOD_NOARG("poweroff", mcud_ubus_poweroff),
 };
 
