@@ -13,7 +13,7 @@ define Device/audiopro_c3
   DEVICE_PACKAGES := kmod-sound-mt7620 alsa-utils alsa-lib alsa-plugin-c3eq mpg123 \
                      squeezelite-full \
                      shairport-sync-mbedtls avahi-dbus-daemon \
-                     zram-swap mcud dnsmasq \
+                     zram-swap mcud dnsmasq chrony \
                      uhttpd uhttpd-mod-ubox uhttpd-mod-lua px5g-mbedtls \
                      liblua libuci-lua iwinfo
   SUPPORTED_DEVICES += audiopro,c3 linkplay,a28

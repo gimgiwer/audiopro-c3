@@ -8,8 +8,11 @@ config system
 	# better on the zero-filled pages that dominate swap on this box
 	option zram_comp_algo 'lzo-rle'
 
+# chronyd does the clock instead - there is no RTC, so every boot starts on
+# sysfixtime's guess and wants a fast first sync: chrony's iburst gets there in
+# seconds and then holds microseconds. Servers live in /etc/config/chrony.
 config timeserver 'ntp'
-	option enabled '1'
+	option enabled '0'
 	option enable_server '0'
 	list server '0.openwrt.pool.ntp.org'
 	list server '1.openwrt.pool.ntp.org'
