@@ -1,0 +1,85 @@
+# Audio Pro C3 - one media card that stays useful when Music Assistant is idle.
+#
+# mcud publishes a full MQTT discovery surface (volume, mute, input, transport,
+# sleep timer, restart, power off), but MQTT discovery has no media_player
+# platform, so metadata and transport have to come from the Music Assistant
+# player. This package fuses the two: the child gives artwork, title and
+# transport, the slider drives whatever fader the speaker says is live.
+#
+# Nothing here mirrors volume between the two sides, and it must stay that way.
+# The speaker publishes exactly one number on audiopro_c3/player/volume: mcud
+# hands the slider to MA's own fader whenever MA owns the level (always in
+# profile mode smarthome, only while MA plays in standalone) and to Master
+# otherwise. Those are two stages in series, so an automation copying one onto
+# the other stacks the curves - 40% came out at -15 dB instead of the stock -8 -
+# and the two old mirror automations re-triggered on each other's rounding and
+# walked the level down to 0 on their own.
+#
+# No transport automation either: the front panel keys reach MA through mcud's
+# own LMS CLI connection, so an HA bridge on audiopro_c3/button/play_pause would
+# toggle a second time and undo the press.
+#
+# universal's attributes: block is not templated - every value is parsed as
+# "entity_id|attribute" (media_player.py: val.split("|", 1)). A {{ }} string
+# there is looked up as an entity id, matches nothing, and the attribute is
+# silently dropped, which is why the card had no source list and no volume
+# position. is_volume_muted was the only survivor because that property returns
+# `x in [True, 'on']`, i.e. False rather than None.
+#
+# Drop this file in /config/packages/ and add to configuration.yaml:
+#   homeassistant:
+#     packages: !include_dir_named packages
+
+template:
+  - sensor:
+      - name: "Audio Pro C3 volume fraction"
+        unique_id: audiopro_c3_volume_fraction
+        # media_player wants 0..1, the number entity speaks percent
+        state: "{{ (states('number.audio_pro_c3_volume') | float(0)) / 100 }}"
+        availability: "{{ has_value('number.audio_pro_c3_volume') }}"
+
+media_player:
+  - platform: universal
+    name: Audio Pro C3
+    unique_id: audiopro_c3_universal
+    device_class: speaker
+    children:
+      - media_player.squeezeplay_00_22_6c_b8_85_ac
+    # mcud's binary_sensor covers the sources MA knows nothing about, so the card
+    # still says "playing" for Spotify Connect or AirPlay
+    state_template: >
+      {% if is_state('sensor.audio_pro_c3_uplink', 'offline') %}off
+      {% elif is_state('media_player.squeezeplay_00_22_6c_b8_85_ac', 'playing') %}playing
+      {% elif is_state('media_player.squeezeplay_00_22_6c_b8_85_ac', 'paused') %}paused
+      {% elif is_state('binary_sensor.audio_pro_c3_playing', 'on') %}playing
+      {% else %}idle{% endif %}
+    attributes:
+      volume_level: sensor.audio_pro_c3_volume_fraction
+      is_volume_muted: switch.audio_pro_c3_mute
+      source: select.audio_pro_c3_input
+      # the select's own options attribute, so the list follows mcud's discovery
+      source_list: select.audio_pro_c3_input|options
+    commands:
+      volume_set:
+        action: mqtt.publish
+        data:
+          topic: audiopro_c3/player/volume/set
+          payload: "{{ (volume_level | float(0) * 100) | round(0) | int }}"
+      volume_mute:
+        action: mqtt.publish
+        data:
+          topic: audiopro_c3/player/mute/set
+          payload: "{{ 'ON' if is_volume_muted else 'OFF' }}"
+      select_source:
+        action: select.select_option
+        target:
+          entity_id: select.audio_pro_c3_input
+        data:
+          option: "{{ source }}"
+      # no turn_on: the MCU cuts the amp rail and only the front panel key wakes
+      # the speaker again, same as stock
+      turn_off:
+        action: mqtt.publish
+        data:
+          topic: audiopro_c3/player/command
+          payload: POWEROFF
