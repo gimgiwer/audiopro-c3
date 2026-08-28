@@ -35,7 +35,7 @@
 #define SLEEP_CHECK_MS       5000
 #define MCU_KEEPALIVE_SEC    60   /* default for -k, see sleep_timer_cb */
 #define VOL_STEP_DB          1   /* percent fallback for when Master's raw range is unreadable */
-#define MCU_VOL_TOLERANCE    2   /* MCU rounds our 0..100 onto its own scale */
+#define MCU_VOL_STEP         2   /* one panel press moves the MCU's own counter this far */
 #define MAX_LINE_LEN         128
 #define READ_BUF_SIZE        256
 #define BUTTON_DEBOUNCE_MS   120
@@ -130,6 +130,7 @@ static time_t g_last_activity_time = 0;
 static int64_t g_last_button_ms = 0;
 
 static time_t g_mcu_link_ts = 0;      /* when we last ran the MCU handshake */
+static int  g_mcu_vol = -1;           /* the MCU's own volume counter, as last reported */
 static char g_mcu_ver[16] = "";
 static time_t g_last_vol_pub_sec = 0;
 static int    g_pending_vol_pub = -1;
@@ -2170,9 +2171,6 @@ static void process_mcu_command(const char *cmd) {
         return;
     }
 
-    /* Audio Pro C3 has physical pushbuttons only (MCU+KEY+VOL+ / VOL-), no rotary encoder.
-     * The STM8S sends MCU+VOL+ solely as an echo/quantization state. Treating it as an
-     * ALSA volume setter created a feedback loop that walked the volume down to 0. */
     if (!strncmp(cmd, "MCU+PLM+", 8) && isdigit((unsigned char)cmd[8])) {
         int src = source_from_plm(atoi(cmd + 8));
         if (src < 0) {
@@ -2183,13 +2181,40 @@ static void process_mcu_command(const char *cmd) {
         return;
     }
 
+    /* This is the panel's volume key. MCU+KEY+VOL+/- is what the code used to wait
+     * for and this MCU (fw 0109) never sends it - captured with a human pressing the
+     * keys, every press arrives here instead. The value is the MCU's own counter and
+     * has nothing to do with ours: it keeps one per source (line-in came back 100,
+     * wifi 000), it moves in steps of MCU_VOL_STEP, and it ignores our AXX+VOL - we
+     * sent 049 and the next press still reported 006. So only the sign is usable.
+     *
+     * A jump bigger than one step is the MCU loading a stored level, which it does on
+     * every source switch and at link-up, and adopting that would slam the volume; the
+     * one it sends leads the M2S/PLM pair by a second, so magnitude is the only thing
+     * that can tell them apart. delta 0 happens at the MCU's own rails and on the
+     * first press after a source switch, where it only re-states the level. */
     if (!strncmp(cmd, "MCU+VOL+", 8) && isdigit((unsigned char)cmd[8])) {
         int v = atoi(cmd + 8);
-        LOG_DEBUG("MCU volume echo %d%% (current master: %d%%)", v, g_user_vol);
+        if (v < 0 || v > 100) return;
+        int d = g_mcu_vol < 0 ? 0 : v - g_mcu_vol;
+        g_mcu_vol = v;
+        if (d > 0 && d <= MCU_VOL_STEP) {
+            LOG_INFO("Panel volume key up (MCU counter %d)", v);
+            adjust_user_volume(+1);
+            ubus_notify_button("vol_up");
+        } else if (d < 0 && -d <= MCU_VOL_STEP) {
+            LOG_INFO("Panel volume key down (MCU counter %d)", v);
+            adjust_user_volume(-1);
+            ubus_notify_button("vol_down");
+        } else {
+            LOG_DEBUG("MCU volume counter now %d%% (jump of %d, not a key)", v, d);
+        }
         return;
     }
 
-    if (strstr(cmd, "MCU+KEY+")) {
+    /* MCU+PLY+PUS is the play/pause key on this fw, so it needs the debounce too -
+     * a bounce on a toggle cancels itself out and the press looks like it was lost */
+    if (strstr(cmd, "MCU+KEY+") || strstr(cmd, "MCU+PLY+PUS")) {
         /* Mechanical Debounce only for hardware button presses */
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -2206,7 +2231,11 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+KEY+VOL-")) {
         adjust_user_volume(-1);
         ubus_notify_button("vol_down");
-    } else if (strstr(cmd, "MCU+KEY+PLPA")) {
+    } else if (strstr(cmd, "MCU+PLY+PUS") || strstr(cmd, "MCU+KEY+PLPA")) {
+        /* MCU+PLY+PUS, with a plus, is what the panel key really sends here: two
+         * presses in a row both came back PUS, so the MCU keeps no play state and
+         * this is a bare toggle, not the pause half of a pair. Stock's own pause
+         * event is MCU+PLY-PUS with a minus, handled further down and never seen. */
         mqtt_send_button("play_pause");
         ubus_notify_button("play_pause");
         /* O_CREAT on /tmp/player_cmd just made a plain file nothing ever read,
