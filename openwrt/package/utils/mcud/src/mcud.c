@@ -815,9 +815,9 @@ static int ma_active(void) {
 
 /* Whether a transport command has any chance of landing. ma_active() is about the
  * volume and stays true while the player idles; the CLI, though, accepts "play" and
- * "mode play" on a stopped player, echoes them back and does nothing - only MA's own
- * API can start one. So this is what decides whether the key belongs to MA or falls
- * through to the local players. */
+ * "mode play" on a stopped player, echoes them back and does nothing - starting one
+ * takes ma_start(). So this is what decides whether a plain toggle belongs to MA or
+ * falls through to the local players. */
 static int ma_has_transport(void) {
     return ma_connected() && g_ma_id[0] && g_ma_power != 0 &&
            (g_ma_mode == 1 || g_ma_mode == 2);
@@ -891,6 +891,21 @@ static int ma_send(const char *fmt, ...) {
     line[n++] = '\n';
     line[n] = '\0';
     return ma_write(line);
+}
+
+/* Start MA from cold. Its own API can do that from any state, the CLI needs two
+ * steps: with power 0 the queue is hidden from every verb, and the only one that
+ * makes a stopped player sound is the front-panel emulation - "play", "mode play"
+ * and "playlist jump" are all accepted and all do nothing. Refused while the
+ * speaker is making sound by other means, because the same press arrives while
+ * Spotify or line-in is the source, and MA joining in there is a second source,
+ * not a resume. */
+static int ma_start(void) {
+    if (!ma_connected() || !g_ma_id[0] || is_audio_active()) return -1;
+    if (g_ma_power == 0 && ma_send("power 1") != 0) return -1;
+    if (ma_send("button jump_rew") != 0) return -1;
+    LOG_INFO("Music Assistant woken from stopped");
+    return 0;
 }
 
 static void url_decode(char *s) {
@@ -2391,6 +2406,8 @@ static void process_mcu_command(const char *cmd) {
          * stream comes from the server, so the key has to go there. */
         if (ma_has_transport() && ma_send("pause") == 0)
             ma_send("status - 1 tags:alKd");
+        else if (ma_start() == 0)
+            ma_send("status - 1 tags:alKd");
         else
             spawn_async("/usr/bin/player_control.sh toggle");
     } else if (!strncmp(cmd, "MCU+KEY+", 8) && isdigit((unsigned char)cmd[8])) {
@@ -2936,12 +2953,16 @@ static int mcud_ubus_transport(struct ubus_context *ctx, struct ubus_object *obj
     blobmsg_parse(transport_policy, __TRANSPORT_MAX, tb, blob_data(msg), blob_len(msg));
     if (!tb[TRANSPORT_CMD]) return UBUS_STATUS_INVALID_ARGUMENT;
     cmd = blobmsg_get_string(tb[TRANSPORT_CMD]);
-    /* "play" is the one command that means something to a stopped player, and it
-     * is never on the toggle path, so it cannot steal the output from a local
-     * source. Everything else needs MA to be the thing making sound. */
-    if (!strcmp(cmd, "play")) {
-        if (!ma_connected() || !g_ma_id[0] || g_ma_power == 0)
-            return UBUS_STATUS_NOT_FOUND;
+    /* "play" and the toggle may also wake a stopped or powered-off player - that is
+     * what makes the panel key work on a speaker nobody has touched since boot -
+     * and ma_start() is what decides whether that is safe. Everything else needs MA
+     * to be the thing making sound. */
+    if (!strcmp(cmd, "play") || !strcmp(cmd, "toggle")) {
+        if (!ma_has_transport()) {
+            if (ma_start() != 0) return UBUS_STATUS_NOT_FOUND;
+            ma_send("status - 1 tags:alKd");
+            return 0;
+        }
     } else if (!ma_has_transport()) {
         return UBUS_STATUS_NOT_FOUND;
     }
@@ -2952,7 +2973,9 @@ static int mcud_ubus_transport(struct ubus_context *ctx, struct ubus_object *obj
      * the current track rather than resuming it. From pause the toggle resumes in
      * place, so try that first. */
     if (!strcmp(cmd, "toggle")) ma_send("pause");
-    else if (!strcmp(cmd, "play")) ma_send(g_ma_mode == 2 ? "pause" : "button jump_rew");
+    /* only paused needs anything: jump_rew here used to be the stopped case and it
+     * restarted the track under a player that was already playing. */
+    else if (!strcmp(cmd, "play")) { if (g_ma_mode == 2) ma_send("pause"); }
     else if (!strcmp(cmd, "pause")) ma_send("pause 1");
     else if (!strcmp(cmd, "stop")) ma_send("stop");
     else if (!strcmp(cmd, "next")) ma_send("playlist index +1");
