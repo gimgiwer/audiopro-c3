@@ -2933,12 +2933,23 @@ static int mcud_ubus_transport(struct ubus_context *ctx, struct ubus_object *obj
     blobmsg_parse(transport_policy, __TRANSPORT_MAX, tb, blob_data(msg), blob_len(msg));
     if (!tb[TRANSPORT_CMD]) return UBUS_STATUS_INVALID_ARGUMENT;
     cmd = blobmsg_get_string(tb[TRANSPORT_CMD]);
-    if (!ma_has_transport()) return UBUS_STATUS_NOT_FOUND;
+    /* "play" is the one command that means something to a stopped player, and it
+     * is never on the toggle path, so it cannot steal the output from a local
+     * source. Everything else needs MA to be the thing making sound. */
+    if (!strcmp(cmd, "play")) {
+        if (!ma_connected() || !g_ma_id[0] || g_ma_power == 0)
+            return UBUS_STATUS_NOT_FOUND;
+    } else if (!ma_has_transport()) {
+        return UBUS_STATUS_NOT_FOUND;
+    }
 
-    /* bare "pause" is the toggle, "pause 1" only ever pauses, and resume is the
-     * toggle again because "play" is one of the verbs MA ignores */
+    /* bare "pause" is the toggle, "pause 1" only ever pauses. "play", "mode play"
+     * and "playlist jump" are all accepted and all do nothing; the only verb that
+     * really starts a stopped queue is the front-panel emulation, and it restarts
+     * the current track rather than resuming it. From pause the toggle resumes in
+     * place, so try that first. */
     if (!strcmp(cmd, "toggle")) ma_send("pause");
-    else if (!strcmp(cmd, "play")) { if (g_ma_mode == 2) ma_send("pause"); }
+    else if (!strcmp(cmd, "play")) ma_send(g_ma_mode == 2 ? "pause" : "button jump_rew");
     else if (!strcmp(cmd, "pause")) ma_send("pause 1");
     else if (!strcmp(cmd, "stop")) ma_send("stop");
     else if (!strcmp(cmd, "next")) ma_send("playlist index +1");
