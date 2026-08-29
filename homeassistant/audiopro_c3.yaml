@@ -17,7 +17,8 @@
 #
 # No transport automation either: the front panel keys reach MA through mcud's
 # own LMS CLI connection, so an HA bridge on audiopro_c3/button/play_pause would
-# toggle a second time and undo the press.
+# toggle a second time and undo the press. The card's own transport commands go
+# straight at the MA player, which is a single user action, not a mirror.
 #
 # universal's attributes: block is not templated - every value is parsed as
 # "entity_id|attribute" (media_player.py: val.split("|", 1)). A {{ }} string
@@ -46,7 +47,10 @@ media_player:
     children:
       - media_player.squeezeplay_00_22_6c_b8_85_ac
     # mcud's binary_sensor covers the sources MA knows nothing about, so the card
-    # still says "playing" for Spotify Connect or AirPlay
+    # still says "playing" for Spotify Connect or AirPlay. Cost of having one at
+    # all: universal renders it on a tracked entity's next state change or on
+    # homeassistant_start, and nowhere else, so straight after universal.reload
+    # the card reads "unknown" until something below actually moves.
     state_template: >
       {% if is_state('sensor.audio_pro_c3_uplink', 'offline') %}off
       {% elif is_state('media_player.squeezeplay_00_22_6c_b8_85_ac', 'playing') %}playing
@@ -71,6 +75,32 @@ media_player:
         data:
           topic: audiopro_c3/player/mute/set
           payload: "{{ 'ON' if is_volume_muted else 'OFF' }}"
+      # transport straight at the Music Assistant player. universal inherits a
+      # child's features only while that child is the active one, so without
+      # these the card loses its play button the moment MA goes idle - and MA's
+      # api starts a player its own cli cannot ("play" on a stopped queue is a
+      # no-op there). Not the mqtt buttons: that is the front panel's path, where
+      # mcud already picks between MA and a local player.
+      media_play:
+        action: media_player.media_play
+        target:
+          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+      media_pause:
+        action: media_player.media_pause
+        target:
+          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+      media_stop:
+        action: media_player.media_stop
+        target:
+          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+      media_next_track:
+        action: media_player.media_next_track
+        target:
+          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+      media_previous_track:
+        action: media_player.media_previous_track
+        target:
+          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
       # no turn_on: the MCU cuts the amp rail and only the front panel key wakes
       # the speaker again, same as stock
       turn_off:
