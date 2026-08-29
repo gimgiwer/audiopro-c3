@@ -1215,7 +1215,10 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
      * the softvol position is still better than nothing. */
     if (ma_connected() && g_ma_id[0]) {
         ma_send("mixer volume ?");
-    } else {
+    } else if (g_ma_fd < 0) {
+        /* only with no CLI socket at all: mid-connect the server's own number is
+         * a second away, and publishing the softvol position instead showed HA a
+         * wrong level on every restart. */
         int ma = alsa_get_pct(MA_VOL_CTL);
         if (ma >= 0 && ma != g_ma_vol) {
             g_ma_vol = ma;
