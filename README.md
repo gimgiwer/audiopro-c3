@@ -206,6 +206,23 @@ file on flash, and chronyd steps the clock forward once the network is up — wh
 why nothing in `mcud` measures time with the wall clock; every deadline in it is
 `CLOCK_MONOTONIC`. Servers live in `/etc/config/chrony`.
 
+### Power and battery
+
+Unplug the charger and the MCU cuts the board's rail about **19 minutes** later,
+whatever the host does. Measured end to end: `MCU+BAT+OFF` at 19:27:07, the 60 s
+keepalive firing the whole time, pack at 100 %, board dead at 19:46:25. Faking a
+playing track the way stock does (`PLY+PLA` plus an advancing position/duration
+pair) did not hold it either, so that code is gone. Real playback does look like it
+keeps the rail up, on stock as well as here, but that is an observation and not a
+measurement. On AC the charger holds the rails and none of this applies.
+
+The keepalive (`mcu_keepalive_sec`, default 60 s) is still worth sending, because
+the MCU polls the host on its own ~20 minute timer and answering that poll is
+already too late. It goes out only while a default route exists — with no uplink
+there is nothing to stay awake for — and `auto_sleep_min`, `sleep_on_no_network`,
+`sleep_in_aux` and `sleep_in_bt` in `/etc/config/mcud` are the policy on top of it.
+`ubus call mcud status` prints which mode is in force.
+
 ## Status and honesty
 
 This is a hobbyist port of a speaker with no public documentation, so it is worth
@@ -217,7 +234,8 @@ something in here that disagrees with your hardware, trust your hardware.
 
 Known open items: the meaning of `CFG0` bit 16 is established empirically but not
 from documentation; the front-panel MCU re-runs its init poll on a ~20 minute timer
-for reasons that are not yet understood; and the AUX input still plays nothing.
+for reasons that are not yet understood; and line-in is switched but silent, which
+is the next paragraph.
 
 The input selector itself is no longer a guess. `AXX+PLM+nnn` is stock's
 source-mode channel — `000` Wi-Fi, `005` line-in, `006` Bluetooth, and eleven more

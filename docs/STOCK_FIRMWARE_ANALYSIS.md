@@ -41,7 +41,11 @@ Deep technical breakdown of the factory firmware captured from a running Audio P
   - Communicates via UART `/dev/ttyS0` @ **57600 baud, 8N1** (verified in NVRAM: `wiimuuartconfig=57600,8,N,1`).
   - Serial console port is `/dev/ttyS1` @ 57600 (`console=ttyS1,57600n8`).
 * **Linkplay MCU ASCII Protocol Commands:**
-  - Set hardware volume: `AXX+VOL+020\n` (range `000` to `100`).
+  - Volume: `AXX+VOL+020\n` (range `000` to `100`) - a **state mirror, not an
+    attenuator**. Stock scaled the samples in software (`liblpml_alsa.so`:
+    `gain_Q16 = vol * 65536 / 100`, noise-shaped dither) and only told the MCU where
+    the number landed, so the LED ring and the app agree; sending it changes no
+    loudness on either firmware. Ours does the same with an ALSA softvol.
   - Play / pause is the `PLY` family: `AXX+PLY+00%d` (`MCUCommandSend` id 17) and the
     raw `AXX+PLY+PUS\n` that `GNOTIFY=PLM_PAUSE` sends through the passthrough id 35.
     That misleading notify name is where this file's old "PLM is play/pause" claim
