@@ -195,9 +195,26 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-to `configuration.yaml` and reload YAML. Do not add automations that mirror volume
-between the two sides or bridge the play/pause button — the speaker already owns
-both, and a second writer stacks the faders or double-toggles the press.
+to `configuration.yaml`, then restart core: `reload_all` only reloads integrations
+that are already loaded, so a config that never had `template` or `universal` in it
+needs the restart once, and every later edit is a plain `universal.reload`.
+
+Two things the card expects. Music Assistant takes `media_player.audio_pro_c3` for
+its own player, which is the id the card wants for itself, so rename MA's to
+`media_player.audio_pro_c3_ma` first. And the broker has to let the speaker in — the
+Mosquitto add-on authenticates against Home Assistant users, so put mcud's
+`mqtt_user` / `mqtt_password` in the add-on's own `logins:` list rather than creating
+an HA account that could also log into the UI.
+
+TTS and notifications can go at `media_player.audio_pro_c3` like any other player,
+but `announce: true` does not survive the hop — `universal` forwards content type and
+id and drops the rest — so a prompt that has to duck the music and hand the queue
+back afterwards needs `music_assistant.play_announcement` on
+`media_player.audio_pro_c3_ma`.
+
+Do not add automations that mirror volume between the two sides or bridge the
+play/pause button — the speaker already owns both, and a second writer stacks the
+faders or double-toggles the press.
 
 ### Clock
 

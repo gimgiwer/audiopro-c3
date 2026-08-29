@@ -30,6 +30,11 @@
 # Drop this file in /config/packages/ and add to configuration.yaml:
 #   homeassistant:
 #     packages: !include_dir_named packages
+#
+# Music Assistant names its own player entity media_player.audio_pro_c3, which is
+# the id this card wants for itself. Rename MA's to media_player.audio_pro_c3_ma
+# first (Settings -> Devices -> Entities), otherwise the universal player lands on
+# audio_pro_c3_2 and every reference below points at an entity that never existed.
 
 template:
   - sensor:
@@ -45,7 +50,11 @@ media_player:
     unique_id: audiopro_c3_universal
     device_class: speaker
     children:
-      - media_player.squeezeplay_00_22_6c_b8_85_ac
+      - media_player.audio_pro_c3_ma
+    # the card's media browser needs the child named outright: universal only borrows
+    # a child's features while that child is the active one, and MA's player is off
+    # whenever its queue is stopped - exactly when you want to hand it something.
+    browse_media_entity: media_player.audio_pro_c3_ma
     # mcud's binary_sensor covers the sources MA knows nothing about, so the card
     # still says "playing" for Spotify Connect or AirPlay. Cost of having one at
     # all: universal renders it on a tracked entity's next state change or on
@@ -53,8 +62,8 @@ media_player:
     # the card reads "unknown" until something below actually moves.
     state_template: >
       {% if is_state('sensor.audio_pro_c3_uplink', 'offline') %}off
-      {% elif is_state('media_player.squeezeplay_00_22_6c_b8_85_ac', 'playing') %}playing
-      {% elif is_state('media_player.squeezeplay_00_22_6c_b8_85_ac', 'paused') %}paused
+      {% elif is_state('media_player.audio_pro_c3_ma', 'playing') %}playing
+      {% elif is_state('media_player.audio_pro_c3_ma', 'paused') %}paused
       {% elif is_state('binary_sensor.audio_pro_c3_playing', 'on') %}playing
       {% else %}idle{% endif %}
     attributes:
@@ -84,23 +93,34 @@ media_player:
       media_play:
         action: media_player.media_play
         target:
-          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+          entity_id: media_player.audio_pro_c3_ma
       media_pause:
         action: media_player.media_pause
         target:
-          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+          entity_id: media_player.audio_pro_c3_ma
       media_stop:
         action: media_player.media_stop
         target:
-          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+          entity_id: media_player.audio_pro_c3_ma
       media_next_track:
         action: media_player.media_next_track
         target:
-          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+          entity_id: media_player.audio_pro_c3_ma
       media_previous_track:
         action: media_player.media_previous_track
         target:
-          entity_id: media_player.squeezeplay_00_22_6c_b8_85_ac
+          entity_id: media_player.audio_pro_c3_ma
+      # tts.speak and notifications land here. announce: and enqueue: do not survive
+      # the hop - async_play_media forwards content type and id and drops the rest -
+      # so anything that has to duck the music goes at the MA entity directly with
+      # music_assistant.play_announcement.
+      play_media:
+        action: media_player.play_media
+        target:
+          entity_id: media_player.audio_pro_c3_ma
+        data:
+          media_content_type: "{{ media_content_type }}"
+          media_content_id: "{{ media_content_id }}"
       # no turn_on: the MCU cuts the amp rail and only the front panel key wakes
       # the speaker again, same as stock
       turn_off:
