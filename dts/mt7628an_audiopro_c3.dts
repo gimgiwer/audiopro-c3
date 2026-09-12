@@ -20,7 +20,7 @@
      */
 
     chosen {
-        bootargs = "console=ttyS1,57600 quiet loglevel=3";
+        bootargs = "console=ttyS1,57600 quiet loglevel=3 lpj=1929216";
     };
 
     pcm5102a: pcm5102a {

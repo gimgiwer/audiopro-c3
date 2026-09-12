@@ -1,0 +1,19 @@
+#!/bin/sh
+# Early Wi-Fi module loader hook for Audio Pro C3
+# Bypasses kmodloader dependency resolution overhead by directly inserting
+# mac80211/mt76 modules immediately after rootfs mount in preinit_main.
+early_wifi() {
+	local kver
+	kver=$(uname -r)
+	local mdir="/lib/modules/$kver"
+	[ -d "$mdir" ] || return 0
+
+	echo "- early wifi loading -"
+	insmod "$mdir/compat.ko" >/dev/null 2>&1
+	insmod "$mdir/cfg80211.ko" >/dev/null 2>&1
+	insmod "$mdir/mac80211.ko" >/dev/null 2>&1
+	insmod "$mdir/mt76.ko" >/dev/null 2>&1
+	insmod "$mdir/mt7603e.ko" >/dev/null 2>&1
+}
+
+boot_hook_add preinit_main early_wifi
