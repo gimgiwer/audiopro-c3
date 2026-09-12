@@ -21,9 +21,9 @@ config options 'options'
 	option priority '0'
 	option dsd_over_pcm '0'
 	option ircontrol '0'
-	# Ultra-low latency buffer: 50ms buffer (2x25ms periods, matching 23.2ms dmix period)
-	option alsa_params '50:2:16:0'
-	# Ultra-low latency Slimproto buffer: 128KB stream / 256KB output
-	option buffer_size '128:256'
-	option stream_bufsiz '128'
-	option out_bufsiz '256'
+	# Hardware-aligned low-latency buffer: 3072 frames (3x 1024-frame hardware DMA periods, ~69.7ms)
+	option alsa_params '3072:1024:16:0'
+	# Low-latency Slimproto buffer: 64KB stream (32 DMA periods) / 128KB output (64 DMA periods)
+	option buffer_size '64:128'
+	option stream_bufsiz '64'
+	option out_bufsiz '128'
