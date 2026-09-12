@@ -7,7 +7,16 @@ USE_PROCD=1
 NAME=wpad
 
 start_service() {
-	if false; then
+	# Check if any AP mode interface is enabled in UCI wireless config
+	local has_ap=0
+	for iface in $(uci -q show wireless | grep "\.mode='ap'" | cut -d. -f2); do
+		if [ "$(uci -q get wireless.${iface}.disabled)" != "1" ]; then
+			has_ap=1
+			break
+		fi
+	done
+
+	if [ "$has_ap" -eq 1 ] && [ -x "/usr/sbin/hostapd" ]; then
 		mkdir -p /var/run/hostapd
 		chown network:network /var/run/hostapd
 		procd_open_instance hostapd
