@@ -6,7 +6,7 @@
 #   uci set profile.main.mode='smarthome'
 #   uci commit profile; /etc/init.d/profile start
 config profile 'main'
-	option mode 'standalone'
+	option mode 'smarthome'
 
 	# What smarthome stops and disables, and standalone puts back, in that
 	# order - shairport-sync needs dbus and avahi up before it starts. Add
