@@ -1,6 +1,6 @@
 #!/bin/sh /etc/rc.common
 # Procd service for fast Wi-Fi association monitoring and hidden SSID fallback.
-START=21
+START=13
 USE_PROCD=1
 
 EXTRA_COMMANDS="monitor"
