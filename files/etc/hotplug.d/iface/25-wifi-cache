@@ -1,0 +1,22 @@
+#!/bin/sh
+# Dynamic Wi-Fi channel and BSSID caching for Fast Boot
+[ "$ACTION" = "ifup" ] || exit 0
+[ "$INTERFACE" = "wwan" ] || exit 0
+
+WLAN_DEV="phy0-sta0"
+LINK_INFO=$(iw dev "$WLAN_DEV" link 2>/dev/null)
+CURRENT_FREQ=$(echo "$LINK_INFO" | awk '/freq:/{print $2}')
+CURRENT_BSSID=$(echo "$LINK_INFO" | awk '/Connected to/{print $3}')
+
+[ -n "$CURRENT_FREQ" ] || exit 0
+
+CACHED_FREQ=$(uci -q get wireless.radio0.scan_list)
+CACHED_BSSID=$(uci -q get wireless.sta_iface.bssid)
+
+if [ "$CACHED_FREQ" != "$CURRENT_FREQ" ] || [ "$CACHED_BSSID" != "$CURRENT_BSSID" ]; then
+    logger -t wifi-cache "Updating Wi-Fi cache: freq=$CURRENT_FREQ, bssid=$CURRENT_BSSID"
+    uci -q delete wireless.radio0.scan_list
+    uci add_list wireless.radio0.scan_list="$CURRENT_FREQ"
+    [ -n "$CURRENT_BSSID" ] && uci -q set wireless.sta_iface.bssid="$CURRENT_BSSID"
+    uci commit wireless
+fi

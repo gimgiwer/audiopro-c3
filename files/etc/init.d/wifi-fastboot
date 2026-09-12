@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+START=21
+USE_PROCD=1
+
+start_service() {
+    (
+        local i=0
+        while [ $i -lt 25 ]; do
+            if wpa_cli -p /var/run/wpa_supplicant -i phy0-sta0 status 2>/dev/null | grep -q 'wpa_state=COMPLETED'; then
+                exit 0
+            fi
+            sleep 1
+            i=$((i + 1))
+        done
+
+        logger -t wifi-fastboot "Cached channel not responding after 25s. Triggering full scan fallback..."
+        wpa_cli -p /var/run/wpa_supplicant -i phy0-sta0 set freq_list "" 2>/dev/null
+        wpa_cli -p /var/run/wpa_supplicant -i phy0-sta0 set_network 0 bssid "" 2>/dev/null
+        wpa_cli -p /var/run/wpa_supplicant -i phy0-sta0 scan 2>/dev/null
+    ) &
+}
