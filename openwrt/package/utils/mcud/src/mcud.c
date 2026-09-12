@@ -586,19 +586,19 @@ static void graceful_shutdown(void) {
  * hard 0 because softvol turns raw 0 into real digital silence
  * (pcm_softvol.c: cur_vol[0] == 0 -> areas_silence). */
 static const unsigned short vol_curve[101] = {
-	   0,  333,  434,  492,  534,  566,  593,  615,
-	 634,  651,  667,  680,  693,  705,  715,  725,
-	 735,  743,  752,  760,  767,  774,  781,  787,
-	 793,  799,  805,  810,  816,  821,  826,  830,
-	 835,  840,  844,  848,  852,  856,  860,  864,
-	 867,  871,  874,  878,  881,  884,  888,  891,
-	 894,  897,  900,  903,  905,  908,  911,  913,
-	 916,  919,  921,  924,  926,  928,  931,  933,
-	 935,  938,  940,  942,  944,  946,  948,  950,
-	 952,  954,  956,  958,  960,  962,  964,  966,
-	 968,  969,  971,  973,  975,  976,  978,  980,
-	 981,  983,  985,  986,  988,  989,  991,  993,
-	 994,  996,  997,  999, 1000
+	   0,    1,  151,  239,  301,  349,  389,  423,
+	 452,  477,  500,  521,  540,  557,  573,  588,
+	 602,  615,  628,  639,  651,  661,  671,  681,
+	 690,  699,  707,  716,  724,  731,  739,  746,
+	 753,  759,  766,  772,  778,  784,  790,  796,
+	 801,  806,  812,  817,  822,  827,  831,  836,
+	 841,  845,  850,  854,  858,  862,  866,  870,
+	 874,  878,  882,  885,  889,  893,  896,  900,
+	 903,  906,  910,  913,  916,  919,  923,  926,
+	 929,  932,  935,  938,  940,  943,  946,  949,
+	 952,  954,  957,  960,  962,  965,  967,  970,
+	 972,  975,  977,  980,  982,  984,  987,  989,
+	 991,  993,  996,  998, 1000
 };
 
 static long vol_pct_to_raw(int pct, long min, long max) {
@@ -609,9 +609,9 @@ static long vol_pct_to_raw(int pct, long min, long max) {
 }
 
 static int vol_db10(int pct) {
-	if (pct <= 0) return -600;
+	if (pct <= 0) return -400;
 	long raw = (long)vol_curve[pct];
-	return (int)((raw - 1000L) * 600L / 1000L);
+	return (int)((raw - 1000L) * 400L / 1000L);
 }
 
 /* Nearest percent rather than a truncation: matches librespot's linear volume law. */
@@ -828,8 +828,10 @@ static int ma_has_transport(void) {
 static void vol_publish_visible(void) {
     int v = ma_active() ? g_ma_vol : g_user_vol;
     if (v < 0) return;
-    mcu_report_state("VOL", v);
-    g_mcu_vol_tx_ms = mono_ms();
+    /* Do NOT send mcu_report_state("VOL", v) here: the MCU does not attenuate
+     * audio, and reporting here triggers an echo MCU+VOL+nnn that looks like a
+     * key press and causes runaway volume oscillation. The MCU queries volume
+     * via MCU+VOL+GET when it needs it. */
     mqtt_publish_volume(v);
 }
 
@@ -1626,7 +1628,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
              * player - librespot over its fifo, the others by ducking their own
              * softvol. Muting Master instead would leave the sender running. */
             const char *ma_cmd = NULL;
-            if (strcasecmp(payload, "TOGGLE") == 0)      ma_cmd = "pause";
+            if (strcasecmp(payload, "TOGGLE") == 0)      ma_cmd = "button play_pause";
             else if (strcasecmp(payload, "PLAY") == 0) {
                 if (ma_active() && g_ma_mode == 0) {
                     if (ma_start() == 0) {
@@ -2422,7 +2424,7 @@ static void process_mcu_command(const char *cmd) {
         /* O_CREAT on /tmp/player_cmd just made a plain file nothing ever read,
          * so this key did nothing at all until now. MA is the exception: its
          * stream comes from the server, so the key has to go there. */
-        if (ma_has_transport() && ma_send("pause") == 0)
+        if (ma_has_transport() && ma_send("button play_pause") == 0)
             ma_send("status - 1 tags:alKd");
         else if (ma_start() == 0)
             ma_send("status - 1 tags:alKd");
@@ -2995,11 +2997,11 @@ static int mcud_ubus_transport(struct ubus_context *ctx, struct ubus_object *obj
      * really starts a stopped queue is the front-panel emulation, and it restarts
      * the current track rather than resuming it. From pause the toggle resumes in
      * place, so try that first. */
-    if (!strcmp(cmd, "toggle")) ma_send("pause");
+    if (!strcmp(cmd, "toggle")) ma_send("button play_pause");
     /* only paused needs anything: jump_rew here used to be the stopped case and it
      * restarted the track under a player that was already playing. */
-    else if (!strcmp(cmd, "play")) { if (g_ma_mode == 2) ma_send("pause"); }
-    else if (!strcmp(cmd, "pause")) ma_send("pause 1");
+    else if (!strcmp(cmd, "play")) { if (g_ma_mode == 2) ma_send("button play_pause"); }
+    else if (!strcmp(cmd, "pause")) ma_send("button play_pause");
     else if (!strcmp(cmd, "stop")) ma_send("stop");
     else if (!strcmp(cmd, "next")) ma_send("playlist index +1");
     else if (!strcmp(cmd, "prev")) ma_send("playlist index -1");
