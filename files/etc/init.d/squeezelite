@@ -151,8 +151,8 @@ start_service() {
 	# Without this a single failed start left the service down until the next
 	# reboot - measured on both first boots after a flash, where squeezelite came
 	# up exit_code 1 while everything else was fine. Same values as librespot and
-	# mcud: count crashes over an hour, wait 5 s, never give up.
-	procd_set_param respawn 3600 2 0
+	# mcud: count crashes over an hour, wait 6 s, never give up.
+	procd_set_param respawn 3600 6 0
 	# So the exit reason lands in syslog instead of nowhere. squeezelite is quiet
 	# unless it is failing.
 	procd_set_param stderr 1

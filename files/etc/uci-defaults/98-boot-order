@@ -12,7 +12,7 @@ rm -f /etc/modules.d/ppp /etc/modules.d/pppoe
 # 90-sound-mt7620 are trimmed to what the card actually uses. Dropped are the OSS
 # compat layer, rawmidi, hwdep, the compressed-audio api and snd-soc-wm8960 -
 # that last one is a codec we do not have, the dac is a PCM5102A. All of them
-# showed usecount 0 on a running speaker, so nothing referenced them. No comment
-# lines in those files: kmodloader treats every token as a module name.
+# Disable packet_steering on single-core MT7688 (RPS is only for multi-core)
+/etc/init.d/packet_steering disable 2>/dev/null
 
 exit 0

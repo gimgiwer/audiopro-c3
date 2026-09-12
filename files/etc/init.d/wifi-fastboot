@@ -58,6 +58,13 @@ monitor() {
 }
 
 start_service() {
+	# Asynchronously trigger netifd to bring up wireless immediately at START=21,
+	# without waiting for procd rcS queue completion (eliminates ~16s idle wait).
+	(
+		ubus -t 5 wait_for network.wireless 2>/dev/null
+		ubus call network.wireless up 2>/dev/null
+	) &
+
 	procd_open_instance "wifi-fastboot"
 	procd_set_param command /etc/init.d/wifi-fastboot monitor
 	procd_close_instance
