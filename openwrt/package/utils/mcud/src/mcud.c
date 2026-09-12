@@ -1627,7 +1627,15 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
              * softvol. Muting Master instead would leave the sender running. */
             const char *ma_cmd = NULL;
             if (strcasecmp(payload, "TOGGLE") == 0)      ma_cmd = "pause";
-            else if (strcasecmp(payload, "PLAY") == 0)   ma_cmd = "mode play";
+            else if (strcasecmp(payload, "PLAY") == 0) {
+                if (ma_active() && g_ma_mode == 0) {
+                    if (ma_start() == 0) {
+                        ma_send("status - 1 tags:alKd");
+                        return;
+                    }
+                }
+                ma_cmd = "mode play";
+            }
             else if (strcasecmp(payload, "PAUSE") == 0)  ma_cmd = "mode pause";
             else if (strcasecmp(payload, "STOP") == 0)   ma_cmd = "mode stop";
             else if (strcasecmp(payload, "NEXT") == 0)   ma_cmd = "playlist index +1";
