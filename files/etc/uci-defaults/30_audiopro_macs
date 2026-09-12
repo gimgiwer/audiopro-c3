@@ -1,0 +1,36 @@
+#!/bin/sh
+# Derive Wi-Fi interface MAC addresses from MT7688 EEPROM at first boot.
+#
+# Linkplay A28 EEPROM layout (MTD partition "factory" / /dev/mtd2):
+#   0x04-0x09 : Wi-Fi RF base MAC (same as label MAC on device bottom)
+#   0x28-0x2D : Ethernet MAC = base + 2
+#
+# Stock Linkplay assignment:
+#   ra0   / AP  iface : base MAC     (00:22:6c:b8:85:ac)
+#   apcli0/ STA iface : LAA MAC      (02:22:6c:b8:85:ac, Local Admin bit set)
+#   eth2  / Ethernet  : base + 2 MAC (00:22:6c:b8:85:ae, from 0x28)
+#
+# In mac80211 (OpenWrt) the primary iface gets the base MAC automatically.
+# We explicitly assign LAA to STA so AP keeps the base (router-visible) MAC.
+
+. /lib/functions/system.sh
+
+# Read base Wi-Fi MAC from EEPROM offset 0x04
+base_mac=$(mtd_get_mac_binary factory 0x4)
+
+[ -z "$base_mac" ] && exit 0
+
+# Derive LAA variant: set bit 1 of first octet (locally administered address)
+first_octet=$(echo "$base_mac" | cut -d: -f1)
+laa_octet=$(printf "%02x" $(( 0x${first_octet} | 0x02 )))
+laa_mac="${laa_octet}$(echo "$base_mac" | cut -c3-)"
+
+# AP gets the base MAC (matches stock ra0, and the DHCP static lease on the router)
+uci -q set wireless.ap_iface.macaddr="${base_mac}"
+
+# STA gets the LAA variant (matches stock apcli0 behavior)
+uci -q set wireless.sta_iface.macaddr="${laa_mac}"
+
+uci commit wireless
+
+exit 0

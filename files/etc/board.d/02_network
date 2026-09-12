@@ -207,6 +207,13 @@ ramips_setup_macs()
 	local label_mac=""
 
 	case $board in
+	audiopro,c3)
+		# Linkplay A28 (MT7688) EEPROM layout:
+		#   0x04: Wi-Fi RF base MAC (label MAC, used for STA iface)
+		#   0x28: Ethernet MAC = base + 2
+		lan_mac=$(mtd_get_mac_binary factory 0x28)
+		label_mac=$(mtd_get_mac_binary factory 0x4)
+		;;
 	asus,rt-ac1200)
 		wan_mac=$(mtd_get_mac_binary factory 0x22)
 		;;
