@@ -58,27 +58,39 @@ make_cmdline() {
 	[ -n "$mixer_device" ] && add -O "$mixer_device"
 	[ -n "$volume_control" ] && add -V "$volume_control"
 
-	local alsa_buffer
-	config_get alsa_buffer options alsa_buffer 200
-	[ "$alsa_buffer" -eq 0 ] && alsa_buffer="200"
+	local alsa_params
+	config_get alsa_params options alsa_params ""
+	if [ -n "$alsa_params" ]; then
+		add -a "$alsa_params"
+	else
+		local alsa_buffer
+		config_get alsa_buffer options alsa_buffer 200
+		[ "$alsa_buffer" -eq 0 ] && alsa_buffer="200"
 
-	local alsa_period
-	config_get alsa_period options alsa_period 4
-	[ "$alsa_period" -eq 0 ] && alsa_period="4"
+		local alsa_period
+		config_get alsa_period options alsa_period 4
+		[ "$alsa_period" -eq 0 ] && alsa_period="4"
 
-	local alsa_format
-	config_get alsa_format options alsa_format 16
-	[ "$alsa_format" = "0" ] && alsa_format="16"
+		local alsa_format
+		config_get alsa_format options alsa_format 16
+		[ "$alsa_format" = "0" ] && alsa_format="16"
 
-	local alsa_mmap
-	config_get alsa_mmap options alsa_mmap 0
-	add -a "$alsa_buffer:$alsa_period:$alsa_format:$alsa_mmap"
+		local alsa_mmap
+		config_get alsa_mmap options alsa_mmap 0
+		add -a "$alsa_buffer:$alsa_period:$alsa_format:$alsa_mmap"
+	fi
 
-	local stream_bufsiz
-	local out_bufsiz
-	config_get stream_bufsiz options stream_bufsiz 2048
-	config_get out_bufsiz options out_bufsiz 3763
-	add -b "$stream_bufsiz:$out_bufsiz"
+	local buffer_size
+	config_get buffer_size options buffer_size ""
+	if [ -n "$buffer_size" ]; then
+		add -b "$buffer_size"
+	else
+		local stream_bufsiz
+		local out_bufsiz
+		config_get stream_bufsiz options stream_bufsiz 2048
+		config_get out_bufsiz options out_bufsiz 3763
+		add -b "$stream_bufsiz:$out_bufsiz"
+	fi
 
 	local max_sr
 	config_get max_sr options max_sr 0

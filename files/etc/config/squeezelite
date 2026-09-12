@@ -21,7 +21,9 @@ config options 'options'
 	option priority '0'
 	option dsd_over_pcm '0'
 	option ircontrol '0'
-	# Bigger than the 200/400 KB default: this radio link drops packets and a
-	# rebuffer mid-track is worse than 512 KB of RAM on a 56 MB box.
-	option stream_bufsiz '512'
-	option out_bufsiz '1024'
+	# Ultra-low latency buffer: 80ms buffer (4x20ms periods)
+	option alsa_params '80:4:16:0'
+	# Low-latency Slimproto buffer: 256KB stream / 512KB output (halves pipeline lag)
+	option buffer_size '256:512'
+	option stream_bufsiz '256'
+	option out_bufsiz '512'

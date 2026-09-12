@@ -60,10 +60,13 @@ goes through this file.
  #define PRESET_RESOLUTION	256
  #define PRESET_MIN_DB		-51.0
  #define ZERO_DB                  0.0
-@@ -164,13 +192,21 @@
+@@ -164,13 +192,24 @@
  	unsigned int gain = b >> VOL_SCALE_SHIFT;
  	int fraction;
  	a = swap ? (short)bswap_16(a) : a;
++	/* Bit-perfect mute: digital silence or zero volume must never dither */
++	if (!a || !b)
++		return 0;
 -	fraction = (int)(a * (b & VOL_SCALE_MASK)) >> VOL_SCALE_SHIFT;
  	if (gain) {
 -		int amp = a * gain + fraction;

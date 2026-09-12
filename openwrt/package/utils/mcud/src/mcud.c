@@ -2508,12 +2508,13 @@ static void process_mcu_command(const char *cmd) {
      * Function_BatteryCharge (0x407e78) and Function_BatteryUncharge (0x407e98).
      * Both are a handful of instructions that store 1 or 0 into
      * g_wiimu_shm+0x764 and return. */
-    } else if (strstr(cmd, "MCU+BAT++ON") || strstr(cmd, "MCU+BAT+ON")) {
+    } else if (strstr(cmd, "MCU+BAT++ON") || strstr(cmd, "MCU+BAT+ON") || strstr(cmd, "BAT+ON")) {
         LOG_INFO("Charger connected (%s)", strstr(cmd, "MCU+BAT++ON") ? "MCU+BAT++ON" : "MCU+BAT+ON");
         g_is_charging = 1;
         mqtt_send_sensor("charging", "true");
         ubus_notify_battery(g_battery_pct, g_is_charging);
-    } else if (strstr(cmd, "MCU+BAT+OFF")) {
+        spawn_async("/usr/sbin/iw dev phy0-sta0 set power_save off");
+    } else if (strstr(cmd, "MCU+BAT+OFF") || strstr(cmd, "BAT+OFF")) {
         /* Mains removed, not a dying cell. This arm used to call
          * graceful_shutdown(), so unplugging the speaker killed it mid-song at 98%
          * charge about 20 s later. Stock has no host-side undervoltage path at
@@ -2523,6 +2524,7 @@ static void process_mcu_command(const char *cmd) {
         g_is_charging = 0;
         mqtt_send_sensor("charging", "false");
         ubus_notify_battery(g_battery_pct, g_is_charging);
+        spawn_async("/usr/sbin/iw dev phy0-sta0 set power_save on");
     } else if (strstr(cmd, "MCU+BAT+LOW")) {
         LOG_WARN("Low battery alert (MCU+BAT+LOW)");
         play_sound(SOUND_LOW_BAT);
@@ -2530,6 +2532,9 @@ static void process_mcu_command(const char *cmd) {
     } else if (strstr(cmd, "MCU+BAT+")) {
         const char *p = strstr(cmd, "MCU+BAT+") + 8;
         int bat = atoi(p);
+        if (!g_is_charging && bat > g_battery_pct && (bat - g_battery_pct) <= 3) {
+            bat = g_battery_pct;
+        }
         g_battery_pct = bat;
         char val[16];
         snprintf(val, sizeof(val), "%d", bat);
