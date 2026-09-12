@@ -60,7 +60,7 @@ Signed-off-by: John Crispin <blogic@openwrt.org>
 +obj-$(CONFIG_SND_RALINK_SOC_I2S) += snd-soc-ralink-i2s.o
 --- /dev/null
 +++ b/sound/soc/ralink/ralink-i2s.c
-@@ -0,0 +1,1027 @@
+@@ -0,0 +1,1025 @@
 +/*
 + *  Copyright (C) 2010, Lars-Peter Clausen <lars@metafoo.de>
 + *  Copyright (C) 2016 Michael Lee <igvtee@gmail.com>
