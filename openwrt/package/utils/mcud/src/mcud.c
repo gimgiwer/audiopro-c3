@@ -829,6 +829,7 @@ static void vol_publish_visible(void) {
     int v = ma_active() ? g_ma_vol : g_user_vol;
     if (v < 0) return;
     mcu_report_state("VOL", v);
+    g_mcu_vol_tx_ms = mono_ms();
     mqtt_publish_volume(v);
 }
 
@@ -856,7 +857,10 @@ static void ma_disconnect(int retry) {
     g_ma_rxlen = 0;
     g_ma_mode = -1;
     uloop_timeout_cancel(&g_ma_poll_t);
-    if (was_owner) ma_sync_master(0);
+    if (was_owner) {
+        ma_sync_master(0);
+        vol_publish_visible();
+    }
     if (retry) ma_arm_retry();
 }
 
@@ -1627,6 +1631,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             else if (strcasecmp(payload, "PAUSE") == 0)  ma_cmd = "mode pause";
             else if (strcasecmp(payload, "STOP") == 0)   ma_cmd = "mode stop";
             else if (strcasecmp(payload, "NEXT") == 0)   ma_cmd = "playlist index +1";
+            else if (strcasecmp(payload, "PREV") == 0)   ma_cmd = "playlist index -1";
             /* MA's stream is pushed from the server, so ducking squeezelite's
              * softvol only mutes it - the transport has to go to the server. */
             if (ma_cmd && ma_active() && ma_send("%s", ma_cmd) == 0) {
@@ -2214,6 +2219,11 @@ static void adopt_audio_source(int source) {
     g_current_source = source;
     g_last_activity_time = now_mono();
     const char *src_name = get_source_name(g_current_source);
+
+    /* Pause Music Assistant if user switched away from Wi-Fi (I2S) */
+    if (source != 0 && ma_has_transport()) {
+        ma_send("pause 1");
+    }
 
     mqtt_send_sensor("source", src_name);
     ubus_notify_source(src_name);
