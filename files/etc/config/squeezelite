@@ -12,8 +12,9 @@ config options 'options'
 	# "Initialization of mixer failed, reverting to software volume" and runs, and
 	# softvol controls only appear once their pcm has been opened. mcud opens the
 	# chain at startup so both exist before this service starts.
-	option mixer_device 'default'
-	option volume_control 'Slimproto'
+	# Squeezelite internal 32-bit fixed-point DSP volume allows seamless,
+	# continuous attenuation down to -72 dB without softvol quantization or 1-2% mute.
+	option volume_control ''
 	# 44.1k only - the i2s block is clocked for it and dmix runs at that rate
 	option max_sr '44100'
 	# close device after 5s of idle to eliminate idle CPU load on dmix TPDF dither
