@@ -171,5 +171,6 @@ restart() {
 }
 
 service_triggers() {
-	procd_add_raw_trigger "interface.*" 1000 /etc/init.d/squeezelite restart
+	# Trigger only on IPv4 wwan interface up event to prevent flapping on wwan6
+	procd_add_interface_trigger "interface.*.up" "wwan" /etc/init.d/squeezelite start
 }
