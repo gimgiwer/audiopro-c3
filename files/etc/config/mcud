@@ -1,0 +1,88 @@
+config mcud 'main'
+	# Security Settings
+	option auth_enabled '0'
+	option allow_custom_commands '0'
+	option session_ttl '604800'
+
+	option enabled '1'
+	option default_volume '25'
+	# Auto-sleep timeout in minutes when running on battery:
+	# 0  = Always-On (DEFAULT: Never sleep, 24/7 ready for HA, Spotify, AirPlay, AUX, BT)
+	# 15 = Sleep after 15 minutes of inactivity
+	# 30 = Sleep after 30 minutes of inactivity
+	option auto_sleep_min '0'
+
+	# Power off if no network uplink is available on battery in Wi-Fi mode:
+	# 0 = Stay awake (wait indefinitely for Wi-Fi reconnection)
+	# 1 = Power off after no_network_timeout_min of searching without network
+	option sleep_on_no_network '0'
+	option no_network_timeout_min '10'
+
+	# Sleep policy for external inputs when running on battery:
+	# 0 = Keep awake indefinitely while AUX or Bluetooth mode is selected
+	# 1 = Count inactivity from last button press / source switch and sleep after auto_sleep_min
+	option sleep_in_aux '0'
+	option sleep_in_bt '0'
+
+	# How often to remind the MCU we are alive, in seconds. Stock's MCU polls the
+	# host on a ~20 min timer and answering it is already too late, so we speak
+	# first. It does not buy off the battery cutoff, though: measured end to end,
+	# the MCU cuts the rail ~19 min after the charger is unplugged with this
+	# firing every 60 s the whole time. Only sent while there is a default route:
+	# with no uplink there is nothing to stay up for. 0 = never send it.
+	option mcu_keepalive_sec '60'
+	# Log level: 0=ERROR, 1=WARN, 2=INFO (DEFAULT), 3=DEBUG
+	option log_level '2'
+	option mqtt_enabled '1'
+	# Broker address. Empty means MQTT stays off - there is no broker on the
+	# speaker itself, so the old 127.0.0.1 default just logged an unreachable
+	# network every 30 s forever. Point it at Home Assistant's, e.g.
+	#   uci set mcud.main.mqtt_host='192.168.1.10'
+	#   uci set mcud.main.mqtt_user='audiopro'
+	#   uci set mcud.main.mqtt_password='...'   # from the Mosquitto add-on
+	#   uci commit mcud && /etc/init.d/mcud restart
+	option mqtt_host ''
+	option mqtt_port '1883'
+	option mqtt_user ''
+	option mqtt_password ''
+	option mqtt_topic_prefix 'audiopro_c3'
+
+	# Music Assistant's LMS command line (port 9090). This is where the volume
+	# the slider shows really lives - squeezelite only gets a dB value that MA
+	# already ran through its own curve, so without this the front-panel keys and
+	# MA disagree. Empty ma_host means "same box as the broker".
+	option ma_host '10.0.1.6'
+	option ma_port '9090'
+	# MA units per key press: 5 gives 20 presses from top to mute
+	option ma_volume_step '5'
+	# 1 = MA is the volume even while its player is idle. Only right when
+	# nothing else rides Master, so /etc/config/profile sets this - see there.
+	option ma_owns_volume '1'
+	
+	# --- Audio Arbiter Settings ---
+	# arbiter_policy: 
+	#   mix      = No restrictions, ALSA dmix merges all streams simultaneously
+	#   lifo     = Last In Wins (new stream completely stops previous ones)
+	#   priority = Strict priority hierarchy, higher priority interrupts lower
+	option arbiter_policy 'priority'
+	
+	# Priorities (Lower number = higher priority)
+	option prio_airplay '2'
+	option prio_spotify '3'
+	option prio_webradio '5'
+	option prio_squeeze '6'
+
+config alarm 'alarm'
+	option enabled '0'
+	option time '07:00'
+	option days '1,2,3,4,5'
+	option target_volume '60'
+	option alarm_mode 'gentle'
+	option sound_type 'chime'
+	option sound_file '/usr/share/sounds/alarm_wake_up.wav'
+	option stream_url 'http://icecast.vrtcdn.be/klara-high.mp3'
+	option fade_sec '0'
+	option duration_min '30'
+	option snooze_min '9'
+
+
