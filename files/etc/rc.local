@@ -7,5 +7,7 @@
 
 # Start AirPlay metadata and artwork collector
 [ -x /usr/share/audiopro/meta_airplay.sh ] && /usr/share/audiopro/meta_airplay.sh &
+( /etc/init.d/zram start ) &
+ln -sf /tmp/resolv.conf.d/resolv.conf.auto /tmp/resolv.conf
 
 exit 0

@@ -1,0 +1,7 @@
+#!/bin/sh /etc/rc.common
+START=00
+
+boot() {
+    [ -f /etc/urandom.seed ] && cat /etc/urandom.seed > /dev/urandom
+    /sbin/credit-entropy
+}

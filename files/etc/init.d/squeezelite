@@ -152,7 +152,7 @@ start_service() {
 	# reboot - measured on both first boots after a flash, where squeezelite came
 	# up exit_code 1 while everything else was fine. Same values as librespot and
 	# mcud: count crashes over an hour, wait 5 s, never give up.
-	procd_set_param respawn 3600 5 0
+	procd_set_param respawn 3600 2 0
 	# So the exit reason lands in syslog instead of nowhere. squeezelite is quiet
 	# unless it is failing.
 	procd_set_param stderr 1
@@ -168,4 +168,8 @@ reload_service() {
 
 restart() {
 	reload_service
+}
+
+service_triggers() {
+	procd_add_raw_trigger "interface.*" 1000 /etc/init.d/squeezelite restart
 }
