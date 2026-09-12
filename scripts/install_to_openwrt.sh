@@ -33,6 +33,30 @@ for p in "$REPO_ROOT"/patches/*.patch; do
     say "patch -> patches-5.15/$(basename "$p")"
 done
 
+# --- 2b. kernel config optimizations ---------------------------------------
+KCONFIG="$OPENWRT_DIR/target/linux/ramips/mt76x8/config-5.15"
+if [ -f "$KCONFIG" ]; then
+    for opt in \
+        "CONFIG_JFFS2_SUMMARY=y" \
+        "CONFIG_DMADEVICES=y" \
+        "CONFIG_DMA_RALINK=y" \
+        "CONFIG_SOUND=y" \
+        "CONFIG_SND=y" \
+        "CONFIG_SND_SOC=y" \
+        "CONFIG_SND_SOC_GENERIC_DMAENGINE_PCM=y" \
+        "CONFIG_REGMAP_MMIO=y" \
+        "CONFIG_SND_RALINK_SOC_I2S=y" \
+        "CONFIG_SND_SOC_PCM5102A=y" \
+        "CONFIG_SND_SIMPLE_CARD=y" \
+        "CONFIG_SND_SIMPLE_CARD_UTILS=y"
+    do
+        key="${opt%%=*}"
+        sed -i "/^#\? \?$key/d" "$KCONFIG"
+        echo "$opt" >> "$KCONFIG"
+    done
+    say "kernel optimizations applied to target/linux/ramips/mt76x8/config-5.15"
+fi
+
 # --- 3. mcud package -------------------------------------------------------
 rm -rf "$OPENWRT_DIR/package/utils/mcud"
 mkdir -p "$OPENWRT_DIR/package/utils/mcud"
@@ -96,19 +120,14 @@ say "files/ root overlay ($(find "$REPO_ROOT/files" -type f | wc -l) files)"
 # --- 5. image profile ------------------------------------------------------
 MK="$OPENWRT_DIR/target/linux/ramips/image/mt76x8.mk"
 if grep -q "define Device/audiopro_c3" "$MK"; then
-    say "device profile already present, leaving it alone"
-else
-    cat "$REPO_ROOT/image/audiopro_c3.mk" >> "$MK"
-    say "device profile appended to image/mt76x8.mk"
+    sed -i '/define Device\/audiopro_c3/,/TARGET_DEVICES += audiopro_c3/d' "$MK"
 fi
+cat "$REPO_ROOT/image/audiopro_c3.mk" >> "$MK"
+say "device profile synced in image/mt76x8.mk"
 
 # --- 6. config seed --------------------------------------------------------
-if [ ! -f "$OPENWRT_DIR/.config" ]; then
-    cp "$REPO_ROOT/config/audiopro_c3.diffconfig" "$OPENWRT_DIR/.config"
-    say "config seed -> .config (run 'make defconfig' to expand it)"
-else
-    say ".config exists, not overwriting (seed is in config/audiopro_c3.diffconfig)"
-fi
+cp "$REPO_ROOT/config/audiopro_c3.diffconfig" "$OPENWRT_DIR/.config"
+say "config seed -> .config (run 'make defconfig' to expand it)"
 
 cat <<EOF
 

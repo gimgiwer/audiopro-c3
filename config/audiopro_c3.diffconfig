@@ -35,3 +35,9 @@ CONFIG_BUSYBOX_CUSTOM=y
 CONFIG_BUSYBOX_CONFIG_RENICE=y
 CONFIG_PACKAGE_squeezelite-full=y
 CONFIG_PACKAGE_alsa-plugin-c3eq=y
+# CONFIG_PACKAGE_kmod-sound-mt7620 is not set
+# CONFIG_PACKAGE_kmod-dma-ralink is not set
+# CONFIG_PACKAGE_kmod-sound-soc-core is not set
+# CONFIG_PACKAGE_kmod-sound-soc-wm8960 is not set
+# CONFIG_PACKAGE_kmod-sound-core is not set
+CONFIG_KERNEL_JFFS2_SUMMARY=y
