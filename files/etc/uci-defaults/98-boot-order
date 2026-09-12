@@ -15,4 +15,12 @@ rm -f /etc/modules.d/ppp /etc/modules.d/pppoe
 # Disable packet_steering on single-core MT7688 (RPS is only for multi-core)
 /etc/init.d/packet_steering disable 2>/dev/null
 
+# Disable urngd (kernel entropy is already seeded by credit-entropy, saving ~4s MIPS CPU lockup)
+/etc/init.d/urngd disable 2>/dev/null
+rm -f /etc/rc.d/*urngd* 2>/dev/null
+
+# Disable bootcount (no-op on audiopro,c3)
+/etc/init.d/bootcount disable 2>/dev/null
+rm -f /etc/rc.d/*bootcount* 2>/dev/null
+
 exit 0
