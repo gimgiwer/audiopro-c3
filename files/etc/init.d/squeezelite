@@ -41,6 +41,14 @@ make_cmdline() {
 	config_get model_name options model_name "SqueezeLite"
 	add -M "$model_name"
 
+	local mac_address
+	config_get mac_address options mac_address ""
+	if [ -z "$mac_address" ]; then
+		# Default to Wi-Fi STA MAC so it remains permanent across Wi-Fi and Ethernet
+		mac_address=$(cat /sys/class/net/phy0-sta0/address 2>/dev/null || cat /sys/class/net/wlan0/address 2>/dev/null || cat /sys/class/net/eth0/address 2>/dev/null)
+	fi
+	[ -n "$mac_address" ] && add -m "$mac_address"
+
 	local interface
 	config_get interface options interface ""
 	[ -n "$interface" ] && add -I "$interface"

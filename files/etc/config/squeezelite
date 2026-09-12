@@ -4,6 +4,9 @@ config options 'options'
 	option enabled '1'
 	option name 'Audio Pro C3'
 	option model_name 'Audio Pro C3'
+	# Permanent MAC address pins player ID in Music Assistant / LMS, preserving
+	# Spotify Connect state and player configuration across reboots and Wi-Fi/Ethernet.
+	option mac_address '02:22:6c:b8:85:ac'
 	# squeeze_in is the per-app softvol in asound.conf; it feeds dmix like the
 	# other sources, so Spotify and AirPlay can keep playing alongside it.
 	option device 'squeeze_in'
