@@ -1,17 +1,26 @@
 #!/bin/sh /etc/rc.common
 # Procd service for fast Wi-Fi association monitoring and hidden SSID fallback.
-# Replaces broken wpa_cli socket checks with native OpenWrt ubus nl80211 inspection.
 START=21
 USE_PROCD=1
+
+EXTRA_COMMANDS="monitor"
+EXTRA_HELP="        monitor Run watchdog loop"
 
 WATCHDOG_TIMEOUT=20
 DEBOUNCE_RETRIES=3
 
 check_l2_link() {
-	# ubus returns JSON representation of nl80211 state, avoiding fragile socket paths
-	local bssid
-	bssid=$(ubus call network.wireless status 2>/dev/null | jsonfilter -e '@.radios.*.interfaces.*.bssid' 2>/dev/null)
-	[ -n "$bssid" ]
+	# 1. Check L3 status via netifd wwan
+	if ubus call network.interface.wwan status 2>/dev/null | grep -q '"up": true'; then
+		return 0
+	fi
+
+	# 2. Check L2 link status via iw
+	if iw dev phy0-sta0 link 2>/dev/null | grep -q "Connected to"; then
+		return 0
+	fi
+
+	return 1
 }
 
 recover_hidden_network() {
@@ -24,30 +33,32 @@ recover_hidden_network() {
 	iw dev "$iface" scan ssid "$ssid" >/dev/null 2>&1
 }
 
-start_service() {
-	procd_open_instance "wifi-fastboot"
-	procd_set_param command /bin/sh -c "
-		# Allow fast cached association to complete during boot
-		sleep $WATCHDOG_TIMEOUT
+monitor() {
+	# Allow fast cached association to complete during boot
+	sleep $WATCHDOG_TIMEOUT
 
+	if check_l2_link; then
+		logger -t wifi-fastboot "L2 association established successfully on cached parameters."
+		exit 0
+	fi
+
+	# If association failed, perform debounced directed scans
+	local retries=0
+	while [ $retries -lt $DEBOUNCE_RETRIES ]; do
+		recover_hidden_network
+		sleep 3
 		if check_l2_link; then
-			logger -t wifi-fastboot \"L2 association established successfully on cached parameters.\"
+			logger -t wifi-fastboot "Recovered association to hidden network after directed scan."
 			exit 0
 		fi
+		retries=$((retries + 1))
+	done
 
-		# If association failed, perform debounced directed scans
-		retries=0
-		while [ \$retries -lt $DEBOUNCE_RETRIES ]; do
-			recover_hidden_network
-			sleep 3
-			if check_l2_link; then
-				logger -t wifi-fastboot \"Recovered association to hidden network after directed scan.\"
-				exit 0
-			fi
-			retries=\$((retries + 1))
-		done
+	logger -t wifi-fastboot "Warning: Unable to associate after directed scans. Letting netifd resume standard cycle."
+}
 
-		logger -t wifi-fastboot \"Warning: Unable to associate after directed scans. Letting netifd resume standard cycle.\"
-	"
+start_service() {
+	procd_open_instance "wifi-fastboot"
+	procd_set_param command /etc/init.d/wifi-fastboot monitor
 	procd_close_instance
 }

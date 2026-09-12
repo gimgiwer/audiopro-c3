@@ -11,15 +11,18 @@ GRACE_PERIOD=40
 POLL_INTERVAL=5
 
 is_connected() {
-	# Check physical Ethernet carrier
+	# 1. Check physical Ethernet carrier directly from kernel sysfs
 	if [ -f /sys/class/net/eth0/carrier ] && [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = "1" ]; then
 		return 0
 	fi
 
-	# Check Wi-Fi STA L2 association
-	local bssid
-	bssid=$(ubus call network.wireless status 2>/dev/null | jsonfilter -e '@.radios.*.interfaces.*.bssid' 2>/dev/null)
-	if [ -n "$bssid" ]; then
+	# 2. Check Wi-Fi L3 status via netifd wwan interface
+	if ubus call network.interface.wwan status 2>/dev/null | grep -q '"up": true'; then
+		return 0
+	fi
+
+	# 3. Check Wi-Fi L2 link status via Linux nl80211 driver
+	if iw dev phy0-sta0 link 2>/dev/null | grep -q "Connected to"; then
 		return 0
 	fi
 
