@@ -77,11 +77,22 @@ def configure_interface(iface, host_ip=DEFAULT_HOST_IP, mask=DEFAULT_SUBNET_MASK
         try:
             subprocess.run(["ip", "addr", "add", cidr, "dev", iface], check=True)
             print(f"[+] Successfully configured {cidr} on {iface}")
+            return True, cidr
         except subprocess.CalledProcessError as err:
             print(f"[-] Failed to add IP address to {iface}: {err}")
             sys.exit(1)
     else:
         print(f"[+] Interface {iface} already has an address in 192.168.1.0/24 ({existing_ips})")
+        return False, None
+
+
+def cleanup_interface(iface, cidr):
+    """Remove temporary static IP and restore interface state."""
+    if cidr:
+        print(f"[*] Cleaning up temporary IP {cidr} from {iface}...")
+        subprocess.run(["ip", "addr", "del", cidr, "dev", iface], check=False, stderr=subprocess.DEVNULL)
+        subprocess.run(["nmcli", "device", "reapply", iface], check=False, stderr=subprocess.DEVNULL)
+        print(f"[+] Interface {iface} restored to default system configuration.")
 
 
 def build_multipart_form(fields, files):
@@ -383,35 +394,38 @@ def main():
     args = parser.parse_args()
 
     check_root()
-    configure_interface(args.interface, host_ip=args.host_ip)
+    added, added_cidr = configure_interface(args.interface, host_ip=args.host_ip)
 
-    intercepted = intercept_breed(
-        iface=args.interface,
-        target_ip=args.target_ip,
-        timeout=args.timeout
-    )
-
-    web_alive = wait_for_breed_web(args.target_ip, timeout=20)
-    if not web_alive:
-        print("[-] Breed web interface is not responding. Check physical cable link and power.")
-        sys.exit(1)
-
-    print("\n[+] Breed recovery mode is active and ready.")
-
-    if args.bootdelay is not None:
-        set_breed_bootdelay(args.target_ip, args.bootdelay)
-
-    if args.flash:
-        success = flash_firmware(
+    try:
+        intercepted = intercept_breed(
+            iface=args.interface,
             target_ip=args.target_ip,
-            fw_path=args.flash,
-            layout=args.layout,
-            autoreboot=not args.no_reboot
+            timeout=args.timeout
         )
-        if not success:
+
+        web_alive = wait_for_breed_web(args.target_ip, timeout=20)
+        if not web_alive:
+            print("[-] Breed web interface is not responding. Check physical cable link and power.")
             sys.exit(1)
 
-    print("[+] Operation completed successfully.")
+        print("\n[+] Breed recovery mode is active and ready.")
+
+        if args.bootdelay is not None:
+            set_breed_bootdelay(args.target_ip, args.bootdelay)
+
+        if args.flash:
+            success = flash_firmware(
+                target_ip=args.target_ip,
+                fw_path=args.flash,
+                layout=args.layout,
+                autoreboot=not args.no_reboot
+            )
+            if not success:
+                sys.exit(1)
+
+        print("[+] Operation completed successfully.")
+    finally:
+        cleanup_interface(args.interface, added_cidr)
 
 
 if __name__ == "__main__":
