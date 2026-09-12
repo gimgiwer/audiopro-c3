@@ -14,6 +14,7 @@ import time
 import socket
 import select
 import urllib.request
+import urllib.parse
 import urllib.error
 import argparse
 import subprocess
@@ -215,6 +216,21 @@ def wait_for_breed_web(target_ip, timeout=15):
     return False
 
 
+def set_breed_bootdelay(target_ip, delay=2):
+    """Set bootloader autoboot delay in Breed Web Console via /env.html."""
+    url = f"http://{target_ip}/env.html"
+    print(f"[*] Configuring Breed bootloader autoboot delay to {delay}s...")
+    for var in ["bootdelay", "autoboot_delay"]:
+        try:
+            data = urllib.parse.urlencode({"name": var, "value": str(delay)}).encode("utf-8")
+            req = urllib.request.Request(url, data=data)
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    print(f"[+] Successfully configured Breed variable '{var}={delay}'")
+        except Exception as err:
+            print(f"[!] Note: Could not set '{var}' via /env.html: {err}")
+
+
 def flash_firmware(target_ip, fw_path, layout="reference", autoreboot=True):
     """
     Perform automated sysupgrade via Breed's /upload.html and /upgrading.html endpoints.
@@ -357,6 +373,12 @@ def main():
         action="store_true",
         help="Do not reboot automatically after flashing"
     )
+    parser.add_argument(
+        "--bootdelay",
+        type=int,
+        default=2,
+        help="Configure Breed bootloader autoboot delay in seconds (default: 2)"
+    )
 
     args = parser.parse_args()
 
@@ -375,6 +397,9 @@ def main():
         sys.exit(1)
 
     print("\n[+] Breed recovery mode is active and ready.")
+
+    if args.bootdelay is not None:
+        set_breed_bootdelay(args.target_ip, args.bootdelay)
 
     if args.flash:
         success = flash_firmware(
