@@ -105,6 +105,7 @@ init_patch() {
 
 feed_patches alsa-lib libs/alsa-lib
 feed_patches shairport-sync sound/shairport-sync
+feed_patches squeezelite sound/squeezelite
 init_patch sound/shairport-sync volume_control_profile \
     patches/shairport-sync/feed-init-volume-control-profile.patch
 init_patch sound/squeezelite procd_append_param \

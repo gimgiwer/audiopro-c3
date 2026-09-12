@@ -1,0 +1,20 @@
+--- a/output_alsa.c
++++ b/output_alsa.c
+@@ -179,7 +179,7 @@ static void alsa_mixer_init(void) {
+ 	snd_mixer_close(handle);
+ }
+ 
+-#define MINVOL_DB 72 // LMS volume map for SqueezePlay sends values in range ~ -72..0 dB
++#define MINVOL_DB 76 // Extended to 76 dB to cover Music Assistant low volume floor (-75 dB)
+ 
+ static void set_mixer(bool setmax, float ldB, float rdB) {
+ 	int err;
+@@ -191,6 +191,8 @@ static void set_mixer(bool setmax, float
+             lraw = ((ldB > -MINVOL_DB ? MINVOL_DB + floor(ldB) : 0) / MINVOL_DB * (alsa.mixer_max-alsa.mixer_min)) + alsa.mixer_min;
+             rraw = ((rdB > -MINVOL_DB ? MINVOL_DB + floor(rdB) : 0) / MINVOL_DB * (alsa.mixer_max-alsa.mixer_min)) + alsa.mixer_min;
+         }
++        if (!setmax && ldB > -100.0F && lraw == alsa.mixer_min) lraw = alsa.mixer_min + 1;
++        if (!setmax && rdB > -100.0F && rraw == alsa.mixer_min) rraw = alsa.mixer_min + 1;
+         LOG_DEBUG("setting vol raw [%ld..%ld]", alsa.mixer_min, alsa.mixer_max);
+         if ((err = snd_mixer_selem_set_playback_volume(alsa.mixer_elem, SND_MIXER_SCHN_FRONT_LEFT, lraw)) < 0) {
+             LOG_ERROR("error setting left volume: %s", snd_strerror(err));
