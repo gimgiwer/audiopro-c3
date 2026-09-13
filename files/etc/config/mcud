@@ -51,7 +51,7 @@ config mcud 'main'
 	option ma_host '10.0.1.6'
 	option ma_port '9090'
 	option ma_volume_step '5'
-	option ma_owns_volume '1'
+	option ma_owns_volume '0'
 	
 	# --- Audio Arbiter Settings ---
 	# arbiter_policy: 

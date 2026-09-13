@@ -1277,7 +1277,7 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
      * MA's slider - so ask the server what it actually thinks. Without the CLI
      * the softvol position is still better than nothing. */
     if (ma_connected() && g_ma_id[0]) {
-        ma_send("status - 1 tags:alKd");
+        ma_send("mixer volume ?");
     } else if (g_ma_fd < 0) {
         /* only with no CLI socket at all: mid-connect the server's own number is
          * a second away, and publishing the softvol position instead showed HA a
@@ -1567,6 +1567,7 @@ static void set_user_volume(int vol) {
      * Moving Master as well would stack two curves and the dB add up. */
     if (ma_active() && ma_send("mixer volume %d", vol) == 0) {
         ma_send("status - 1 tags:alKd");
+        if (g_ma_power != 1) ma_send("mixer volume ?");
         return;
     }
     g_user_vol = vol;
@@ -1604,6 +1605,7 @@ static void adjust_user_volume(int delta) {
              * power atomically. A bare "?" leaves a stale mode behind, and the
              * next key press then falls out of ma_active() into Master. */
             ma_send("status - 1 tags:alKd");
+            if (g_ma_power != 1) ma_send("mixer volume ?");
             return;
         }
     }
@@ -1725,6 +1727,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
         if (ma_connected() && g_ma_id[0]) {
             if (ma_send("mixer volume %d", v) == 0) {
                 ma_send("status - 1 tags:alKd");
+                if (g_ma_power != 1) ma_send("mixer volume ?");
                 return;
             }
         }
@@ -3240,7 +3243,14 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
     /* dmix keeps the substream RUNNING forever, so is_audio_active() cannot tell
      * paused from playing. MA knows, and it is the source 95% of the time. */
     {
-        int playing = ma_active() ? (g_ma_mode == 1) : is_audio_active();
+        int playing;
+        if (ma_connected() && g_ma_id[0] && g_ma_mode >= 0)
+            playing = (g_ma_mode == 1);
+        else if (g_ma_owns_volume)
+            playing = 0;   /* smarthome: dmix RUNNING ни о чём не говорит; нет MA — нет музыки */
+        else
+            playing = is_audio_active();
+
         if (playing != g_is_playing) {
             g_is_playing = playing;
             uart_send(playing ? CMD_PLAY_START : CMD_PLAY_STOP);
