@@ -25,8 +25,8 @@ config options 'options'
 	option dsd_over_pcm '0'
 	option ircontrol '0'
 	option server_addr '10.0.1.6'
-	# Hardware-aligned low-latency buffer: 3072 frames (3x 1024-frame hardware DMA periods, ~69.7ms)
-	option alsa_params '3072:1024:24:0'
+	# Hardware-aligned ultra-low-latency buffer: 1024 frames (2x 512-frame hardware DMA periods, ~23.2ms)
+	option alsa_params '1024:512:24:0'
 	# Slimproto buffers: 512KB stream / 1024KB output ring
 	# Minimum outputbuf must exceed alsa.buffer_size*2 (dmix 16384*2 = 32768 frames = 262KB) + min_space (100KB)
 	option buffer_size '512:1024'
