@@ -1088,7 +1088,16 @@ static void ma_parse_line(char *line) {
         /* Panel and HA used to learn about this from sleep_timer_cb only, i.e. up
          * to 5 s later - that lag is exactly what reads as "the pause key did not
          * sync". Sync the MCU LED and the playing sensor right here. */
-        int playing = (mode == 1);
+        int playing;
+        if (g_current_source != 0)
+            playing = is_audio_active();
+        else if (g_ma_owns_volume)
+            playing = (mode == 1);
+        else if (ma_active())
+            playing = (mode == 1);
+        else
+            playing = is_audio_active();
+
         if (playing != g_is_playing) {
             g_is_playing = playing;
             uart_send(playing ? CMD_PLAY_START : CMD_PLAY_STOP);
@@ -3244,10 +3253,12 @@ static void sleep_timer_cb(struct uloop_timeout *t) {
      * paused from playing. MA knows, and it is the source 95% of the time. */
     {
         int playing;
-        if (ma_connected() && g_ma_id[0] && g_ma_mode >= 0)
-            playing = (g_ma_mode == 1);
+        if (g_current_source != 0)
+            playing = is_audio_active();   /* BT/AUX: MA об этом потоке не знает ничего */
         else if (g_ma_owns_volume)
-            playing = 0;   /* smarthome: dmix RUNNING ни о чём не говорит; нет MA — нет музыки */
+            playing = (ma_connected() && g_ma_id[0] && g_ma_mode == 1);
+        else if (ma_active())
+            playing = (g_ma_mode == 1);
         else
             playing = is_audio_active();
 

@@ -54,7 +54,7 @@ start_service() {
     [ -n "$ma_host" ] && args="$args -A $ma_host -Q $ma_port -G $ma_step"
     local prof_mode
     prof_mode="$(uci -q get profile.main.mode)"
-    if [ "$prof_mode" = "smarthome" ] || { [ "$prof_mode" != "standalone" ] && [ "$ma_owns" -eq 1 ]; }; then
+    if [ "$prof_mode" = "smarthome" ] || { [ "$prof_mode" != "standalone" ] && [ "${ma_owns:-0}" -eq 1 ]; }; then
         args="$args -o"
     fi
 
