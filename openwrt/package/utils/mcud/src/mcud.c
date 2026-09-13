@@ -181,6 +181,7 @@ static const char *get_source_name(int source);
 static void mcu_report_state(const char *tag, int val);
 static void vol_touch(void);
 static void fire_preset(int preset, int announce);
+static void mqtt_send_sensor(const char *sensor, const char *val);
 
 static int uart_send(const char *cmd) {
     if (g_uart_fd < 0 || !cmd) return -1;
@@ -907,11 +908,43 @@ static int ma_send(const char *fmt, ...) {
  * Spotify or line-in is the source, and MA joining in there is a second source,
  * not a resume. */
 static int ma_start(void) {
-    if (!ma_connected() || !g_ma_id[0] || is_audio_active()) return -1;
+    if (!ma_connected() || !g_ma_id[0]) return -1;
+    /* smarthome: squeezelite is the only dmix client and holds the substream
+     * RUNNING forever, so is_audio_active() can never say "idle" here - and
+     * with -o there are no local players left to collide with. The guard
+     * only means anything in standalone, and there the real conflict is a
+     * different cabinet input, not a stale dmix slot. */
+    if (!g_ma_owns_volume && (g_current_source != 0 || is_audio_active()))
+        return -1;
     if (g_ma_power == 0 && ma_send("power 1") != 0) return -1;
     if (ma_send("button jump_rew") != 0) return -1;
     LOG_INFO("Music Assistant woken from stopped");
     return 0;
+}
+
+/* Panel key, ubus transport and MQTT TOGGLE all need the same decision.
+ * Returns 0 when the command went to MA. */
+static int ma_toggle(void) {
+    if (ma_has_transport() && ma_send("button play_pause") == 0) {
+        ma_send("status - 1 tags:alKd");
+        return 0;
+    }
+    if (ma_start() == 0) {
+        ma_send("status - 1 tags:alKd");
+        return 0;
+    }
+    return -1;
+}
+
+/* Only standalone has local players to fall back to: in smarthome
+ * player_control.sh can merely duck squeezelite's fader while the MA server
+ * keeps reporting "play" - that is the desync, not a transport. */
+static void transport_toggle(void) {
+    if (ma_toggle() == 0) return;
+    if (!g_ma_owns_volume)
+        spawn_async("/usr/bin/player_control.sh toggle");
+    else
+        LOG_WARN("play/pause: MA unreachable, no local players in smarthome");
 }
 
 static void url_decode(char *s) {
@@ -1052,6 +1085,15 @@ static void ma_parse_line(char *line) {
         g_ma_mode = mode;
         mode_changed = 1;
         LOG_INFO("Music Assistant is %s", mode == 1 ? "playing" : mode == 2 ? "paused" : "stopped");
+        /* Panel and HA used to learn about this from sleep_timer_cb only, i.e. up
+         * to 5 s later - that lag is exactly what reads as "the pause key did not
+         * sync". Sync the MCU LED and the playing sensor right here. */
+        int playing = (mode == 1);
+        if (playing != g_is_playing) {
+            g_is_playing = playing;
+            uart_send(playing ? CMD_PLAY_START : CMD_PLAY_STOP);
+            mqtt_send_sensor("playing", playing ? "true" : "false");
+        }
     }
     if (vol >= 0 && vol != g_ma_vol) {
         g_ma_vol = vol;
@@ -1235,7 +1277,7 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
      * MA's slider - so ask the server what it actually thinks. Without the CLI
      * the softvol position is still better than nothing. */
     if (ma_connected() && g_ma_id[0]) {
-        ma_send("mixer volume ?");
+        ma_send("status - 1 tags:alKd");
     } else if (g_ma_fd < 0) {
         /* only with no CLI socket at all: mid-connect the server's own number is
          * a second away, and publishing the softvol position instead showed HA a
@@ -1524,10 +1566,7 @@ static void set_user_volume(int vol) {
     /* While MA is the live source, its fader is the number everyone looks at.
      * Moving Master as well would stack two curves and the dB add up. */
     if (ma_active() && ma_send("mixer volume %d", vol) == 0) {
-        g_ma_vol = vol;
-        mqtt_publish_ma_volume(vol);
-        vol_publish_visible();
-        LOG_INFO("Music Assistant volume: %d%%", vol);
+        ma_send("status - 1 tags:alKd");
         return;
     }
     g_user_vol = vol;
@@ -1561,7 +1600,10 @@ static void adjust_user_volume(int delta) {
             mqtt_publish_mute();
         }
         if (ma_send("mixer volume %+d", delta > 0 ? g_ma_step : -g_ma_step) == 0) {
-            ma_send("mixer volume ?");
+            /* status, not "mixer volume ?": one reply re-syncs fader, mode and
+             * power atomically. A bare "?" leaves a stale mode behind, and the
+             * next key press then falls out of ma_active() into Master. */
+            ma_send("status - 1 tags:alKd");
             return;
         }
     }
@@ -1627,9 +1669,12 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             /* Transport goes through the one script that knows how to reach each
              * player - librespot over its fifo, the others by ducking their own
              * softvol. Muting Master instead would leave the sender running. */
+            if (strcasecmp(payload, "TOGGLE") == 0) {
+                transport_toggle();
+                return;
+            }
             const char *ma_cmd = NULL;
-            if (strcasecmp(payload, "TOGGLE") == 0)      ma_cmd = "button play_pause";
-            else if (strcasecmp(payload, "PLAY") == 0) {
+            if (strcasecmp(payload, "PLAY") == 0) {
                 if (ma_active() && g_ma_mode == 0) {
                     if (ma_start() == 0) {
                         ma_send("status - 1 tags:alKd");
@@ -1651,14 +1696,17 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
             const char *act = NULL;
             if (strcasecmp(payload, "PLAY") == 0)        act = "play";
             else if (strcasecmp(payload, "PAUSE") == 0)  act = "pause";
-            else if (strcasecmp(payload, "TOGGLE") == 0) act = "toggle";
             else if (strcasecmp(payload, "NEXT") == 0)   act = "next";
             else if (strcasecmp(payload, "PREV") == 0)   act = "prev";
             else if (strcasecmp(payload, "STOP") == 0)   act = "stop";
             if (!act) { LOG_WARN("MQTT unknown command [%s]", payload); return; }
-            char cmd[64];
-            snprintf(cmd, sizeof(cmd), "/usr/bin/player_control.sh %s", act);
-            spawn_async(cmd);
+            if (!g_ma_owns_volume) {
+                char cmd[64];
+                snprintf(cmd, sizeof(cmd), "/usr/bin/player_control.sh %s", act);
+                spawn_async(cmd);
+            } else {
+                LOG_WARN("MQTT %s: MA unreachable, no local players in smarthome", act);
+            }
         }
     } else if (strcmp(msg->topic, vol_topic) == 0) {
         g_last_activity_time = now_mono();
@@ -1676,7 +1724,7 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
         g_last_activity_time = now_mono();
         if (ma_connected() && g_ma_id[0]) {
             if (ma_send("mixer volume %d", v) == 0) {
-                ma_send("mixer volume ?");
+                ma_send("status - 1 tags:alKd");
                 return;
             }
         }
@@ -2421,15 +2469,7 @@ static void process_mcu_command(const char *cmd) {
          * event is MCU+PLY-PUS with a minus, handled further down and never seen. */
         mqtt_send_button("play_pause");
         ubus_notify_button("play_pause");
-        /* O_CREAT on /tmp/player_cmd just made a plain file nothing ever read,
-         * so this key did nothing at all until now. MA is the exception: its
-         * stream comes from the server, so the key has to go there. */
-        if (ma_has_transport() && ma_send("button play_pause") == 0)
-            ma_send("status - 1 tags:alKd");
-        else if (ma_start() == 0)
-            ma_send("status - 1 tags:alKd");
-        else
-            spawn_async("/usr/bin/player_control.sh toggle");
+        transport_toggle();
     } else if (!strncmp(cmd, "MCU+KEY+", 8) && isdigit((unsigned char)cmd[8])) {
         /* Short press on playlist key 1-4, and the only MCU+KEY+ the panel really
          * sends: the VOL+/VOL-/PLPA/SRC forms above and below come from stock's own
@@ -2982,26 +3022,27 @@ static int mcud_ubus_transport(struct ubus_context *ctx, struct ubus_object *obj
      * what makes the panel key work on a speaker nobody has touched since boot -
      * and ma_start() is what decides whether that is safe. Everything else needs MA
      * to be the thing making sound. */
-    if (!strcmp(cmd, "play") || !strcmp(cmd, "toggle")) {
+    if (!strcmp(cmd, "toggle")) {
+        if (ma_toggle() != 0) return UBUS_STATUS_NOT_FOUND;
+        LOG_INFO("Transport toggle sent to Music Assistant");
+        return 0;
+    }
+    if (!strcmp(cmd, "play")) {
         if (!ma_has_transport()) {
             if (ma_start() != 0) return UBUS_STATUS_NOT_FOUND;
             ma_send("status - 1 tags:alKd");
             return 0;
         }
-    } else if (!ma_has_transport()) {
+        if (g_ma_mode == 2) ma_send("button play_pause");
+        ma_send("status - 1 tags:alKd");
+        LOG_INFO("Transport play sent to Music Assistant");
+        return 0;
+    }
+    if (!ma_has_transport()) {
         return UBUS_STATUS_NOT_FOUND;
     }
 
-    /* bare "pause" is the toggle, "pause 1" only ever pauses. "play", "mode play"
-     * and "playlist jump" are all accepted and all do nothing; the only verb that
-     * really starts a stopped queue is the front-panel emulation, and it restarts
-     * the current track rather than resuming it. From pause the toggle resumes in
-     * place, so try that first. */
-    if (!strcmp(cmd, "toggle")) ma_send("button play_pause");
-    /* only paused needs anything: jump_rew here used to be the stopped case and it
-     * restarted the track under a player that was already playing. */
-    else if (!strcmp(cmd, "play")) { if (g_ma_mode == 2) ma_send("button play_pause"); }
-    else if (!strcmp(cmd, "pause")) ma_send("button play_pause");
+    if (!strcmp(cmd, "pause")) ma_send("button play_pause");
     else if (!strcmp(cmd, "stop")) ma_send("stop");
     else if (!strcmp(cmd, "next")) ma_send("playlist index +1");
     else if (!strcmp(cmd, "prev")) ma_send("playlist index -1");

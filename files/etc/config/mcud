@@ -47,12 +47,11 @@ config mcud 'main'
 	option mqtt_password ''
 	option mqtt_topic_prefix 'audiopro_c3'
 
-	# Music Assistant's LMS command line (port 9090). Disabled to keep native
-	# instantaneous hardware volume on physical buttons via ALSA Master.
-	option ma_host ''
+	# Music Assistant's LMS command line (port 9090).
+	option ma_host '10.0.1.6'
 	option ma_port '9090'
 	option ma_volume_step '5'
-	option ma_owns_volume '0'
+	option ma_owns_volume '1'
 	
 	# --- Audio Arbiter Settings ---
 	# arbiter_policy: 

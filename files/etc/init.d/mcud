@@ -48,10 +48,13 @@ start_service() {
     fi
 
     # Music Assistant's LMS command line. Empty falls back to the broker host,
-    # since both normally live on the same Home Assistant box.
+    # or to squeezelite's server address.
     [ -z "$ma_host" ] && ma_host="$mqtt_host"
+    [ -z "$ma_host" ] && ma_host="$(uci -q get squeezelite.options.server_addr)"
     [ -n "$ma_host" ] && args="$args -A $ma_host -Q $ma_port -G $ma_step"
-    [ "$ma_owns" -eq 1 ] && args="$args -o"
+    if [ "$ma_owns" -eq 1 ] || [ "$(uci -q get profile.main.mode)" = "smarthome" ]; then
+        args="$args -o"
+    fi
 
     procd_open_instance
     procd_set_param command "$PROG" $args
