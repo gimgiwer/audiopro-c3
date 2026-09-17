@@ -25,6 +25,10 @@ case "$MODE" in
                 *) logger -t audiopro_preset "Blocked invalid URL scheme: $URL"; exit 1 ;;
             esac
 
+            # Save last preset and current source
+            echo "$PRESET" > /tmp/last_webradio_preset
+            echo "webradio" > /tmp/current_music_source
+
             # Invoke Audio Arbiter
             /usr/bin/audio_arbiter.sh webradio
             

@@ -59,6 +59,20 @@ start() {
 		fi
 	done
 
+	# Squeezelite is disabled in standalone to save 5.2MB RAM and avoid LMS reconnect storms
+	if [ -x "/etc/init.d/squeezelite" ]; then
+		if [ "$mode" = "standalone" ]; then
+			set_enabled "squeezelite" 0
+			/etc/init.d/squeezelite disable 2>/dev/null
+			/etc/init.d/squeezelite running 2>/dev/null && /etc/init.d/squeezelite stop
+		else
+			set_enabled "squeezelite" 1
+			/etc/init.d/squeezelite enable 2>/dev/null
+			/etc/init.d/squeezelite running 2>/dev/null || /etc/init.d/squeezelite start
+		fi
+	fi
+
+
 	# With no rival source there is no reason to ever hand the level back to
 	# Master, so tell mcud. Only on a real change - this also runs on every boot.
 	want=0

@@ -69,10 +69,21 @@ ma_transport() {
 pause_squeeze()  { [ "$TOGGLING" = 1 ] && return 1; mute_ctl Squeeze; }
 resume_squeeze() { [ "$TOGGLING" = 1 ] && return 1; unmute_ctl Squeeze; }
 
-# SIGSTOP is crude but mpg123 has no control channel. It also catches a TTS
-# prompt if one happens to be playing; mcud's alarm() reaps that either way.
-pause_webradio()  { killall -STOP mpg123 2>/dev/null || true; }
-resume_webradio() { killall -CONT mpg123 2>/dev/null || true; }
+# UPnP / DLNA transport via mpc
+pause_upnp()  { mpc pause >/dev/null 2>&1 || true; }
+resume_upnp() { mpc play >/dev/null 2>&1 || true; }
+
+# Web radio stream controls (kill on pause, respawn last preset on resume)
+pause_webradio() {
+	kill_stream
+	sed -i 's/"playing"[[:space:]]*:[[:space:]]*true/"playing": false/' "$META_JSON" 2>/dev/null || true
+}
+resume_webradio() {
+	local preset="1"
+	[ -f /tmp/last_webradio_preset ] && read -r preset < /tmp/last_webradio_preset
+	case "$preset" in 1|2|3|4) ;; *) preset="1" ;; esac
+	/usr/bin/audiopro_preset_handler.sh "$preset" >/dev/null 2>&1 &
+}
 
 # Record a player only when its pause actually took. The softvol controls are
 # created lazily by alsa on first use of the plugin, so AirPlay simply does not
@@ -88,6 +99,9 @@ do_pause_all() {
 	fi
 	if pgrep squeezelite >/dev/null 2>&1 && pause_squeeze; then
 		paused="$paused squeeze"
+	fi
+	if pgrep mpd >/dev/null 2>&1 && pause_upnp; then
+		paused="$paused upnp"
 	fi
 	if pgrep mpg123 >/dev/null 2>&1 && pause_webradio; then
 		paused="$paused webradio"
@@ -107,6 +121,7 @@ do_resume_all() {
 				spotify)  [ "$skip" = nospotify ] || resume_spotify ;;
 				airplay)  resume_airplay ;;
 				squeeze)  resume_squeeze ;;
+				upnp)     resume_upnp ;;
 				webradio) resume_webradio ;;
 			esac
 		done
@@ -115,6 +130,7 @@ do_resume_all() {
 		[ "$skip" = nospotify ] || resume_spotify
 		resume_airplay
 		resume_squeeze
+		resume_upnp
 		resume_webradio
 	fi
 }
@@ -125,6 +141,7 @@ one_target() {
 		spotify)  if [ "$act" = pause ]; then pause_spotify;  else resume_spotify;  fi ;;
 		airplay)  if [ "$act" = pause ]; then pause_airplay;  else resume_airplay;  fi ;;
 		squeeze)  if [ "$act" = pause ]; then pause_squeeze;  else resume_squeeze;  fi ;;
+		upnp)     if [ "$act" = pause ]; then pause_upnp;     else resume_upnp;     fi ;;
 		webradio) if [ "$act" = pause ]; then pause_webradio; else resume_webradio; fi ;;
 	esac
 }
@@ -152,28 +169,48 @@ case "$ACTION" in
 			all|squeeze) ma_transport toggle && exit 0 ;;
 		esac
 
-		# The state file only records what we last did to a player, so anything the
-		# phone does behind our back leaves the key inverted for one press. librespot
-		# knows its own play_status, and the patched fifo takes a stateless toggle
-		# (spirc.play_pause()), so let Spotify answer for itself and keep it out of
-		# the file the muted-only players share. On an idle librespot the command is
-		# a logged no-op ("ignored while Not Active"), so this cannot start Spotify
-		# while something else is playing.
-		# With no explicit target, follow the source that most recently reported
-		# playback. This keeps the physical key stateless and phone/MA friendly.
-		if [ "$TARGET" = all ] && [ -r "$META_JSON" ]; then
-			case "$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$META_JSON" | head -1)" in
-				spotify) TARGET=spotify ;;
-				squeeze|music_assistant|ma) TARGET=squeeze ;;
-				airplay) TARGET=airplay ;;
-			esac
+		# With no explicit target, follow the source that is currently active or playing.
+		if [ "$TARGET" = all ]; then
+			if [ -f /tmp/current_music_source ]; then
+				read -r src < /tmp/current_music_source
+				case "$src" in
+					spotify|airplay|squeeze|webradio|upnp) TARGET="$src" ;;
+				esac
+			elif [ -r "$META_JSON" ]; then
+				case "$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$META_JSON" | head -1)" in
+					spotify) TARGET=spotify ;;
+					squeeze|music_assistant|ma) TARGET=squeeze ;;
+					airplay) TARGET=airplay ;;
+					webradio) TARGET=webradio ;;
+					upnp) TARGET=upnp ;;
+				esac
+			fi
 		fi
+
 		case "$TARGET" in
 			spotify)
 				spotify_cmd toggle
 				;;
+			upnp)
+				mpc toggle >/dev/null 2>&1
+				;;
+			webradio)
+				if pgrep mpg123 >/dev/null 2>&1 || pgrep wget >/dev/null 2>&1; then
+					pause_webradio
+				else
+					resume_webradio
+				fi
+				;;
+			airplay)
+				if [ -f "$LEVEL_DIR/premute_AirPlay.level" ]; then
+					resume_airplay
+				else
+					pause_airplay
+				fi
+				;;
 			all)
 				spotify_cmd toggle
+				mpc toggle >/dev/null 2>&1
 				if [ -f "$SAVED_STATE" ]; then do_resume_all nospotify; else do_pause_all nospotify; fi
 				;;
 			*)
@@ -182,16 +219,44 @@ case "$ACTION" in
 		esac
 		;;
 	next|prev)
-		# MA first, then Spotify - nothing else here has a notion of tracks
-		ma_transport "$ACTION" && exit 0
-		spotify_cmd "$ACTION"
+		# Follow current active music source
+		current="spotify"
+		if [ -f /tmp/current_music_source ]; then
+			read -r current < /tmp/current_music_source
+		elif [ -r "$META_JSON" ]; then
+			current=$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$META_JSON" | head -1)
+		fi
+
+		case "$current" in
+			upnp)
+				mpc "$ACTION" >/dev/null 2>&1 && exit 0
+				;;
+			webradio)
+				cur_p=1
+				[ -f /tmp/last_webradio_preset ] && read -r cur_p < /tmp/last_webradio_preset
+				case "$cur_p" in 1|2|3|4) ;; *) cur_p=1 ;; esac
+				if [ "$ACTION" = "next" ]; then
+					next_p=$(( (cur_p % 4) + 1 ))
+				else
+					next_p=$(( cur_p - 1 ))
+					[ "$next_p" -lt 1 ] && next_p=4
+				fi
+				/usr/bin/audiopro_preset_handler.sh "$next_p" >/dev/null 2>&1 &
+				exit 0
+				;;
+			*)
+				# MA first, then Spotify
+				ma_transport "$ACTION" && exit 0
+				spotify_cmd "$ACTION"
+				;;
+		esac
 		;;
 	stop)
 		kill_stream
 		do_pause_all
 		;;
 	*)
-		echo "Usage: $0 {pause|play|resume|toggle|next|prev|stop} [spotify|airplay|squeeze|webradio|all]"
+		echo "Usage: $0 {pause|play|resume|toggle|next|prev|stop} [spotify|airplay|squeeze|webradio|upnp|all]"
 		exit 1
 		;;
 esac

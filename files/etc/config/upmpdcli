@@ -1,0 +1,4 @@
+config upmpdcli 'main'
+	option enabled '1'
+	option friendly_name 'Audio Pro C3'
+	option config '/etc/upmpdcli.conf'

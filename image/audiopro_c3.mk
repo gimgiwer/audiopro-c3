@@ -13,6 +13,7 @@ define Device/audiopro_c3
   DEVICE_PACKAGES := alsa-utils alsa-lib alsa-plugin-c3eq mpg123 \
                      squeezelite-full \
                      shairport-sync-mbedtls avahi-dbus-daemon \
+                     mpd-mini upmpdcli mpc \
                      zram-swap mcud dnsmasq chrony \
                      uhttpd uhttpd-mod-ubox uhttpd-mod-lua px5g-mbedtls \
                      liblua libuci-lua iwinfo

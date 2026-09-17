@@ -1,86 +1,90 @@
 #!/bin/sh
-# Audio Arbiter - Manages concurrent audio streams
+# Audio Arbiter - Manages concurrent audio streams with strict LIFO ("Last In Wins")
 # Usage: audio_arbiter.sh <new_source>
-# Sources: spotify, airplay, webradio, squeeze
+# Supported music sources: spotify, airplay, webradio, upnp, squeeze
+# Note: System alerts (TTS, alarms, timers, chimes) are NEVER killed by the arbiter.
 
-. /usr/lib/audiopro/kill_audio.sh
-
-NEW_SOURCE=$1
+NEW_SOURCE="$1"
 [ -z "$NEW_SOURCE" ] && exit 0
 
-# Get settings from UCI
-POLICY=$(uci -q get mcud.main.arbiter_policy || echo "lifo")
-# Priorities: lower number = higher priority. Defaults:
-PRIO_WEBRADIO=$(uci -q get mcud.main.prio_webradio || echo "5")
-PRIO_SPOTIFY=$(uci -q get mcud.main.prio_spotify || echo "3")
-PRIO_AIRPLAY=$(uci -q get mcud.main.prio_airplay || echo "2")
-PRIO_SQUEEZE=$(uci -q get mcud.main.prio_squeeze || echo "6")
-
+CURRENT_SRC_FILE="/tmp/current_music_source"
+LOCK_FILE="/tmp/audio_arbiter.lock"
 META_JSON="/tmp/audiopro_meta.json"
 
-stop_spotify() {
-    /etc/init.d/librespot restart >/dev/null 2>&1
-}
-stop_airplay() {
-    /etc/init.d/shairport-sync restart >/dev/null 2>&1
-}
-stop_webradio() {
-    kill_stream
-}
-stop_squeeze() {
-    /etc/init.d/squeezelite restart >/dev/null 2>&1
-}
-stop_alarm() {
-    /usr/bin/smart_alarm.sh stop >/dev/null 2>&1
-}
-
-kill_source() {
-    case "$1" in
-        spotify) stop_spotify ;;
-        airplay) stop_airplay ;;
-        webradio) stop_webradio ;;
-        squeeze) stop_squeeze ;;
-        alarm) stop_alarm ;;
+# Soft-pause implementation without dropping network connections or tearing down daemons
+pause_source() {
+    local src="$1"
+    case "$src" in
+        spotify)
+            /usr/bin/player_control.sh pause spotify >/dev/null 2>&1
+            ;;
+        airplay)
+            /usr/bin/player_control.sh pause airplay >/dev/null 2>&1
+            ;;
+        webradio)
+            /usr/bin/player_control.sh pause webradio >/dev/null 2>&1
+            ;;
+        upnp)
+            /usr/bin/player_control.sh pause upnp >/dev/null 2>&1
+            ;;
+        squeeze)
+            /usr/bin/player_control.sh pause squeeze >/dev/null 2>&1
+            ;;
     esac
 }
 
-get_priority() {
-    case "$1" in
-        alarm) echo "0" ;;
-        airplay) echo "$PRIO_AIRPLAY" ;;
-        spotify) echo "$PRIO_SPOTIFY" ;;
-        webradio) echo "$PRIO_WEBRADIO" ;;
-        squeeze) echo "$PRIO_SQUEEZE" ;;
-        *) echo "99" ;;
+unmute_source() {
+    local src="$1"
+    case "$src" in
+        airplay)
+            /usr/bin/player_control.sh resume airplay >/dev/null 2>&1
+            ;;
+        upnp)
+            amixer -q -c 0 sset UPnP 100% 2>/dev/null || true
+            ;;
     esac
 }
 
-if [ "$POLICY" = "mix" ]; then
-    exit 0
-fi
+# Acquire lock to prevent race conditions on rapid switching
+(
+    flock -x 200 || exit 0
 
-if [ "$POLICY" = "priority" ] || [ "$POLICY" = "lifo" ]; then
+
+    POLICY=$(uci -q get mcud.main.arbiter_policy || echo "lifo")
+    if [ "$POLICY" = "mix" ]; then
+        echo "$NEW_SOURCE" > "$CURRENT_SRC_FILE"
+        exit 0
+    fi
+
+    # Read current active music source
     ACTIVE_SOURCE=""
-    # the shell writers pretty-print with a space after the colon and mcud does not
-    if [ -f "$META_JSON" ] && grep -q '"playing"[[:space:]]*:[[:space:]]*true' "$META_JSON"; then
-        ACTIVE_SOURCE=$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$META_JSON")
+    if [ -f "$CURRENT_SRC_FILE" ]; then
+        read -r ACTIVE_SOURCE < "$CURRENT_SRC_FILE"
     fi
-    
-    [ -z "$ACTIVE_SOURCE" ] && exit 0
-    [ "$ACTIVE_SOURCE" = "$NEW_SOURCE" ] && exit 0
-    
-    NEW_PRIO=$(get_priority "$NEW_SOURCE")
-    ACT_PRIO=$(get_priority "$ACTIVE_SOURCE")
-    
-    if [ "$POLICY" = "priority" ]; then
-        if [ "$NEW_PRIO" -le "$ACT_PRIO" ]; then
-            kill_source "$ACTIVE_SOURCE"
-        else
-            kill_source "$NEW_SOURCE"
+
+    # Fallback to meta.json if state file is missing
+    if [ -z "$ACTIVE_SOURCE" ] && [ -f "$META_JSON" ]; then
+        if grep -q '"playing"[[:space:]]*:[[:space:]]*true' "$META_JSON"; then
+            ACTIVE_SOURCE=$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$META_JSON" | head -1)
         fi
-    elif [ "$POLICY" = "lifo" ]; then
-        # Last In Wins
-        kill_source "$ACTIVE_SOURCE"
     fi
-fi
+
+    # If same source is already active, just ensure unmuted and exit
+    if [ "$ACTIVE_SOURCE" = "$NEW_SOURCE" ]; then
+        unmute_source "$NEW_SOURCE"
+        exit 0
+    fi
+
+    # In LIFO mode, newest music stream pauses previous music stream
+    if [ -n "$ACTIVE_SOURCE" ]; then
+        pause_source "$ACTIVE_SOURCE"
+    fi
+
+    # Register new active source and unmute if needed
+    echo "$NEW_SOURCE" > "$CURRENT_SRC_FILE"
+    unmute_source "$NEW_SOURCE"
+
+) 200>"$LOCK_FILE"
+
+exit 0
 

@@ -28,3 +28,5 @@ config shairport-sync 'shairport_sync'
 	option metadata_enabled 'yes'
 	option metadata_cover_art 'yes'
 	option metadata_pipe_name '/tmp/shairport-sync-meta'
+	option sesctl_run_before_play_begins '/usr/bin/audio_arbiter.sh airplay'
+

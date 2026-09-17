@@ -41,3 +41,7 @@ CONFIG_PACKAGE_alsa-plugin-c3eq=y
 # CONFIG_PACKAGE_kmod-sound-soc-wm8960 is not set
 # CONFIG_PACKAGE_kmod-sound-core is not set
 CONFIG_KERNEL_JFFS2_SUMMARY=y
+CONFIG_PACKAGE_mpd-mini=y
+CONFIG_PACKAGE_upmpdcli=y
+CONFIG_PACKAGE_mpc=y
+
