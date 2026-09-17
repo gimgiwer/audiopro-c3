@@ -39,7 +39,7 @@ config librespot 'main'
 	# S16 because that is all the i2s block actually plays - it advertises S32_LE
 	# and then hands the DAC white noise (see the dmixer comment in asound.conf).
 	# Matches spotify_in/Master/dmix, so no conversion happens on the way down.
-	option format 'S16'
+	option format 'S24'
 	# Clip protection. f64_to_s16 quantises with a saturating `as i16` cast, so
 	# anything over 0 dBFS turns into a flat top inside librespot - before the
 	# Master softvol - and no amount of turning the speaker down undoes it.
@@ -52,6 +52,8 @@ config librespot 'main'
 	option normalisation_method 'basic'
 	# auto = album gain when the client says it's playing an album, else track
 	option normalisation_gain_type 'auto'
+	# Loud normalization profile (+3.0 dB pregain, -11 LUFS target loudness)
+	option normalisation_pregain '3.0'
 	# 1 makes librespot log the volume mapping ("Input volume N mapped to X%",
 	# "Setting Alsa raw volume to N") - the only way to see the curve on device.
 	option debug '0'
