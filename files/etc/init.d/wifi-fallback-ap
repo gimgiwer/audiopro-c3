@@ -36,8 +36,7 @@ enable_fallback_ap() {
 	uci -q set wireless.ap_iface.disabled='0'
 	uci -q commit wireless
 
-	# Restart wpad so dynamic hostapd detection launches hostapd
-	/etc/init.d/wpad restart >/dev/null 2>&1
+	# Reload wifi to dynamically bring up hostapd on ap_iface
 	wifi reload >/dev/null 2>&1
 
 	# Start DHCP server for 10.10.10.254 subnet
@@ -56,9 +55,8 @@ disable_fallback_ap() {
 	uci -q set wireless.ap_iface.disabled='1'
 	uci -q commit wireless
 
-	# Reload wifi to tear down AP
+	# Reload wifi to tear down AP without disrupting STA
 	wifi reload >/dev/null 2>&1
-	/etc/init.d/wpad restart >/dev/null 2>&1
 
 	# Stop standalone services to conserve RAM and CPU
 	/etc/init.d/uhttpd stop >/dev/null 2>&1
@@ -68,10 +66,16 @@ disable_fallback_ap() {
 }
 
 monitor() {
+	# Close inherited procd service lock descriptor to prevent flock deadlock on restarts
+	exec 1000>&- 2>/dev/null
+
 	# Wait for boot grace period to allow normal STA association and DHCP
 	sleep $GRACE_PERIOD
 
 	local ap_active=0
+	if [ "$(uci -q get wireless.ap_iface.disabled)" != "1" ] || iw dev phy0-ap0 info >/dev/null 2>&1; then
+		ap_active=1
+	fi
 
 	while true; do
 		if is_connected; then
