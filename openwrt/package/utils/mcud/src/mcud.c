@@ -826,15 +826,29 @@ static int ma_has_transport(void) {
            (g_ma_mode == 1 || g_ma_mode == 2);
 }
 
+static void mcu_sync_volume(int real_vol) {
+    if (real_vol < 0) real_vol = 0;
+    if (real_vol > 100) real_vol = 100;
+    /* STM8S fw 0109 quantizes volume onto an even grid (step 2).
+     * Quantizing here guarantees that STM8S adopts the exact number without
+     * rounding, so any subsequent MCU+VOL echo has delta == 0. */
+    int even_vol = (real_vol / 2) * 2;
+    if (even_vol == g_mcu_vol) return;
+
+    g_mcu_vol = even_vol;
+    g_mcu_vol_tx_ms = mono_ms();
+    char buf[16];
+    snprintf(buf, sizeof(buf), "AXX+VOL+%03d\n", even_vol);
+    uart_send(buf);
+    LOG_DEBUG("MCU volume synced to %d%% (shadow %d%%)", real_vol, even_vol);
+}
+
 /* One number for the user: whatever the keys move right now is what the MCU
  * bookkeeps and HA shows. */
 static void vol_publish_visible(void) {
     int v = ma_active() ? g_ma_vol : g_user_vol;
     if (v < 0) return;
-    /* Do NOT send mcu_report_state("VOL", v) here: the MCU does not attenuate
-     * audio, and reporting here triggers an echo MCU+VOL+nnn that looks like a
-     * key press and causes runaway volume oscillation. The MCU queries volume
-     * via MCU+VOL+GET when it needs it. */
+    mcu_sync_volume(v);
     mqtt_publish_volume(v);
 }
 
@@ -1298,7 +1312,7 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
      * write is a free trigger, but the raw value is squeezelite's own curve, not
      * MA's slider - so ask the server what it actually thinks. Without the CLI
      * the softvol position is still better than nothing. */
-    if (ma_connected() && g_ma_id[0]) {
+    if (!g_ma_owns_volume && ma_connected() && g_ma_id[0]) {
         ma_send("mixer volume ?");
     } else if (g_ma_fd < 0) {
         /* only with no CLI socket at all: mid-connect the server's own number is
@@ -1596,10 +1610,7 @@ static void set_user_volume(int vol) {
     }
     g_user_vol = vol;
     alsa_ramp_master(g_user_vol);
-
-    /* No AXX+VOL here. The MCU does not attenuate anything, it only bookkeeps the
-     * number - and it restates whatever we give it as a MCU+VOL+nnn that looks like
-     * a key press. It still gets an answer when it asks with MCU+VOL+GET. */
+    mcu_sync_volume(g_user_vol);
     mqtt_publish_volume(g_user_vol);
     vol_touch();
     if (g_user_vol == 0)
@@ -2471,12 +2482,24 @@ static void process_mcu_command(const char *cmd) {
         int d;
         if (v < 0 || v > 100) return;
         d = seen ? v - g_mcu_vol : 0;
-        g_mcu_vol = v;
+
         if (ms - g_mcu_vol_tx_ms < MCU_VOL_ECHO_MS) {
-            LOG_DEBUG("MCU volume counter now %d%% (its echo of our own level)", v);
-        } else if (ms - g_mcu_burst_ms < MCU_WAKE_BURST_MS) {
-            LOG_DEBUG("MCU volume counter now %d%% (restated by its wake poll)", v);
-        } else if (d > 0 && d <= 10) {
+            g_mcu_vol = v;
+            if (d == 0) {
+                LOG_DEBUG("MCU volume counter %d%% (ignored: exact echo of our level)", v);
+                return;
+            }
+        }
+        if (ms - g_mcu_burst_ms < MCU_WAKE_BURST_MS) {
+            g_mcu_vol = v;
+            if (d == 0) {
+                LOG_DEBUG("MCU volume counter %d%% (ignored: wake poll burst)", v);
+                return;
+            }
+        }
+
+        g_mcu_vol = v;
+        if (d > 0 && d <= 10) {
             int steps = (d + 1) / MCU_VOL_STEP;
             if (steps < 1) steps = 1;
             LOG_INFO("Panel volume key up x%d (MCU counter %d, delta %+d)", steps, v, d);
@@ -2489,12 +2512,10 @@ static void process_mcu_command(const char *cmd) {
             LOG_INFO("Panel volume key down x%d (MCU counter %d, delta %+d)", steps, v, d);
             adjust_user_volume(-steps);
             ubus_notify_button("vol_down");
-        } else if (seen && d == 0 && (v == 0 || v == 100)) {
-            LOG_INFO("Panel volume key %s (MCU counter pinned at %d)", v ? "up" : "down", v);
-            adjust_user_volume(v ? +1 : -1);
-            ubus_notify_button(v ? "vol_up" : "vol_down");
+        } else if (!seen) {
+            LOG_INFO("MCU volume counter initialized to %d%%", v);
         } else {
-            LOG_DEBUG("MCU volume counter now %d%% (jump of %d, not a key)", v, d);
+            LOG_DEBUG("MCU volume counter now %d%% (delta %+d, ignored)", v, d);
         }
         return;
     }
@@ -3206,6 +3227,7 @@ static void uart_read_cb(struct uloop_fd *u, unsigned int events) {
                 if (token_len >= sizeof(token)) token_len = sizeof(token) - 1;
                 memcpy(token, line_buf, token_len);
                 token[token_len] = '\0';
+                LOG_INFO("UART RX: [%s]", token);
 
                 process_mcu_command(token);
 
