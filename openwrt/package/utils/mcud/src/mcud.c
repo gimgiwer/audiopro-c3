@@ -778,6 +778,8 @@ static char g_ma_rx[MA_RX_SIZE];
 static size_t g_ma_rxlen = 0;
 static int  g_ma_mode = -1;         /* -1 unknown, 0 stop, 1 play, 2 pause */
 static int  g_ma_power = -1;
+static int     g_ma_vol_target = -1;   /* pending target volume sent to MA */
+static int64_t g_ma_vol_target_ms = 0; /* when target volume was sent */
 static char g_ma_title[128] = "";
 static char g_ma_artist[128] = "";
 static char g_ma_album[128] = "";
@@ -1104,6 +1106,15 @@ static void ma_parse_line(char *line) {
             mqtt_send_sensor("playing", playing ? "true" : "false");
         }
     }
+    if (vol >= 0) {
+        int64_t now = mono_ms();
+        if (g_ma_vol_target >= 0 && (now - g_ma_vol_target_ms < 1500)) {
+            if (vol == g_ma_vol_target - 1) {
+                LOG_DEBUG("MA volume float truncation jitter suppressed: %d%% -> %d%%", vol, g_ma_vol_target);
+                vol = g_ma_vol_target;
+            }
+        }
+    }
     if (vol >= 0 && vol != g_ma_vol) {
         g_ma_vol = vol;
         mqtt_publish_ma_volume(vol);
@@ -1274,6 +1285,8 @@ static void mixer_event_cb(struct uloop_fd *ufd, unsigned int events) {
         if (vol >= 0 && vol != g_user_vol && vol != g_master_set_vol && !ma_active()) {
             g_user_vol = vol;
             mcu_report_state("VOL", g_user_vol);
+            g_mcu_vol = (g_user_vol / 2) * 2;
+            g_mcu_vol_tx_ms = mono_ms();
             mqtt_publish_volume(g_user_vol);
             vol_touch();
             LOG_INFO("Master volume changed externally: %d%%", g_user_vol);
@@ -1575,6 +1588,8 @@ static void set_user_volume(int vol) {
     /* While MA is the live source, its fader is the number everyone looks at.
      * Moving Master as well would stack two curves and the dB add up. */
     if (ma_active() && ma_send("mixer volume %d", vol) == 0) {
+        g_ma_vol_target = vol;
+        g_ma_vol_target_ms = mono_ms();
         ma_send("status - 1 tags:alKd");
         if (g_ma_power != 1) ma_send("mixer volume ?");
         return;
@@ -1609,7 +1624,18 @@ static void adjust_user_volume(int delta) {
             uart_send(CMD_UNMUTE);
             mqtt_publish_mute();
         }
-        if (ma_send("mixer volume %+d", delta > 0 ? g_ma_step : -g_ma_step) == 0) {
+        int step = delta > 0 ? g_ma_step : -g_ma_step;
+        if (ma_send("mixer volume %+d", step) == 0) {
+            int64_t now = mono_ms();
+            int base = (g_ma_vol_target >= 0 && (now - g_ma_vol_target_ms < 1500)) ?
+                       g_ma_vol_target : g_ma_vol;
+            if (base >= 0) {
+                int target = base + step;
+                if (target < 0) target = 0;
+                if (target > 100) target = 100;
+                g_ma_vol_target = target;
+                g_ma_vol_target_ms = now;
+            }
             /* status, not "mixer volume ?": one reply re-syncs fader, mode and
              * power atomically. A bare "?" leaves a stale mode behind, and the
              * next key press then falls out of ma_active() into Master. */
@@ -1735,6 +1761,8 @@ static void mqtt_on_message(struct mosquitto *mosq, void *userdata, const struct
         g_last_activity_time = now_mono();
         if (ma_connected() && g_ma_id[0]) {
             if (ma_send("mixer volume %d", v) == 0) {
+                g_ma_vol_target = v;
+                g_ma_vol_target_ms = mono_ms();
                 ma_send("status - 1 tags:alKd");
                 if (g_ma_power != 1) ma_send("mixer volume ?");
                 return;
@@ -2374,7 +2402,9 @@ static void process_mcu_command(const char *cmd) {
         /* stock's AXX+VOL+00%d / 0%d / 100 triple is just %03d. The MCU adopts
          * whatever we answer and restates it, so mark the time or the restatement
          * looks like a key press. */
-        mcu_report_state("VOL", ma_active() ? g_ma_vol : g_user_vol);
+        int v = ma_active() ? g_ma_vol : g_user_vol;
+        mcu_report_state("VOL", v);
+        g_mcu_vol = (v / 2) * 2;
         g_mcu_vol_tx_ms = mono_ms();
         return;
     } else if (strstr(cmd, "MCU+PLY+GET")) {
@@ -2433,24 +2463,44 @@ static void process_mcu_command(const char *cmd) {
         if (v < 0 || v > 100) return;
         d = seen ? v - g_mcu_vol : 0;
         g_mcu_vol = v;
+        int key_pressed = 0;
         if (ms - g_mcu_vol_tx_ms < MCU_VOL_ECHO_MS) {
             LOG_DEBUG("MCU volume counter now %d%% (its echo of our own level)", v);
         } else if (ms - g_mcu_burst_ms < MCU_WAKE_BURST_MS) {
             LOG_DEBUG("MCU volume counter now %d%% (restated by its wake poll)", v);
-        } else if (d > 0 && d <= MCU_VOL_STEP) {
-            LOG_INFO("Panel volume key up (MCU counter %d)", v);
-            adjust_user_volume(+1);
-            ubus_notify_button("vol_up");
-        } else if (d < 0 && -d <= MCU_VOL_STEP) {
-            LOG_INFO("Panel volume key down (MCU counter %d)", v);
-            adjust_user_volume(-1);
-            ubus_notify_button("vol_down");
+        } else if (d > 0 && d <= 10) {
+            int steps = (d + 1) / MCU_VOL_STEP;
+            if (steps < 1) steps = 1;
+            LOG_INFO("Panel volume key up x%d (MCU counter %d, delta %+d)", steps, v, d);
+            for (int i = 0; i < steps; i++) {
+                adjust_user_volume(+1);
+                ubus_notify_button("vol_up");
+            }
+            key_pressed = 1;
+        } else if (d < 0 && -d <= 10) {
+            int abs_d = -d;
+            int steps = (abs_d + 1) / MCU_VOL_STEP;
+            if (steps < 1) steps = 1;
+            LOG_INFO("Panel volume key down x%d (MCU counter %d, delta %+d)", steps, v, d);
+            for (int i = 0; i < steps; i++) {
+                adjust_user_volume(-1);
+                ubus_notify_button("vol_down");
+            }
+            key_pressed = 1;
         } else if (seen && d == 0 && (v == 0 || v == 100)) {
             LOG_INFO("Panel volume key %s (MCU counter pinned at %d)", v ? "up" : "down", v);
             adjust_user_volume(v ? +1 : -1);
             ubus_notify_button(v ? "vol_up" : "vol_down");
+            key_pressed = 1;
         } else {
             LOG_DEBUG("MCU volume counter now %d%% (jump of %d, not a key)", v, d);
+        }
+
+        if (key_pressed && (v >= 90 || v <= 10)) {
+            LOG_INFO("Auto-recentering MCU volume counter from %d to 50", v);
+            g_mcu_vol = 50;
+            g_mcu_vol_tx_ms = mono_ms();
+            uart_send("AXX+VOL+050\n");
         }
         return;
     }
@@ -3206,6 +3256,8 @@ static void fifo_read_cb(struct uloop_fd *u, unsigned int events) {
 
                 if (strncmp(fifo_line, "AXX+VOL+", 8) == 0 && isdigit((unsigned char)fifo_line[8])) {
                     set_user_volume(atoi(fifo_line + 8));
+                } else if (strncmp(fifo_line, "MCU+", 4) == 0) {
+                    process_mcu_command(fifo_line);
                 } else {
                     uart_send(fifo_line);
                     uart_send("\n");
