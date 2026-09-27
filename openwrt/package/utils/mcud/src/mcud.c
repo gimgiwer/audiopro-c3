@@ -1619,6 +1619,14 @@ static void adjust_user_volume(int delta) {
     /* MA applies its own curve server-side, so hand it a relative step and read
      * back whatever it decided rather than predicting the result. */
     if (ma_active()) {
+        if (delta > 0 && g_ma_vol >= 100) {
+            LOG_DEBUG("Panel volume key up ignored: already at 100%%");
+            return;
+        }
+        if (delta < 0 && g_ma_vol <= 0) {
+            LOG_DEBUG("Panel volume key down ignored: already at 0%%");
+            return;
+        }
         if (g_is_muted) {
             g_is_muted = 0;
             uart_send(CMD_UNMUTE);
@@ -2463,7 +2471,6 @@ static void process_mcu_command(const char *cmd) {
         if (v < 0 || v > 100) return;
         d = seen ? v - g_mcu_vol : 0;
         g_mcu_vol = v;
-        int key_pressed = 0;
         if (ms - g_mcu_vol_tx_ms < MCU_VOL_ECHO_MS) {
             LOG_DEBUG("MCU volume counter now %d%% (its echo of our own level)", v);
         } else if (ms - g_mcu_burst_ms < MCU_WAKE_BURST_MS) {
@@ -2476,7 +2483,6 @@ static void process_mcu_command(const char *cmd) {
                 adjust_user_volume(+1);
                 ubus_notify_button("vol_up");
             }
-            key_pressed = 1;
         } else if (d < 0 && -d <= 10) {
             int abs_d = -d;
             int steps = (abs_d + 1) / MCU_VOL_STEP;
@@ -2486,21 +2492,12 @@ static void process_mcu_command(const char *cmd) {
                 adjust_user_volume(-1);
                 ubus_notify_button("vol_down");
             }
-            key_pressed = 1;
         } else if (seen && d == 0 && (v == 0 || v == 100)) {
             LOG_INFO("Panel volume key %s (MCU counter pinned at %d)", v ? "up" : "down", v);
             adjust_user_volume(v ? +1 : -1);
             ubus_notify_button(v ? "vol_up" : "vol_down");
-            key_pressed = 1;
         } else {
             LOG_DEBUG("MCU volume counter now %d%% (jump of %d, not a key)", v, d);
-        }
-
-        if (key_pressed && (v >= 90 || v <= 10)) {
-            LOG_INFO("Auto-recentering MCU volume counter from %d to 50", v);
-            g_mcu_vol = 50;
-            g_mcu_vol_tx_ms = mono_ms();
-            uart_send("AXX+VOL+050\n");
         }
         return;
     }
