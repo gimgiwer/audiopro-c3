@@ -1614,16 +1614,17 @@ static void set_user_volume(int vol) {
  * fader curve 0->5% is 26 dB while 95->100% is barely half of one. raw is
  * dB-linear, so step there and convert back to the percent everyone reports.
  * Only the sign of delta matters now. */
-static void adjust_user_volume(int delta) {
+static void adjust_user_volume(int steps) {
+    if (steps == 0) return;
     long min = 0, max = 1000;
     /* MA applies its own curve server-side, so hand it a relative step and read
      * back whatever it decided rather than predicting the result. */
     if (ma_active()) {
-        if (delta > 0 && g_ma_vol >= 100) {
+        if (steps > 0 && g_ma_vol >= 100) {
             LOG_DEBUG("Panel volume key up ignored: already at 100%%");
             return;
         }
-        if (delta < 0 && g_ma_vol <= 0) {
+        if (steps < 0 && g_ma_vol <= 0) {
             LOG_DEBUG("Panel volume key down ignored: already at 0%%");
             return;
         }
@@ -1632,7 +1633,7 @@ static void adjust_user_volume(int delta) {
             uart_send(CMD_UNMUTE);
             mqtt_publish_mute();
         }
-        int step = delta > 0 ? g_ma_step : -g_ma_step;
+        int step = steps * g_ma_step;
         if (ma_send("mixer volume %+d", step) == 0) {
             int64_t now = mono_ms();
             int base = (g_ma_vol_target >= 0 && (now - g_ma_vol_target_ms < 1500)) ?
@@ -1654,18 +1655,18 @@ static void adjust_user_volume(int delta) {
     }
     if (!g_master_elem ||
         snd_mixer_selem_get_playback_volume_range(g_master_elem, &min, &max) < 0) {
-        set_user_volume(g_user_vol + (delta > 0 ? VOL_STEP_DB : -VOL_STEP_DB));
+        set_user_volume(g_user_vol + (steps > 0 ? VOL_STEP_DB * steps : -VOL_STEP_DB * -steps));
         return;
     }
     /* 16 presses from full to mute, so ~3.8 dB each on Master's -60 dB span. */
     long step = ((long)(max - min) + 8) / 16;
-    long raw = vol_pct_to_raw(g_user_vol, min, max) + (delta > 0 ? step : -step);
+    long raw = vol_pct_to_raw(g_user_vol, min, max) + (step * steps);
     if (raw < min) raw = min;
     if (raw > max) raw = max;
     int pct = vol_raw_to_pct(raw, min, max);
     /* the curve is coarse down low, so a 3 dB step can round back onto the
      * percent we started from - nudge past it or the key would do nothing */
-    if (pct == g_user_vol) pct += (delta > 0 ? 1 : -1);
+    if (pct == g_user_vol) pct += (steps > 0 ? 1 : -1);
     set_user_volume(pct);
 }
 
@@ -2479,19 +2480,15 @@ static void process_mcu_command(const char *cmd) {
             int steps = (d + 1) / MCU_VOL_STEP;
             if (steps < 1) steps = 1;
             LOG_INFO("Panel volume key up x%d (MCU counter %d, delta %+d)", steps, v, d);
-            for (int i = 0; i < steps; i++) {
-                adjust_user_volume(+1);
-                ubus_notify_button("vol_up");
-            }
+            adjust_user_volume(steps);
+            ubus_notify_button("vol_up");
         } else if (d < 0 && -d <= 10) {
             int abs_d = -d;
             int steps = (abs_d + 1) / MCU_VOL_STEP;
             if (steps < 1) steps = 1;
             LOG_INFO("Panel volume key down x%d (MCU counter %d, delta %+d)", steps, v, d);
-            for (int i = 0; i < steps; i++) {
-                adjust_user_volume(-1);
-                ubus_notify_button("vol_down");
-            }
+            adjust_user_volume(-steps);
+            ubus_notify_button("vol_down");
         } else if (seen && d == 0 && (v == 0 || v == 100)) {
             LOG_INFO("Panel volume key %s (MCU counter pinned at %d)", v ? "up" : "down", v);
             adjust_user_volume(v ? +1 : -1);
