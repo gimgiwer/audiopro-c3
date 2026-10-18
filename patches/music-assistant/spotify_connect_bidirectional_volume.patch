@@ -1,0 +1,37 @@
+From 47626ab000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gimgiwer <gimgiwer@gmail.com>
+Date: Sun, 27 Sep 2026 13:51:33 +0300
+Subject: [PATCH] fix(spotify_connect): enable bidirectional volume sync on PLAYER_UPDATED
+
+In Music Assistant 2.10.x, the Spotify Connect provider (soloist) does not
+forward player volume updates to Spotify when volume changes outside the app
+(e.g., via hardware speaker buttons or MA UI).
+
+This patch listens to EventType.PLAYER_UPDATED in _on_player_event and calls
+_sync_player_volume_to_spotify whenever the player volume differs from
+daemon.last_volume_sent. This ensures physical buttons and MA sliders
+smoothly move the Spotify volume slider on connected clients.
+
+---
+ music_assistant/providers/spotify_connect/provider.py | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/music_assistant/providers/spotify_connect/provider.py
++++ b/music_assistant/providers/spotify_connect/provider.py
+@@ -628,6 +628,15 @@ class SpotifyConnectProvider(PluginProvider):
+                     self._clear_active_player(daemon)
+                     await self._stop_daemon(daemon)
+             return
++        if event.event == EventType.PLAYER_UPDATED and event.object_id:
++            if daemon := self._daemons.get(event.object_id):
++                player = self.mass.players.get_player(event.object_id)
++                if player and player.state.volume_level is not None:
++                    if daemon.last_volume_sent != player.state.volume_level:
++                        self.mass.create_task(
++                            self._sync_player_volume_to_spotify(daemon, event.object_id)
++                        )
++            return
+         if event.event == EventType.PLAYER_ADDED and event.object_id:
+             # a re-registered player earns a permanently failed daemon a fresh start
+             self._failed_player_ids.discard(event.object_id)
+-- 

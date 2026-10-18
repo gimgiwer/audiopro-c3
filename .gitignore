@@ -8,6 +8,8 @@
 
 # Temporary files
 /tmp/
+__pycache__/
+*.pyc
 *.swp
 *.swo
 *~
